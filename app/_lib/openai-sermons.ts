@@ -658,20 +658,57 @@ function nativeStructuredOutputUnsupported(status: number, body: string): boolea
   return mentionsFormat && mentionsUnsupported;
 }
 
-function isEmptyCompletedChatResponse(value: unknown): boolean {
+function chatCompletionDiagnostics(value: unknown): {
+  finishReason: string | null;
+  contentCharacters: number;
+  reasoningCharacters: number;
+} | null {
+  if (!isRecord(value) || !Array.isArray(value.choices) || !isRecord(value.choices[0])) {
+    return null;
+  }
+  const choice = value.choices[0];
+  if (!isRecord(choice.message)) return null;
+  const message = choice.message;
+  const content = message.content;
+  const contentCharacters = typeof content === "string"
+    ? content.length
+    : Array.isArray(content)
+      ? content.reduce(
+          (total, part) =>
+            total + (isRecord(part) && typeof part.text === "string" ? part.text.length : 0),
+          0,
+        )
+      : 0;
+  return {
+    finishReason:
+      typeof choice.finish_reason === "string" ? choice.finish_reason : null,
+    contentCharacters,
+    reasoningCharacters:
+      typeof message.reasoning_content === "string"
+        ? message.reasoning_content.length
+        : 0,
+  };
+}
+
+function isRetryableIncompleteChatResponse(value: unknown): boolean {
+  const diagnostics = chatCompletionDiagnostics(value);
+  if (!diagnostics) return false;
+  if (
+    diagnostics.finishReason === "length" ||
+    diagnostics.finishReason === "max_tokens" ||
+    diagnostics.finishReason === "insufficient_system_resource"
+  ) {
+    return true;
+  }
   if (!isRecord(value) || !Array.isArray(value.choices) || !isRecord(value.choices[0])) {
     return false;
   }
   const choice = value.choices[0];
   if (choice.finish_reason !== "stop" || !isRecord(choice.message)) return false;
-  const message = choice.message;
-  if (message.refusal || message.parsed !== undefined) return false;
-  const content = message.content;
-  if (content === null || content === undefined) return true;
-  if (typeof content === "string") return content.trim().length === 0;
-  if (!Array.isArray(content)) return false;
-  return content.length === 0 || content.every(
-    (part) => isRecord(part) && typeof part.text === "string" && !part.text.trim(),
+  return (
+    !choice.message.refusal &&
+    choice.message.parsed === undefined &&
+    diagnostics.contentCharacters === 0
   );
 }
 
@@ -774,6 +811,7 @@ async function structuredResponse(args: {
     let nativeStructuredOutput = true;
     let customDnsChecked = Boolean(args.customDnsChecked);
     let invalidContentRetryUsed = false;
+    let disableDeepseekThinking = false;
     let retryFeedback: string | null = null;
     while (true) {
       const providerRequest = buildAiProviderRequest(config, {
@@ -790,6 +828,7 @@ async function structuredResponse(args: {
         maxOutputTokens: args.maxOutputTokens,
       }, {
         nativeStructuredOutput,
+        disableDeepseekThinking,
       });
       lastProviderEndpoint = providerRequest.endpoint;
       if (config.engine === "custom" && !customDnsChecked) {
@@ -860,17 +899,39 @@ async function structuredResponse(args: {
           "upstream",
         );
       }
+      const chatDiagnostics = chatCompletionDiagnostics(payload);
+      const chatOutputWasTruncated =
+        chatDiagnostics?.finishReason === "length" ||
+        chatDiagnostics?.finishReason === "max_tokens" ||
+        chatDiagnostics?.finishReason === "insufficient_system_resource";
       const text = parseAiProviderResponse(config.engine, payload, providerRequest.endpoint);
       if (!text) {
+        if (chatDiagnostics) {
+          console.warn("[sermon-ai] provider returned no complete JSON text", {
+            name: args.name,
+            engine: config.engine,
+            model: config.model,
+            nativeStructuredOutput,
+            thinkingDisabled: disableDeepseekThinking,
+            ...chatDiagnostics,
+          });
+        }
         if (
           (config.engine === "deepseek" || config.engine === "custom") &&
           !invalidContentRetryUsed &&
-          (isEmptyCompletedChatResponse(payload) ||
+          (isRetryableIncompleteChatResponse(payload) ||
             isEmptyCompletedResponsesResponse(payload))
         ) {
           invalidContentRetryUsed = true;
-          nativeStructuredOutput = false;
-          retryFeedback = "완료된 JSON 객체가 비어 있었습니다. 모든 필수 필드에 실제 설교 내용을 채우세요.";
+          // Truncation is an output-budget problem, not proof that JSON mode is
+          // unsupported. Keep JSON mode and spend the repair budget on the
+          // final answer by disabling DeepSeek thinking. Only stop-empty falls
+          // back to prompt-only JSON.
+          if (!chatOutputWasTruncated) nativeStructuredOutput = false;
+          if (config.engine === "deepseek") disableDeepseekThinking = true;
+          retryFeedback = chatOutputWasTruncated
+            ? "최종 설교 JSON이 출력 한도 전에 잘렸습니다. 내부 설명 없이 완성된 설교 JSON만 우선 반환하세요."
+            : "완료된 JSON 객체가 비어 있었습니다. 모든 필수 필드에 실제 설교 내용을 채우세요.";
           continue;
         }
         throw new UserAiProviderError(
@@ -888,7 +949,8 @@ async function structuredResponse(args: {
           !invalidContentRetryUsed
         ) {
           invalidContentRetryUsed = true;
-          nativeStructuredOutput = false;
+          if (!chatOutputWasTruncated) nativeStructuredOutput = false;
+          if (config.engine === "deepseek") disableDeepseekThinking = true;
           retryFeedback = "설명이나 마크다운을 제외하고 완전한 JSON 객체 하나만 반환하세요.";
           continue;
         }
@@ -915,6 +977,7 @@ async function structuredResponse(args: {
         if (!validValues.length) {
           if (!invalidContentRetryUsed) {
             invalidContentRetryUsed = true;
+            if (config.engine === "deepseek") disableDeepseekThinking = true;
             retryFeedback = feedback;
             continue;
           }

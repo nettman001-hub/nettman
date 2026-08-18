@@ -934,8 +934,8 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(deepseek.headers.Authorization, "Bearer secret-deepseek-key");
   assert.equal(deepseek.body.model, "deepseek-v4-flash");
   assert.equal(deepseek.body.response_format.type, "json_object");
-  assert.deepEqual(deepseek.body.thinking, { type: "enabled" });
-  assert.equal(deepseek.body.reasoning_effort, "high");
+  assert.deepEqual(deepseek.body.thinking, { type: "disabled" });
+  assert.equal(deepseek.body.reasoning_effort, undefined);
   assert.match(deepseek.body.messages[0].content, /JSON 객체 하나만 반환/);
   assert.match(deepseek.body.messages[0].content, /"required":\["title","items"\]/);
   assert.equal(JSON.stringify(deepseek.body).includes("secret-deepseek-key"), false);
@@ -945,12 +945,31 @@ test("builds and parses provider-specific structured-output requests", async () 
     }),
     '{"title":"은혜"}',
   );
+  assert.equal(
+    parseAiProviderResponse("deepseek", {
+      choices: [{ finish_reason: "length", message: { content: '{"title":"완성된 은혜"}' } }],
+    }),
+    '{"title":"완성된 은혜"}',
+  );
+  assert.equal(
+    parseAiProviderResponse("deepseek", {
+      choices: [{ finish_reason: "content_filter", message: { content: '{"title":"차단"}' } }],
+    }),
+    null,
+  );
   const deepseekPro = buildAiProviderRequest(
     { ...makeConfig("deepseek", "max"), model: "deepseek-v4-pro" },
     structured,
   );
   assert.deepEqual(deepseekPro.body.thinking, { type: "enabled" });
   assert.equal(deepseekPro.body.reasoning_effort, "max");
+  const deepseekProRepair = buildAiProviderRequest(
+    { ...makeConfig("deepseek", "max"), model: "deepseek-v4-pro" },
+    structured,
+    { nativeStructuredOutput: false, disableDeepseekThinking: true },
+  );
+  assert.deepEqual(deepseekProRepair.body.thinking, { type: "disabled" });
+  assert.equal(deepseekProRepair.body.reasoning_effort, undefined);
 
   const customBase = buildAiProviderRequest(
     {
@@ -1386,6 +1405,103 @@ test("repairs a 30-minute two-point hosted sermon within the same provider timeo
     assert.ok(result.value.sections.points[0].content.length >= 2_300);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("retries truncated and resource-interrupted DeepSeek responses with thinking disabled", async () => {
+  const { generateAiSermonAlternative } = await import(
+    new URL("../app/_lib/openai-sermons.ts", import.meta.url)
+  );
+  const textOfLength = (seed, length) => seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+  const valid = {
+    title: "은혜로 다시 시작하는 길",
+    summary: "하나님의 은혜가 지친 삶을 새롭게 하고 이웃을 향한 섬김으로 이어지는 길을 살핍니다.",
+    scripture: "에베소서 2:8-10",
+    sections: {
+      introduction: textOfLength("은혜는 우리의 자격보다 먼저 주어집니다. ", 180),
+      points: [{
+        heading: "우리를 먼저 찾아온 은혜",
+        content: textOfLength("하나님께서 베푸신 은혜는 우리의 삶과 공동체를 새롭게 세우는 힘이 됩니다. ", 800),
+      }],
+      conclusion: textOfLength("우리는 은혜를 기억하며 다시 걸어갑니다. ", 180),
+      application: textOfLength("오늘 한 사람을 은혜의 마음으로 구체적으로 섬겨 봅시다. ", 180),
+    },
+  };
+  const request = {
+    draftId: "draft-deepseek-reasoning-length",
+    options: {
+      topic: "하나님의 은혜",
+      aiTier: "reasoning",
+      aiTiers: ["reasoning", "reasoning", "reasoning", "reasoning", "reasoning"],
+      duration: 5,
+      targetCharacters: 1_600,
+      tone: "소망",
+      sermonType: "강해",
+      audience: "청장년",
+      pointCount: 1,
+      referenceMode: "auto",
+    },
+    scripture: "에베소서 2:8-10",
+    reference: { url: "", notes: "", file: null },
+    existingTitles: [],
+  };
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const bodies = [];
+  let interruptionReason = "length";
+  console.warn = () => {};
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(String(init.body)));
+    if (bodies.length === 1) {
+      return Response.json({
+        choices: [{
+          finish_reason: interruptionReason,
+          message: { content: "", reasoning_content: "내부 추론".repeat(500) },
+        }],
+      });
+    }
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(valid) } }],
+    });
+  };
+  try {
+    const result = await generateAiSermonAlternative(request, 1, {
+      enabled: true,
+      engine: "deepseek",
+      endpoint: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+      reasoningEffort: "max",
+      apiKey: "secret-deepseek-key",
+    });
+    assert.equal(bodies.length, 2);
+    assert.deepEqual(bodies[0].thinking, { type: "enabled" });
+    assert.equal(bodies[0].reasoning_effort, "max");
+    assert.deepEqual(bodies[1].thinking, { type: "disabled" });
+    assert.equal(bodies[1].reasoning_effort, undefined);
+    assert.deepEqual(bodies[1].response_format, { type: "json_object" });
+    assert.equal(result?.value.title, valid.title);
+
+    bodies.length = 0;
+    interruptionReason = "insufficient_system_resource";
+    const retriedAfterResourceInterruption = await generateAiSermonAlternative(
+      request,
+      1,
+      {
+        enabled: true,
+        engine: "deepseek",
+        endpoint: "https://api.deepseek.com",
+        model: "deepseek-v4-pro",
+        reasoningEffort: "max",
+        apiKey: "secret-deepseek-key",
+      },
+    );
+    assert.equal(bodies.length, 2);
+    assert.deepEqual(bodies[0].thinking, { type: "enabled" });
+    assert.deepEqual(bodies[1].thinking, { type: "disabled" });
+    assert.equal(retriedAfterResourceInterruption?.value.title, valid.title);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
   }
 });
 

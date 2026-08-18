@@ -85,7 +85,10 @@ function structuredJsonInstructions(
 export function buildAiProviderRequest(
   config: AiRequestConfig,
   input: StructuredAiInput,
-  options: { nativeStructuredOutput?: boolean } = {},
+  options: {
+    nativeStructuredOutput?: boolean;
+    disableDeepseekThinking?: boolean;
+  } = {},
 ): AiProviderRequest {
   const endpoint = providerEndpoint(config);
   const schema = schemaForEngine(config.engine, input.schema);
@@ -149,6 +152,9 @@ export function buildAiProviderRequest(
 
   if (config.engine === "deepseek") {
     const jsonInstructions = structuredJsonInstructions(input.instructions, schema);
+    const thinkingEnabled =
+      config.model.trim().toLowerCase().includes("pro") &&
+      !options.disableDeepseekThinking;
     return {
       endpoint,
       headers: {
@@ -165,11 +171,11 @@ export function buildAiProviderRequest(
         max_tokens: input.maxOutputTokens,
         stream: false,
         ...(nativeStructuredOutput ? { response_format: { type: "json_object" } } : {}),
-        // DeepSeek V4 Flash and Pro both support thinking mode. Keeping it on
-        // restores the provider default and materially improves adherence to
-        // long Korean sermon structure and length instructions.
-        thinking: { type: "enabled" },
-        ...(config.reasoningEffort === "default"
+        // Keep the product tiers distinct: Flash prioritizes complete output,
+        // while Pro reasons first. A Pro repair can explicitly disable thinking
+        // when reasoning consumed the output budget before JSON was completed.
+        thinking: { type: thinkingEnabled ? "enabled" : "disabled" },
+        ...(!thinkingEnabled || config.reasoningEffort === "default"
           ? {}
           : { reasoning_effort: config.reasoningEffort }),
       },
@@ -334,7 +340,14 @@ function geminiResponseText(payload: JsonObject): string | null {
 function chatCompletionResponseText(payload: JsonObject): string | null {
   if (!Array.isArray(payload.choices) || !isObject(payload.choices[0])) return null;
   const choice = payload.choices[0];
-  if (typeof choice.finish_reason === "string" && choice.finish_reason !== "stop") return null;
+  if (
+    typeof choice.finish_reason === "string" &&
+    choice.finish_reason !== "stop" &&
+    choice.finish_reason !== "length" &&
+    choice.finish_reason !== "max_tokens"
+  ) {
+    return null;
+  }
   if (!isObject(choice.message) || choice.message.refusal) return null;
   const message = choice.message;
   if (isObject(message.parsed) || Array.isArray(message.parsed)) {
