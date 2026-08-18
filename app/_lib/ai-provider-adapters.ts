@@ -149,7 +149,6 @@ export function buildAiProviderRequest(
 
   if (config.engine === "deepseek") {
     const jsonInstructions = structuredJsonInstructions(input.instructions, schema);
-    const thinkingEnabled = config.model.trim().toLowerCase().includes("pro");
     return {
       endpoint,
       headers: {
@@ -166,8 +165,11 @@ export function buildAiProviderRequest(
         max_tokens: input.maxOutputTokens,
         stream: false,
         ...(nativeStructuredOutput ? { response_format: { type: "json_object" } } : {}),
-        thinking: { type: thinkingEnabled ? "enabled" : "disabled" },
-        ...(!thinkingEnabled || config.reasoningEffort === "default"
+        // DeepSeek V4 Flash and Pro both support thinking mode. Keeping it on
+        // restores the provider default and materially improves adherence to
+        // long Korean sermon structure and length instructions.
+        thinking: { type: "enabled" },
+        ...(config.reasoningEffort === "default"
           ? {}
           : { reasoning_effort: config.reasoningEffort }),
       },

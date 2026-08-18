@@ -934,8 +934,8 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(deepseek.headers.Authorization, "Bearer secret-deepseek-key");
   assert.equal(deepseek.body.model, "deepseek-v4-flash");
   assert.equal(deepseek.body.response_format.type, "json_object");
-  assert.deepEqual(deepseek.body.thinking, { type: "disabled" });
-  assert.equal(deepseek.body.reasoning_effort, undefined);
+  assert.deepEqual(deepseek.body.thinking, { type: "enabled" });
+  assert.equal(deepseek.body.reasoning_effort, "high");
   assert.match(deepseek.body.messages[0].content, /JSON 객체 하나만 반환/);
   assert.match(deepseek.body.messages[0].content, /"required":\["title","items"\]/);
   assert.equal(JSON.stringify(deepseek.body).includes("secret-deepseek-key"), false);
@@ -1384,6 +1384,365 @@ test("repairs a 30-minute two-point hosted sermon within the same provider timeo
     assert.match(bodies[1].messages[0].content, /정확히 2개/);
     assert.equal(result?.value.sections.points.length, 2);
     assert.ok(result.value.sections.points[0].content.length >= 2_300);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps the better structurally complete 30-minute draft when both repairs are under preferred length", async () => {
+  const { generateAiSermonAlternative } = await import(
+    new URL("../app/_lib/openai-sermons.ts", import.meta.url)
+  );
+  const textOfLength = (seed, length) => seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+  const sermon = (title, pointLength) => ({
+    title,
+    summary: "하나님의 사랑이 오늘의 상처와 관계를 새롭게 하는 복음의 흐름을 구체적으로 살핍니다.",
+    scripture: "요한복음 3:16",
+    sections: {
+      introduction: textOfLength("하나님의 사랑은 우리를 먼저 찾아옵니다. ", 250),
+      points: [
+        {
+          heading: "먼저 찾아오신 하나님의 사랑",
+          content: textOfLength("복음은 하나님의 사랑이 우리 삶에 먼저 다가왔음을 선포합니다. ", pointLength),
+        },
+        {
+          heading: "이웃에게 흘려보낼 하나님의 사랑",
+          content: textOfLength("받은 사랑은 관계와 공동체 안에서 구체적인 섬김으로 이어져야 합니다. ", pointLength),
+        },
+      ],
+      conclusion: textOfLength("우리는 받은 사랑 안에서 다시 걸어갑니다. ", 250),
+      application: textOfLength("이번 주 한 사람에게 사랑을 구체적으로 나누어 봅시다. ", 250),
+    },
+  });
+  const request = {
+    draftId: "draft-best-underlength-fallback",
+    options: {
+      topic: "하나님의 사랑",
+      aiTier: "advanced",
+      aiTiers: ["advanced", "advanced", "advanced", "advanced", "advanced"],
+      duration: 30,
+      targetCharacters: 8_000,
+      tone: "위로",
+      sermonType: "강해",
+      audience: "청장년",
+      pointCount: 2,
+      referenceMode: "auto",
+    },
+    scripture: "요한복음 3:16",
+    reference: { url: "", notes: "", file: null },
+    existingTitles: [],
+  };
+  const responses = [
+    sermon("사랑으로 다시 걷는 첫 번째 길", 1_400),
+    sermon("사랑으로 더 깊이 걷는 두 번째 길", 2_000),
+  ];
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const bodies = [];
+  console.warn = () => {};
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(String(init.body)));
+    const value = responses[bodies.length - 1];
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(value) } }],
+    });
+  };
+  try {
+    const result = await generateAiSermonAlternative(request, 1, {
+      enabled: true,
+      engine: "deepseek",
+      endpoint: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      reasoningEffort: "high",
+      apiKey: "secret-deepseek-key",
+    });
+    assert.equal(bodies.length, 2);
+    assert.match(bodies[1].messages[0].content, /최소 5200자/);
+    assert.equal(result?.value.title, responses[1].title);
+    assert.equal(result?.value.sections.points.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
+test("preserves the first usable sermon when the repair returns the wrong point count", async () => {
+  const { generateAiSermonAlternative } = await import(
+    new URL("../app/_lib/openai-sermons.ts", import.meta.url)
+  );
+  const textOfLength = (seed, length) => seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+  const first = {
+    title: "사랑으로 이어지는 두 갈래의 길",
+    summary: "먼저 받은 하나님의 사랑이 두 가지 구체적인 삶의 방향으로 이어지는 과정을 살핍니다.",
+    scripture: "요한복음 3:16",
+    sections: {
+      introduction: textOfLength("하나님의 사랑은 우리를 먼저 찾아옵니다. ", 250),
+      points: [
+        { heading: "먼저 받은 사랑", content: textOfLength("하나님이 먼저 베푸신 사랑을 기억합니다. ", 1_500) },
+        { heading: "이웃에게 전할 사랑", content: textOfLength("받은 사랑을 삶과 관계 속에서 나눕니다. ", 1_500) },
+      ],
+      conclusion: textOfLength("우리는 받은 사랑 안에서 다시 걸어갑니다. ", 250),
+      application: textOfLength("이번 주 한 사람에게 사랑을 구체적으로 나누어 봅시다. ", 250),
+    },
+  };
+  const wrongPoints = {
+    ...first,
+    title: "대지 수가 잘못된 보정 결과",
+    sections: { ...first.sections, points: first.sections.points.slice(0, 1) },
+  };
+  const request = {
+    draftId: "draft-preserve-first-fallback",
+    options: {
+      topic: "하나님의 사랑",
+      aiTier: "advanced",
+      aiTiers: ["advanced", "advanced", "advanced", "advanced", "advanced"],
+      duration: 30,
+      targetCharacters: 8_000,
+      tone: "위로",
+      sermonType: "강해",
+      audience: "청장년",
+      pointCount: 2,
+      referenceMode: "auto",
+    },
+    scripture: "요한복음 3:16",
+    reference: { url: "", notes: "", file: null },
+    existingTitles: [],
+  };
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  let calls = 0;
+  console.warn = () => {};
+  globalThis.fetch = async () => {
+    const value = calls++ === 0 ? first : wrongPoints;
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(value) } }],
+    });
+  };
+  try {
+    const result = await generateAiSermonAlternative(request, 1, {
+      enabled: true,
+      engine: "deepseek",
+      endpoint: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      reasoningEffort: "high",
+      apiKey: "secret-deepseek-key",
+    });
+    assert.equal(calls, 2);
+    assert.equal(result?.value.title, first.title);
+    assert.equal(result?.value.sections.points.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
+test("still rejects structurally complete sermons below the safe fallback floor", async () => {
+  const { generateAiSermonAlternative, UserAiProviderError } = await import(
+    new URL("../app/_lib/openai-sermons.ts", import.meta.url)
+  );
+  const textOfLength = (seed, length) => seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+  const tooShort = {
+    title: "너무 짧게 끝난 사랑의 설교",
+    summary: "필수 구조는 갖추었지만 요청한 설교 시간에 비해 내용이 지나치게 짧은 초안입니다.",
+    scripture: "요한복음 3:16",
+    sections: {
+      introduction: textOfLength("하나님의 사랑은 우리를 먼저 찾아옵니다. ", 120),
+      points: [
+        { heading: "먼저 받은 사랑", content: textOfLength("하나님의 사랑을 기억합니다. ", 500) },
+        { heading: "이웃에게 전할 사랑", content: textOfLength("받은 사랑을 이웃과 나눕니다. ", 500) },
+      ],
+      conclusion: textOfLength("우리는 사랑 안에서 다시 걸어갑니다. ", 120),
+      application: textOfLength("한 사람에게 사랑을 나누어 봅시다. ", 120),
+    },
+  };
+  const request = {
+    draftId: "draft-under-safe-floor",
+    options: {
+      topic: "하나님의 사랑",
+      aiTier: "advanced",
+      aiTiers: ["advanced", "advanced", "advanced", "advanced", "advanced"],
+      duration: 30,
+      targetCharacters: 8_000,
+      tone: "위로",
+      sermonType: "강해",
+      audience: "청장년",
+      pointCount: 2,
+      referenceMode: "auto",
+    },
+    scripture: "요한복음 3:16",
+    reference: { url: "", notes: "", file: null },
+    existingTitles: [],
+  };
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(tooShort) } }],
+    });
+  };
+  try {
+    await assert.rejects(
+      generateAiSermonAlternative(request, 1, {
+        enabled: true,
+        engine: "deepseek",
+        endpoint: "https://api.deepseek.com",
+        model: "deepseek-v4-flash",
+        reasoningEffort: "high",
+        apiKey: "secret-deepseek-key",
+      }),
+      (error) =>
+        error instanceof UserAiProviderError &&
+        error.code === "invalid_response" &&
+        /자동 보정 후에도/.test(error.message),
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not return an underlength fallback after the user aborts its repair", async () => {
+  const { generateAiSermonAlternative, UserAiProviderError } = await import(
+    new URL("../app/_lib/openai-sermons.ts", import.meta.url)
+  );
+  const textOfLength = (seed, length) => seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+  const usable = {
+    title: "중지 전에 준비된 사랑의 초안",
+    summary: "대지와 필수 단락은 갖추었지만 선호 분량보다 짧아 자동 보정을 기다리는 초안입니다.",
+    scripture: "요한복음 3:16",
+    sections: {
+      introduction: textOfLength("하나님의 사랑은 우리를 먼저 찾아옵니다. ", 250),
+      points: [
+        { heading: "먼저 받은 사랑", content: textOfLength("하나님의 사랑을 기억합니다. ", 1_500) },
+        { heading: "이웃에게 전할 사랑", content: textOfLength("받은 사랑을 이웃과 나눕니다. ", 1_500) },
+      ],
+      conclusion: textOfLength("우리는 사랑 안에서 다시 걸어갑니다. ", 250),
+      application: textOfLength("한 사람에게 사랑을 나누어 봅시다. ", 250),
+    },
+  };
+  const request = {
+    draftId: "draft-aborted-fallback",
+    options: {
+      topic: "하나님의 사랑",
+      aiTier: "advanced",
+      aiTiers: ["advanced", "advanced", "advanced", "advanced", "advanced"],
+      duration: 30,
+      targetCharacters: 8_000,
+      tone: "위로",
+      sermonType: "강해",
+      audience: "청장년",
+      pointCount: 2,
+      referenceMode: "auto",
+    },
+    scripture: "요한복음 3:16",
+    reference: { url: "", notes: "", file: null },
+    existingTitles: [],
+  };
+  const controller = new AbortController();
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return Response.json({
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(usable) } }],
+      });
+    }
+    controller.abort();
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(usable) } }],
+    });
+  };
+  try {
+    await assert.rejects(
+      generateAiSermonAlternative(
+        request,
+        1,
+        {
+          enabled: true,
+          engine: "deepseek",
+          endpoint: "https://api.deepseek.com",
+          model: "deepseek-v4-flash",
+          reasoningEffort: "high",
+          apiKey: "secret-deepseek-key",
+        },
+        controller.signal,
+      ),
+      (error) =>
+        error instanceof UserAiProviderError &&
+        error.code === "timeout" &&
+        error.httpStatus === 408,
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not hide an authentication failure behind an earlier fallback", async () => {
+  const { generateAiSermonAlternative, UserAiProviderError } = await import(
+    new URL("../app/_lib/openai-sermons.ts", import.meta.url)
+  );
+  const textOfLength = (seed, length) => seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+  const usable = {
+    title: "인증 확인 전에 준비된 사랑의 초안",
+    summary: "대지와 필수 단락은 갖추었지만 선호 분량보다 짧아 자동 보정을 기다리는 초안입니다.",
+    scripture: "요한복음 3:16",
+    sections: {
+      introduction: textOfLength("하나님의 사랑은 우리를 먼저 찾아옵니다. ", 250),
+      points: [
+        { heading: "먼저 받은 사랑", content: textOfLength("하나님의 사랑을 기억합니다. ", 1_500) },
+        { heading: "이웃에게 전할 사랑", content: textOfLength("받은 사랑을 이웃과 나눕니다. ", 1_500) },
+      ],
+      conclusion: textOfLength("우리는 사랑 안에서 다시 걸어갑니다. ", 250),
+      application: textOfLength("한 사람에게 사랑을 나누어 봅시다. ", 250),
+    },
+  };
+  const request = {
+    draftId: "draft-auth-after-fallback",
+    options: {
+      topic: "하나님의 사랑",
+      aiTier: "advanced",
+      aiTiers: ["advanced", "advanced", "advanced", "advanced", "advanced"],
+      duration: 30,
+      targetCharacters: 8_000,
+      tone: "위로",
+      sermonType: "강해",
+      audience: "청장년",
+      pointCount: 2,
+      referenceMode: "auto",
+    },
+    scripture: "요한복음 3:16",
+    reference: { url: "", notes: "", file: null },
+    existingTitles: [],
+  };
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return Response.json({
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(usable) } }],
+      });
+    }
+    return Response.json({ error: { message: "invalid api key" } }, { status: 401 });
+  };
+  try {
+    await assert.rejects(
+      generateAiSermonAlternative(request, 1, {
+        enabled: true,
+        engine: "deepseek",
+        endpoint: "https://api.deepseek.com",
+        model: "deepseek-v4-flash",
+        reasoningEffort: "high",
+        apiKey: "secret-deepseek-key",
+      }),
+      (error) =>
+        error instanceof UserAiProviderError &&
+        error.code === "auth",
+    );
+    assert.equal(calls, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }

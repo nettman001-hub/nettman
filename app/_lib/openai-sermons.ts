@@ -17,6 +17,7 @@ import {
 
 const MAX_PROVIDER_RESPONSE_BYTES = 2_000_000;
 const PROVIDER_TIMEOUT_MS = 220_000;
+const MINIMUM_USABLE_SERMON_BODY_RATIO = 0.4;
 const SERMON_PERSPECTIVES = [
   "본문의 문맥과 핵심 명제를 차분히 풀어내는 강해적 관점",
   "상처 입은 청중에게 복음의 위로와 회복을 건네는 목회적 관점",
@@ -250,6 +251,47 @@ function generatedSermonValidationIssues(
   return issues;
 }
 
+function sermonBodyCharacterCount(value: SermonAlternative): number {
+  return [
+    value.sections.introduction,
+    ...value.sections.points.flatMap((point) => [point.heading, point.content]),
+    value.sections.conclusion,
+    value.sections.application,
+  ].join("\n").length;
+}
+
+/**
+ * A provider can finish a coherent sermon below our preferred duration target.
+ * After one repair attempt, preserve it only when every structural and
+ * section-quality rule passes and the sole remaining issue is total length.
+ */
+function isUsableGeneratedSermonAfterRepair(
+  value: unknown,
+  pointCount: number,
+  targetCharacters: number,
+  existingTitles: ReadonlySet<string> = new Set<string>(),
+): value is SermonAlternative {
+  if (!isSermonAlternative(value)) return false;
+  const issues = generatedSermonValidationIssues(
+    value,
+    pointCount,
+    targetCharacters,
+    existingTitles,
+  );
+  if (issues.length === 0) return true;
+
+  const bodyCharacters = sermonBodyCharacterCount(value);
+  const preferredMinimum = Math.floor(targetCharacters * 0.65);
+  const usableMinimum = Math.floor(
+    targetCharacters * MINIMUM_USABLE_SERMON_BODY_RATIO,
+  );
+  return (
+    issues.length === 1 &&
+    bodyCharacters < preferredMinimum &&
+    bodyCharacters >= usableMinimum
+  );
+}
+
 function validateGeneratedSermonPayload(
   value: unknown,
   pointCount: number,
@@ -270,9 +312,36 @@ function validateGeneratedSermonPayload(
     targetCharacters,
     existingTitles,
   );
-  return issues.length
-    ? { ok: false, feedback: issues.slice(0, 8).join("\n") }
-    : { ok: true, value: payload };
+  if (!issues.length) return { ok: true, value: payload };
+
+  const candidate = { ...payload, id: "validation" };
+  if (
+    isUsableGeneratedSermonAfterRepair(
+      candidate,
+      pointCount,
+      targetCharacters,
+      existingTitles,
+    )
+  ) {
+    const bodyCharacters = sermonBodyCharacterCount(candidate);
+    return {
+      ok: false,
+      feedback: issues.slice(0, 8).join("\n"),
+      fallback: {
+        value: payload,
+        score: bodyCharacters,
+        diagnostics: {
+          bodyCharacters,
+          preferredMinimum: Math.floor(targetCharacters * 0.65),
+          usableMinimum: Math.floor(
+            targetCharacters * MINIMUM_USABLE_SERMON_BODY_RATIO,
+          ),
+          pointCount,
+        },
+      },
+    };
+  }
+  return { ok: false, feedback: issues.slice(0, 8).join("\n") };
 }
 
 function isValidGeneratedSermon(
@@ -628,7 +697,15 @@ function isEmptyCompletedResponsesResponse(value: unknown): boolean {
 
 type StructuredValueValidation =
   | { ok: true; value: unknown }
-  | { ok: false; feedback: string };
+  | {
+      ok: false;
+      feedback: string;
+      fallback?: {
+        value: unknown;
+        score: number;
+        diagnostics?: Record<string, number | string>;
+      };
+    };
 
 async function structuredResponse(args: {
   name: string;
@@ -645,6 +722,44 @@ async function structuredResponse(args: {
   if (!args.ai) return null;
   const config = args.ai;
   const source = "server";
+  let bestFallback: {
+    value: unknown;
+    score: number;
+    diagnostics?: Record<string, number | string>;
+  } | null = null;
+  let lastProviderEndpoint = config.endpoint;
+  const completed = (value: unknown): AiGenerated<unknown> => {
+    // A response can resolve in the same event-loop turn as the user presses
+    // stop. Re-check the parent signal before any strict or fallback result is
+    // allowed to leave this function and be persisted.
+    if (args.signal?.aborted) {
+      throw new UserAiProviderError(
+        "설교 생성 요청이 중단되었습니다. 저장된 조각 다음부터 다시 시도해 주세요.",
+        "timeout",
+        408,
+      );
+    }
+    return {
+      value,
+      model: config.model,
+      reasoningEffort: config.reasoningEffort,
+      source,
+      engine: config.engine,
+      endpoint: lastProviderEndpoint,
+    };
+  };
+  const completeWithFallback = (reason: string): AiGenerated<unknown> | null => {
+    if (!bestFallback) return null;
+    const result = completed(bestFallback.value);
+    console.warn("[sermon-ai] using best structurally valid draft after repair", {
+      name: args.name,
+      engine: config.engine,
+      model: config.model,
+      reason,
+      ...bestFallback.diagnostics,
+    });
+    return result;
+  };
 
   const controller = new AbortController();
   const abortFromRequest = () => controller.abort();
@@ -676,6 +791,7 @@ async function structuredResponse(args: {
       }, {
         nativeStructuredOutput,
       });
+      lastProviderEndpoint = providerRequest.endpoint;
       if (config.engine === "custom" && !customDnsChecked) {
         await assertCustomEndpointHasPublicDns(providerRequest.endpoint, controller.signal);
         customDnsChecked = true;
@@ -789,6 +905,12 @@ async function structuredResponse(args: {
             continue;
           }
           feedback = validation.feedback;
+          if (
+            validation.fallback &&
+            (!bestFallback || validation.fallback.score >= bestFallback.score)
+          ) {
+            bestFallback = validation.fallback;
+          }
         }
         if (!validValues.length) {
           if (!invalidContentRetryUsed) {
@@ -796,6 +918,8 @@ async function structuredResponse(args: {
             retryFeedback = feedback;
             continue;
           }
+          const fallbackResult = completeWithFallback("strict_length_after_retry");
+          if (fallbackResult) return fallbackResult;
           throw new UserAiProviderError(
             args.invalidResponseMessage ?? "AI 제공자가 요청한 구조의 결과를 반환하지 않았습니다.",
             "invalid_response",
@@ -805,16 +929,22 @@ async function structuredResponse(args: {
         // independently valid JSON object is the intended completion.
         value = validValues.at(-1);
       }
-      return {
-        value,
-        model: config.model,
-        reasoningEffort: config.reasoningEffort,
-        source,
-        engine: config.engine,
-        endpoint: providerRequest.endpoint,
-      };
+      return completed(value);
     }
   } catch (caught) {
+    const recoverableFallbackReason = providerTimedOut
+      ? "repair_timeout"
+      : caught instanceof SyntaxError
+        ? "repair_invalid_json"
+        : caught instanceof UserAiProviderError && caught.code !== "auth"
+          ? `repair_${caught.code}`
+          : null;
+    if (!args.signal?.aborted && recoverableFallbackReason) {
+      const fallbackResult = completeWithFallback(
+        recoverableFallbackReason,
+      );
+      if (fallbackResult) return fallbackResult;
+    }
     if (caught instanceof UserAiProviderError) throw caught;
     if (controller.signal.aborted) {
       if (args.signal?.aborted && !providerTimedOut) {
@@ -1482,7 +1612,11 @@ export async function generateAiSermonAlternative(
     (request.existingTitles ?? []).map((title) => title.trim()).filter(Boolean),
   );
   if (
-    !isValidGeneratedSermon(normalized, pointCount, targetCharacters) ||
+    !isUsableGeneratedSermonAfterRepair(
+      normalized,
+      pointCount,
+      targetCharacters,
+    ) ||
     existingTitles.has(normalized.title.trim())
   ) {
     if (ai) {
@@ -1558,7 +1692,7 @@ export async function generateAiSermons(
   }));
   if (
     !normalized.every((item) =>
-      isValidGeneratedSermon(item, pointCount, targetCharacters),
+      isUsableGeneratedSermonAfterRepair(item, pointCount, targetCharacters),
     ) ||
     new Set(normalized.map((item) => item.title)).size !== SERMON_PERSPECTIVES.length
   ) {
