@@ -71,12 +71,25 @@ function schemaForEngine(engine: AiEngine, schema: Record<string, unknown>): Rec
   return withoutUnsupportedSchemaConstraints(schema, engine) as Record<string, unknown>;
 }
 
+function structuredJsonInstructions(
+  instructions: string,
+  schema: Record<string, unknown>,
+): string {
+  return [
+    instructions,
+    "반드시 설명이나 마크다운 없이 JSON 객체 하나만 반환하세요.",
+    `다음 JSON 스키마와 동일한 키와 구조를 사용하세요:\n${JSON.stringify(schema)}`,
+  ].join("\n\n");
+}
+
 export function buildAiProviderRequest(
   config: AiRequestConfig,
   input: StructuredAiInput,
+  options: { nativeStructuredOutput?: boolean } = {},
 ): AiProviderRequest {
   const endpoint = providerEndpoint(config);
   const schema = schemaForEngine(config.engine, input.schema);
+  const nativeStructuredOutput = options.nativeStructuredOutput !== false;
 
   if (config.engine === "anthropic") {
     return {
@@ -135,11 +148,8 @@ export function buildAiProviderRequest(
   }
 
   if (config.engine === "deepseek") {
-    const jsonInstructions = [
-      input.instructions,
-      "반드시 설명이나 마크다운 없이 JSON 객체만 반환하세요.",
-      `다음 JSON 스키마와 동일한 키와 구조를 사용하세요:\n${JSON.stringify(schema)}`,
-    ].join("\n\n");
+    const jsonInstructions = structuredJsonInstructions(input.instructions, schema);
+    const thinkingEnabled = config.model.trim().toLowerCase().includes("pro");
     return {
       endpoint,
       headers: {
@@ -155,9 +165,9 @@ export function buildAiProviderRequest(
         ],
         max_tokens: input.maxOutputTokens,
         stream: false,
-        response_format: { type: "json_object" },
-        thinking: { type: "enabled" },
-        ...(config.reasoningEffort === "default"
+        ...(nativeStructuredOutput ? { response_format: { type: "json_object" } } : {}),
+        thinking: { type: thinkingEnabled ? "enabled" : "disabled" },
+        ...(!thinkingEnabled || config.reasoningEffort === "default"
           ? {}
           : { reasoning_effort: config.reasoningEffort }),
       },
@@ -199,6 +209,7 @@ export function buildAiProviderRequest(
     config.engine === "custom" &&
     planCustomAiEndpoint(config.endpoint).style === "chat-completions"
   ) {
+    const jsonInstructions = structuredJsonInstructions(input.instructions, schema);
     return {
       endpoint,
       headers: {
@@ -209,23 +220,28 @@ export function buildAiProviderRequest(
       body: {
         model: config.model,
         messages: [
-          { role: "system", content: input.instructions },
+          { role: "system", content: jsonInstructions },
           { role: "user", content: input.input },
         ],
         max_tokens: input.maxOutputTokens,
         stream: false,
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: input.name,
-            strict: true,
-            schema,
-          },
-        },
+        ...(nativeStructuredOutput
+          ? {
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: input.name,
+                  strict: true,
+                  schema,
+                },
+              },
+            }
+          : {}),
       },
     };
   }
 
+  const customPromptOnly = config.engine === "custom" && !nativeStructuredOutput;
   return {
     endpoint,
     headers: {
@@ -239,21 +255,27 @@ export function buildAiProviderRequest(
     },
     body: {
       model: config.model,
-      instructions: input.instructions,
+      instructions: customPromptOnly
+        ? structuredJsonInstructions(input.instructions, schema)
+        : input.instructions,
       input: input.input,
       store: false,
       ...(config.reasoningEffort === "default"
         ? {}
         : { reasoning: { effort: config.reasoningEffort } }),
       max_output_tokens: input.maxOutputTokens,
-      text: {
-        format: {
-          type: "json_schema",
-          name: input.name,
-          strict: true,
-          schema,
-        },
-      },
+      ...(nativeStructuredOutput
+        ? {
+            text: {
+              format: {
+                type: "json_schema",
+                name: input.name,
+                strict: true,
+                schema,
+              },
+            },
+          }
+        : {}),
     },
   };
 }
@@ -264,15 +286,22 @@ function openAiResponseText(payload: JsonObject): string | null {
     return payload.output_text;
   }
   if (!Array.isArray(payload.output)) return null;
+  const parts: string[] = [];
   for (const item of payload.output) {
     if (!isObject(item) || !Array.isArray(item.content)) continue;
     for (const content of item.content) {
-      if (isObject(content) && typeof content.text === "string" && content.text.trim()) {
-        return content.text;
+      if (
+        isObject(content) &&
+        (content.type === "output_text" || content.type === "text" || content.type === undefined) &&
+        typeof content.text === "string" &&
+        content.text.trim()
+      ) {
+        parts.push(content.text);
       }
     }
   }
-  return null;
+  const text = parts.join("");
+  return text.trim() ? text : null;
 }
 
 function anthropicResponseText(payload: JsonObject): string | null {
@@ -300,16 +329,25 @@ function geminiResponseText(payload: JsonObject): string | null {
   return null;
 }
 
-function openRouterResponseText(payload: JsonObject): string | null {
+function chatCompletionResponseText(payload: JsonObject): string | null {
   if (!Array.isArray(payload.choices) || !isObject(payload.choices[0])) return null;
   const choice = payload.choices[0];
   if (typeof choice.finish_reason === "string" && choice.finish_reason !== "stop") return null;
   if (!isObject(choice.message) || choice.message.refusal) return null;
+  if (isObject(choice.message.parsed) || Array.isArray(choice.message.parsed)) {
+    return JSON.stringify(choice.message.parsed);
+  }
   const content = choice.message.content;
   if (typeof content === "string" && content.trim()) return content;
+  if (isObject(content)) return JSON.stringify(content);
   if (!Array.isArray(content)) return null;
   const text = content
-    .filter((item) => isObject(item) && item.type === "text" && typeof item.text === "string")
+    .filter(
+      (item) =>
+        isObject(item) &&
+        (item.type === "text" || item.type === "output_text") &&
+        typeof item.text === "string",
+    )
     .map((item) => (item as JsonObject).text as string)
     .join("");
   return text.trim() ? text : null;
@@ -323,14 +361,17 @@ export function parseAiProviderResponse(
   if (!isObject(value)) return null;
   if (engine === "anthropic") return anthropicResponseText(value);
   if (engine === "gemini") return geminiResponseText(value);
-  if (engine === "deepseek") return openRouterResponseText(value);
-  if (engine === "openrouter") return openRouterResponseText(value);
+  if (engine === "deepseek") return chatCompletionResponseText(value);
+  if (engine === "openrouter") return chatCompletionResponseText(value);
   if (
     engine === "custom" &&
     endpoint &&
     planCustomAiEndpoint(endpoint).style === "chat-completions"
   ) {
-    return openRouterResponseText(value);
+    const text = chatCompletionResponseText(value);
+    if (text) return text;
+    if ("choices" in value || "error" in value || "usage" in value) return null;
+    return JSON.stringify(value);
   }
   return openAiResponseText(value);
 }

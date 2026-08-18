@@ -346,6 +346,124 @@ async function readLimitedProviderBody(response: Response): Promise<string> {
   return result;
 }
 
+function balancedJsonCandidate(value: string): string | null {
+  let candidateCount = 0;
+  for (let start = 0; start < value.length && candidateCount < 32; start += 1) {
+    const opening = value[start];
+    if (opening !== "{" && opening !== "[") continue;
+    candidateCount += 1;
+    const stack: string[] = [opening];
+    let inString = false;
+    let escaped = false;
+    for (let index = start + 1; index < value.length; index += 1) {
+      const character = value[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') {
+        inString = true;
+        continue;
+      }
+      if (character === "{" || character === "[") {
+        stack.push(character);
+        continue;
+      }
+      if (character !== "}" && character !== "]") continue;
+      const expected = character === "}" ? "{" : "[";
+      if (stack.at(-1) !== expected) break;
+      stack.pop();
+      if (stack.length === 0) return value.slice(start, index + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * Provider-side JSON modes are not perfectly uniform. This accepts a JSON value,
+ * a fenced JSON block, or a short explanation followed by one balanced JSON value.
+ * The caller still performs the strict sermon schema and length checks afterwards.
+ */
+export function parseStructuredJsonText(value: string): unknown {
+  const normalized = value.replace(/^\uFEFF/, "").trim();
+  const candidates = [normalized];
+  for (const match of normalized.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    if (match[1]?.trim()) candidates.push(match[1].trim());
+  }
+  const balanced = balancedJsonCandidate(normalized);
+  if (balanced) candidates.push(balanced);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (typeof parsed === "string") {
+        const nested = parsed.trim();
+        if (nested !== candidate && (nested.startsWith("{") || nested.startsWith("["))) {
+          try {
+            return JSON.parse(nested) as unknown;
+          } catch {
+            // The outer JSON string remains the valid parsed value.
+          }
+        }
+      }
+      return parsed;
+    } catch {
+      // Try the next safe candidate. Final shape validation remains authoritative.
+    }
+  }
+  throw new SyntaxError("No complete JSON value was found in the AI response.");
+}
+
+function nativeStructuredOutputUnsupported(status: number, body: string): boolean {
+  if (status !== 400 && status !== 422 && status !== 501) return false;
+  const mentionsFormat =
+    /response[_ -]?format|json[_ -]?schema|structured output|text[._ -]?format/i.test(body);
+  const mentionsUnsupported =
+    /unsupported|not supported|unknown (?:field|parameter)|unrecognized|invalid (?:value|parameter)/i.test(
+      body,
+    );
+  return mentionsFormat && mentionsUnsupported;
+}
+
+function isEmptyCompletedChatResponse(value: unknown): boolean {
+  if (!isRecord(value) || !Array.isArray(value.choices) || !isRecord(value.choices[0])) {
+    return false;
+  }
+  const choice = value.choices[0];
+  if (choice.finish_reason !== "stop" || !isRecord(choice.message)) return false;
+  const message = choice.message;
+  if (message.refusal || message.parsed !== undefined) return false;
+  const content = message.content;
+  if (content === null || content === undefined) return true;
+  if (typeof content === "string") return content.trim().length === 0;
+  if (!Array.isArray(content)) return false;
+  return content.length === 0 || content.every(
+    (part) => isRecord(part) && typeof part.text === "string" && !part.text.trim(),
+  );
+}
+
+function isEmptyCompletedResponsesResponse(value: unknown): boolean {
+  if (!isRecord(value) || value.status !== "completed") return false;
+  if (value.error || value.refusal) return false;
+  if (typeof value.output_text === "string" && value.output_text.trim()) return false;
+  if (!Array.isArray(value.output)) {
+    return value.output_text === "" || value.output_text === null || value.output_text === undefined;
+  }
+  let hasRefusal = false;
+  let hasText = false;
+  for (const item of value.output) {
+    if (!isRecord(item) || !Array.isArray(item.content)) continue;
+    for (const part of item.content) {
+      if (!isRecord(part)) continue;
+      if (part.type === "refusal" || part.refusal) hasRefusal = true;
+      if (typeof part.text === "string" && part.text.trim()) hasText = true;
+    }
+  }
+  return !hasRefusal && !hasText;
+}
+
 async function structuredResponse(args: {
   name: string;
   schema: Record<string, unknown>;
@@ -358,7 +476,6 @@ async function structuredResponse(args: {
 }): Promise<AiGenerated<unknown> | null> {
   if (!args.ai) return null;
   const config = args.ai;
-  const providerRequest = buildAiProviderRequest(config, args);
   const source = "server";
 
   const controller = new AbortController();
@@ -371,68 +488,105 @@ async function structuredResponse(args: {
     controller.abort();
   }, PROVIDER_TIMEOUT_MS);
   try {
-    if (config.engine === "custom" && !args.customDnsChecked) {
-      await assertCustomEndpointHasPublicDns(providerRequest.endpoint, controller.signal);
-    }
-    const response = await fetch(providerRequest.endpoint, {
-      method: "POST",
-      headers: providerRequest.headers,
-      body: JSON.stringify(providerRequest.body),
-      redirect: "error",
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        throw new UserAiProviderError(
-          "API 키가 제공자에게 거부되었습니다. 관리자에게 서버 API 키 확인을 요청해 주세요.",
-          "auth",
-        );
+    let nativeStructuredOutput = true;
+    let customDnsChecked = Boolean(args.customDnsChecked);
+    let invalidContentRetryUsed = false;
+    while (true) {
+      const providerRequest = buildAiProviderRequest(config, args, {
+        nativeStructuredOutput,
+      });
+      if (config.engine === "custom" && !customDnsChecked) {
+        await assertCustomEndpointHasPublicDns(providerRequest.endpoint, controller.signal);
+        customDnsChecked = true;
       }
-      if (response.status === 429) {
+      const response = await fetch(providerRequest.endpoint, {
+        method: "POST",
+        headers: providerRequest.headers,
+        body: JSON.stringify(providerRequest.body),
+        redirect: "error",
+        signal: controller.signal,
+      });
+      const declaredLength = Number(response.headers.get("content-length") ?? 0);
+      if (declaredLength > MAX_PROVIDER_RESPONSE_BYTES) {
         throw new UserAiProviderError(
-          "AI 제공자의 사용량 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.",
-          "rate_limit",
-          429,
-        );
-      }
-      if (response.status === 404) {
-        throw new UserAiProviderError(
-          "API URL 또는 모델을 찾지 못했습니다. 관리자 AI 엔진 설정을 확인해 주세요.",
-          "upstream",
-        );
-      }
-      throw new UserAiProviderError(
-        "선택한 AI 엔진과 연결하지 못했습니다. 모델과 계정 권한을 확인한 뒤 다시 시도해 주세요.",
-        "upstream",
-      );
-    }
-    const declaredLength = Number(response.headers.get("content-length") ?? 0);
-    if (declaredLength > MAX_PROVIDER_RESPONSE_BYTES) {
-      throw new UserAiProviderError(
-        "AI 제공자의 응답이 허용된 크기를 초과했습니다.",
-        "invalid_response",
-      );
-    }
-    const raw = await readLimitedProviderBody(response);
-    const payload = JSON.parse(raw) as unknown;
-    const text = parseAiProviderResponse(config.engine, payload, providerRequest.endpoint);
-    if (!text) {
-      if (args.ai) {
-        throw new UserAiProviderError(
-          "AI 엔진이 완료된 구조화 설교 응답을 반환하지 않았습니다.",
+          "AI 제공자의 응답이 허용된 크기를 초과했습니다.",
           "invalid_response",
         );
       }
-      return null;
+      const raw = await readLimitedProviderBody(response);
+      if (!response.ok) {
+        if (
+          nativeStructuredOutput &&
+          (config.engine === "custom" || config.engine === "deepseek") &&
+          nativeStructuredOutputUnsupported(response.status, raw)
+        ) {
+          nativeStructuredOutput = false;
+          continue;
+        }
+        if (response.status === 401 || response.status === 403) {
+          throw new UserAiProviderError(
+            "API 키가 제공자에게 거부되었습니다. 관리자에게 서버 API 키 확인을 요청해 주세요.",
+            "auth",
+          );
+        }
+        if (response.status === 429) {
+          throw new UserAiProviderError(
+            "AI 제공자의 사용량 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.",
+            "rate_limit",
+            429,
+          );
+        }
+        if (response.status === 404) {
+          throw new UserAiProviderError(
+            "API URL 또는 모델을 찾지 못했습니다. 관리자 AI 엔진 설정을 확인해 주세요.",
+            "upstream",
+          );
+        }
+        throw new UserAiProviderError(
+          "선택한 AI 엔진과 연결하지 못했습니다. 모델과 계정 권한을 확인한 뒤 다시 시도해 주세요.",
+          "upstream",
+        );
+      }
+      const payload = JSON.parse(raw.replace(/^\uFEFF/, "")) as unknown;
+      const text = parseAiProviderResponse(config.engine, payload, providerRequest.endpoint);
+      if (!text) {
+        if (
+          (config.engine === "deepseek" || config.engine === "custom") &&
+          !invalidContentRetryUsed &&
+          (isEmptyCompletedChatResponse(payload) ||
+            isEmptyCompletedResponsesResponse(payload))
+        ) {
+          invalidContentRetryUsed = true;
+          continue;
+        }
+        throw new UserAiProviderError(
+          "AI 엔진이 완료된 설교 JSON을 반환하지 않았습니다.",
+          "invalid_response",
+        );
+      }
+      let value: unknown;
+      try {
+        value = parseStructuredJsonText(text);
+      } catch (caught) {
+        if (
+          caught instanceof SyntaxError &&
+          (config.engine === "deepseek" || config.engine === "custom") &&
+          !invalidContentRetryUsed
+        ) {
+          invalidContentRetryUsed = true;
+          continue;
+        }
+        throw caught;
+      }
+      return {
+        value,
+        model: config.model,
+        reasoningEffort: config.reasoningEffort,
+        source,
+        engine: config.engine,
+        endpoint: providerRequest.endpoint,
+      };
     }
-    return {
-      value: JSON.parse(text) as unknown,
-      model: config.model,
-      reasoningEffort: config.reasoningEffort,
-      source,
-      engine: config.engine,
-      endpoint: providerRequest.endpoint,
-    };
   } catch (caught) {
     if (caught instanceof UserAiProviderError) throw caught;
     if (controller.signal.aborted) {
@@ -450,7 +604,7 @@ async function structuredResponse(args: {
       );
     }
     throw new UserAiProviderError(
-      "AI 엔진의 응답을 처리하지 못했습니다. 모델의 구조화 출력 지원 여부를 확인해 주세요.",
+      "AI 엔진 응답에서 완성된 설교 JSON을 확인하지 못했습니다. 같은 단계부터 다시 시도해 주세요.",
       "invalid_response",
     );
   } finally {

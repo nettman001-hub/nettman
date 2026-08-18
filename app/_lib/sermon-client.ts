@@ -11,6 +11,10 @@ import { notifyTokenWalletChanged } from "./token-wallet-events.ts";
 
 export const GENERATION_REQUEST_TIMEOUT_MS = 250_000;
 
+function throwIfGenerationAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+}
+
 function isGenerationPart(value: unknown): value is SermonGenerationPart {
   if (!value || typeof value !== "object") return false;
   const part = value as Partial<SermonGenerationPart>;
@@ -33,6 +37,27 @@ async function responseError(response: Response, fallback: string): Promise<stri
   } catch {
     return fallback;
   }
+}
+
+async function usesFragmentedGeneration(
+  request: GenerateSermonsRequest,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  throwIfGenerationAborted(signal);
+  if (!request.options.aiTier) return false;
+  const query = new URLSearchParams({ aiTier: request.options.aiTier });
+  const response = await fetch(`/api/sermons/generate?${query}`, {
+    method: "GET",
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(
+      await responseError(response, "AI 엔진의 생성 방식을 확인하지 못했습니다."),
+    );
+  }
+  const body = (await response.json()) as { fragmented?: unknown };
+  return body.fragmented === true;
 }
 
 export async function requestSermonGeneration(
@@ -85,7 +110,7 @@ export async function requestSermonGenerationSequence(
   },
 ): Promise<GenerateSermonsResponse> {
   const clientUserScope = options.clientUserScope ?? null;
-  const useFragmentedGeneration = false;
+  const useFragmentedGeneration = await usesFragmentedGeneration(request, options.signal);
   const alternatives = [...(options.completed ?? [])];
   let parts = useFragmentedGeneration
     ? (options.completedParts ?? []).filter(isGenerationPart)
@@ -98,7 +123,7 @@ export async function requestSermonGenerationSequence(
   };
 
   for (let index = alternatives.length; index < options.expectedCount; index += 1) {
-    if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    throwIfGenerationAborted(options.signal);
     const position = (index + 1) as 1 | 2 | 3 | 4 | 5;
     let positionParts = parts
       .filter((part) => part.position === position)
@@ -129,6 +154,7 @@ export async function requestSermonGenerationSequence(
           controller.signal,
           clientUserScope,
         );
+        throwIfGenerationAborted(options.signal);
         if (generationStep) {
           const stepCount = result.generationStepCount;
           if (
@@ -149,6 +175,7 @@ export async function requestSermonGenerationSequence(
             ...parts.filter((part) => part.position !== position),
             ...positionParts,
           ];
+          throwIfGenerationAborted(options.signal);
           options.onStepProgress?.(
             [...parts],
             position,
@@ -175,6 +202,7 @@ export async function requestSermonGenerationSequence(
         alternatives.push(alternative);
         parts = parts.filter((part) => part.position !== position);
         latest = { ...result, alternatives: [...alternatives] };
+        throwIfGenerationAborted(options.signal);
         options.onProgress?.([...alternatives], alternatives.length);
         break;
       } catch (caught) {
@@ -195,6 +223,7 @@ export async function requestSermonGenerationSequence(
     }
   }
 
+  throwIfGenerationAborted(options.signal);
   return {
     ...latest,
     alternatives,

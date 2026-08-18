@@ -303,13 +303,10 @@ export function SermonGuestGate({ returnTo }: { returnTo: string }) {
 }
 
 export function OptionBadges({ draft }: { draft: SermonDraft }) {
-  const engineItems = normalizeSermonAiTiers(draft.options).map((tier, index) => ({
-    key: `engine-${index + 1}`,
-    label: `${index + 1}단계 ${AI_ENGINE_TIER_META[tier].label}`,
-  }));
+  const selectedTier = normalizeSermonAiTiers(draft.options)[0];
   const items = [
     { key: "topic", label: draft.options.topic },
-    ...engineItems,
+    { key: "engine", label: `AI ${AI_ENGINE_TIER_META[selectedTier].label}` },
     { key: "type", label: draft.options.sermonType },
     { key: "audience", label: draft.options.audience },
     {

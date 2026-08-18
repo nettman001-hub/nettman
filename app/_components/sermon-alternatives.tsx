@@ -26,6 +26,7 @@ export function SermonAlternatives() {
   const { draft, ready, isGuest, clientUserScope, updateDraft } = useSermonWorkflow();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationStep, setGenerationStep] = useState<{
     position: number;
@@ -115,6 +116,7 @@ export function SermonAlternatives() {
       ? draft.generation
       : createSermonGeneration("regenerate", 5);
     setRegenerating(true);
+    setStopping(false);
     setGenerationStep(null);
     setGenerationProgress(generation.alternatives.length);
     setError("");
@@ -141,6 +143,7 @@ export function SermonAlternatives() {
           signal: controller.signal,
           clientUserScope: clientUserScope ?? null,
           onStepProgress: (parts, position, completed, total) => {
+            if (controller.signal.aborted) return;
             setGenerationStep({ position, completed, total });
             updateDraft((current) =>
               current.generation?.id === generation.id
@@ -153,6 +156,7 @@ export function SermonAlternatives() {
             );
           },
           onProgress: (alternatives, completedCount) => {
+            if (controller.signal.aborted) return;
             setGenerationProgress(completedCount);
             setGenerationStep(null);
             updateDraft((current) =>
@@ -173,6 +177,7 @@ export function SermonAlternatives() {
           },
         },
       );
+      if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
       if (
         result.alternatives.length !== 5 ||
         !result.alternatives.every(isSermonAlternative)
@@ -195,7 +200,8 @@ export function SermonAlternatives() {
       setSelectedId(null);
     } catch (caught) {
       const message =
-        caught instanceof DOMException && caught.name === "AbortError"
+        controller.signal.aborted ||
+        (caught instanceof Error && caught.name === "AbortError")
           ? "새 초안 생성이 중단되었습니다. 완성된 번호부터 이어서 만들 수 있습니다."
           : caught instanceof Error
             ? caught.message
@@ -217,8 +223,16 @@ export function SermonAlternatives() {
         generationController.current = null;
       }
       setRegenerating(false);
+      setStopping(false);
       setGenerationStep(null);
     }
+  };
+
+  const stopGeneration = () => {
+    const controller = generationController.current;
+    if (!controller || controller.signal.aborted) return;
+    setStopping(true);
+    controller.abort();
   };
 
   const pendingGeneration =
@@ -342,7 +356,7 @@ export function SermonAlternatives() {
       {error ? (
         <div className="sermon-inline-alert is-error" role="alert">
           <div>
-            <strong>새로 생성하지 못했습니다</strong>
+            <strong>{error.includes("중단되었습니다") ? "새 초안 생성을 중지했습니다" : "새로 생성하지 못했습니다"}</strong>
             <p>{error}</p>
           </div>
           <button type="button" onClick={() => void regenerate()}>
@@ -352,18 +366,28 @@ export function SermonAlternatives() {
       ) : null}
 
       <footer className="sermon-form-actions is-sticky">
-        <button
-          type="button"
-          className="sermon-button is-secondary"
-          onClick={() => void regenerate()}
-          disabled={regenerating}
-        >
-          {isGuest
-            ? "다른 초안은 로그인 후"
-            : pendingGeneration
-              ? "남은 초안 이어 만들기"
-              : "새로 생성"}
-        </button>
+        {regenerating ? (
+          <button
+            type="button"
+            className="sermon-button is-danger"
+            onClick={stopGeneration}
+            disabled={stopping}
+          >
+            {stopping ? "중지 처리 중…" : "생성 중지"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="sermon-button is-secondary"
+            onClick={() => void regenerate()}
+          >
+            {isGuest
+              ? "다른 초안은 로그인 후"
+              : pendingGeneration
+                ? "남은 초안 이어 만들기"
+                : "새로 생성"}
+          </button>
+        )}
         <div>
           <p>{selectedId ? "선택한 설교로 수정 단계에 들어갑니다." : "초안 하나를 선택해 주세요."}</p>
           <button

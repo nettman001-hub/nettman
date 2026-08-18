@@ -37,10 +37,10 @@ import {
   SERMON_AUDIENCES,
   SERMON_DURATIONS,
   SERMON_POINT_COUNTS,
-  SERMON_TONES,
   SERMON_TYPES,
   durationToTargetCharacters,
   isSermonAlternative,
+  isSermonToneValue,
   normalizeSermonAiTiers,
   type GenerateSermonsRequest,
   type SermonAlternative,
@@ -48,7 +48,6 @@ import {
   type SermonDuration,
   type SermonGenerationPart,
   type SermonPointCount,
-  type SermonTone,
   type SermonType,
 } from "@/app/_lib/sermon-types";
 
@@ -562,6 +561,27 @@ function generationResponse(args: {
   );
 }
 
+export async function GET(request: Request): Promise<Response> {
+  const user = await getRequestUser(request);
+  if (!user) {
+    return Response.json(
+      { fragmented: false },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  const tier = new URL(request.url).searchParams.get("aiTier");
+  if (!isAiEngineTier(tier)) return error("사용할 AI 엔진 등급을 다시 선택해 주세요.");
+  try {
+    const config = (await getManagedAiRequestConfigs(getD1()))[tier];
+    return Response.json(
+      { fragmented: usesFragmentedSermonGeneration(config) },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch {
+    return error("AI 엔진의 생성 방식을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.", 503);
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   const user = await getRequestUser(request);
   if (!user && hasGuestPreviewCookie(request)) {
@@ -635,7 +655,7 @@ export async function POST(request: Request): Promise<Response> {
       suppliedAiTiers.length !== 5 ||
       !suppliedAiTiers.every(isAiEngineTier))
   ) {
-    return error("다섯 단계의 AI 엔진 등급을 다시 선택해 주세요.");
+    return error("AI 엔진 등급을 다시 선택해 주세요.");
   }
   if (!isAiEngineTier(options.aiTier) && suppliedAiTiers === undefined) {
     return error("사용할 AI 엔진 등급을 다시 선택해 주세요.");
@@ -647,8 +667,8 @@ export async function POST(request: Request): Promise<Response> {
   if (!isOneOf(options.duration, SERMON_DURATIONS)) {
     return error("설교 분량을 다시 선택해 주세요.");
   }
-  if (!isOneOf(options.tone, SERMON_TONES)) {
-    return error("설교 감정선을 다시 선택해 주세요.");
+  if (!isSermonToneValue(options.tone)) {
+    return error("설교 감정선은 2자 이상 40자 이하로 선택하거나 입력해 주세요.");
   }
   if (!isOneOf(options.sermonType, SERMON_TYPES)) {
     return error("설교 유형을 다시 선택해 주세요.");
@@ -670,24 +690,28 @@ export async function POST(request: Request): Promise<Response> {
   const managedAiConfigs: ManagedAiRequestConfigs = user
     ? await getManagedAiRequestConfigs(db)
     : { basic: undefined, advanced: undefined, reasoning: undefined };
-  const unavailableTierIndex = user
-    ? aiTiers.findIndex(
-        (tier) => tier !== "basic" && !managedAiConfigs[tier],
-      )
-    : -1;
-  if (unavailableTierIndex >= 0) {
+  const selectedAiTier = aiTiers[0];
+  if (user && selectedAiTier !== "basic" && !managedAiConfigs[selectedAiTier]) {
     return error(
-      `${unavailableTierIndex + 1}단계에서 선택한 AI 엔진은 아직 관리자가 사용할 수 있도록 설정하지 않았습니다.`,
+      "선택한 AI 엔진은 아직 관리자가 사용할 수 있도록 설정하지 않았습니다.",
       409,
     );
   }
-  const selectedAiTier = aiTiers[(position ?? 1) - 1];
   const userAi = user ? managedAiConfigs[selectedAiTier] : undefined;
   if (
     generationStep !== undefined &&
     !usesFragmentedSermonGeneration(userAi)
   ) {
     return error("세부 단계 생성은 로컬 LLM(OpenAI 호환) 연결에서만 사용할 수 있습니다.");
+  }
+  if (
+    usesFragmentedSermonGeneration(userAi) &&
+    (!splitGeneration || generationStep === undefined)
+  ) {
+    return error(
+      "로컬 LLM 생성 방식이 변경되었습니다. 저장된 진행 상태부터 다시 시도해 주세요.",
+      409,
+    );
   }
 
   const reference = input.reference ?? { url: "", notes: "", file: null };
@@ -727,7 +751,7 @@ export async function POST(request: Request): Promise<Response> {
       aiTiers,
       duration,
       targetCharacters: durationToTargetCharacters(duration),
-      tone: options.tone as SermonTone,
+      tone: options.tone.trim(),
       sermonType: options.sermonType as SermonType,
       audience: options.audience as SermonAudience,
       pointCount: options.pointCount as SermonPointCount,

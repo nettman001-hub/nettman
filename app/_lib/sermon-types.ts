@@ -6,6 +6,7 @@ import {
 
 export const SERMON_DURATIONS = [5, 10, 20, 30] as const;
 export const SERMON_TONES = ["위로", "도전", "감동", "경고"] as const;
+export const MAX_SERMON_TONE_LENGTH = 40;
 export const SERMON_TYPES = ["강해", "주제", "내러티브"] as const;
 export const SERMON_AUDIENCES = ["청장년", "대학부", "청소년", "초등부"] as const;
 export const SERMON_POINT_COUNTS = [1, 2, 3, 4] as const;
@@ -48,11 +49,12 @@ export type SermonOptions = {
   topic: string;
   /** 첫 번째 초안 엔진. 이전 저장 데이터와 수정 요청의 호환성을 위해 유지합니다. */
   aiTier: AiEngineTier;
-  /** 다섯 초안에 각각 적용할 엔진 등급입니다. */
+  /** 이전 저장 데이터와 API 호환을 위한 다섯 칸짜리 미러입니다. 모든 값은 aiTier와 같습니다. */
   aiTiers: SermonAiTiers;
   duration: SermonDuration | null;
   targetCharacters: number | null;
-  tone: SermonTone | "";
+  /** 기본 감정선 또는 사용자가 '기타'에 입력한 짧은 감정선입니다. */
+  tone: string;
   sermonType: SermonType | "";
   audience: SermonAudience | "";
   pointCount: SermonPointCount | null;
@@ -209,15 +211,27 @@ export function normalizeSermonAiTiers(value: {
   aiTier?: unknown;
   aiTiers?: unknown;
 }): SermonAiTiers {
-  if (
+  const legacyTier =
     Array.isArray(value.aiTiers) &&
     value.aiTiers.length === SERMON_ALTERNATIVE_POSITIONS.length &&
     value.aiTiers.every(isAiEngineTier)
-  ) {
-    return [...value.aiTiers] as SermonAiTiers;
-  }
-  const fallback = isAiEngineTier(value.aiTier) ? value.aiTier : "basic";
-  return [fallback, fallback, fallback, fallback, fallback];
+      ? value.aiTiers[0]
+      : "basic";
+  const selected = isAiEngineTier(value.aiTier) ? value.aiTier : legacyTier;
+  return [selected, selected, selected, selected, selected];
+}
+
+export function isSermonToneValue(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim();
+  return (
+    normalized.length >= 2 &&
+    normalized.length <= MAX_SERMON_TONE_LENGTH &&
+    ![...normalized].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    })
+  );
 }
 
 export function sermonAiTierForPosition(
@@ -233,7 +247,7 @@ export function isSermonOptionsComplete(options: SermonOptions): boolean {
     isAiEngineTier(options.aiTier) &&
     normalizeSermonAiTiers(options).every(isAiEngineTier) &&
     options.duration !== null &&
-    options.tone !== "" &&
+    isSermonToneValue(options.tone) &&
     options.sermonType !== "" &&
     options.audience !== "" &&
     options.pointCount !== null

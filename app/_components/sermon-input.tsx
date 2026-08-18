@@ -48,6 +48,7 @@ export function SermonInput() {
   });
   const [submitted, setSubmitted] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationStep, setGenerationStep] = useState<{
     position: number;
@@ -132,6 +133,7 @@ export function SermonInput() {
     setError("");
     if (!canGenerate) return;
     setGenerating(true);
+    setStopping(false);
     setGenerationStep(null);
     const cleanScripture = scripture.trim();
     const cleanReference = draft.options.referenceMode === "manual"
@@ -186,6 +188,7 @@ export function SermonInput() {
           signal: controller.signal,
           clientUserScope: clientUserScope ?? null,
           onStepProgress: (parts, position, completed, total) => {
+            if (controller.signal.aborted) return;
             setGenerationStep({ position, completed, total });
             updateDraft((current) =>
               current.generation?.id === generation.id
@@ -198,6 +201,7 @@ export function SermonInput() {
             );
           },
           onProgress: (alternatives, completedCount) => {
+            if (controller.signal.aborted) return;
             setGenerationProgress(completedCount);
             setGenerationStep(null);
             updateDraft((current) =>
@@ -218,6 +222,7 @@ export function SermonInput() {
           },
         },
       );
+      if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
       if (
         result.alternatives.length !== expectedCount ||
         !result.alternatives.every(isSermonAlternative) ||
@@ -246,7 +251,8 @@ export function SermonInput() {
       router.push(sermonDraftUrl("/sermon/alternatives", draft.id));
     } catch (caught) {
       const message =
-        caught instanceof DOMException && caught.name === "AbortError"
+        controller.signal.aborted ||
+        (caught instanceof Error && caught.name === "AbortError")
           ? "초안 생성이 중단되었습니다. 완성된 초안부터 이어서 만들 수 있습니다."
           : caught instanceof Error
             ? caught.message
@@ -268,8 +274,16 @@ export function SermonInput() {
         generationController.current = null;
       }
       setGenerating(false);
+      setStopping(false);
       setGenerationStep(null);
     }
+  };
+
+  const stopGeneration = () => {
+    const controller = generationController.current;
+    if (!controller || controller.signal.aborted) return;
+    setStopping(true);
+    controller.abort();
   };
 
   const pendingGeneration =
@@ -446,7 +460,7 @@ export function SermonInput() {
       {error ? (
         <div className="sermon-inline-alert is-error" role="alert">
           <div>
-            <strong>초안을 준비하지 못했습니다</strong>
+            <strong>{error.includes("중단되었습니다") ? "초안 생성을 중지했습니다" : "초안을 준비하지 못했습니다"}</strong>
             <p>{error}</p>
           </div>
           {error.includes("토큰") ? (
@@ -469,6 +483,16 @@ export function SermonInput() {
           이전 단계
         </button>
         <div className="sermon-generate-actions">
+          {generating ? (
+            <button
+              className="sermon-button is-danger"
+              type="button"
+              onClick={stopGeneration}
+              disabled={stopping}
+            >
+              {stopping ? "중지 처리 중…" : "생성 중지"}
+            </button>
+          ) : null}
           <button
             className="sermon-button is-primary"
             type="button"

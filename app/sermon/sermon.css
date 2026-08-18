@@ -131,6 +131,8 @@
 .sermon-button.is-primary:hover:not(:disabled) { background: #0f2a21; }
 .sermon-button.is-secondary { border-color: var(--sermon-line); background: var(--sermon-paper); color: var(--sermon-ink); }
 .sermon-button.is-secondary:hover:not(:disabled) { border-color: #95a49c; background: #f3f6f1; }
+.sermon-button.is-danger { border-color: #8e3f34; background: #8e3f34; color: #fff; box-shadow: 0 10px 24px rgba(92, 34, 26, 0.14); }
+.sermon-button.is-danger:hover:not(:disabled) { border-color: #713026; background: #713026; }
 .sermon-button-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem; }
 .sermon-button-row.is-centered { justify-content: center; }
 
@@ -278,6 +280,7 @@
 .sermon-reference-choices input { position: absolute; opacity: 0; pointer-events: none; }
 .sermon-choice-grid label:has(input:focus-visible),
 .sermon-reference-choices label:has(input:focus-visible) { outline: 3px solid rgba(199, 108, 77, 0.35); outline-offset: 2px; }
+.sermon-custom-tone-input { margin-top: 0.9rem; }
 .sermon-reference-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
 .sermon-reference-choices.is-engine-tiers { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .sermon-reference-choices label {
@@ -298,6 +301,8 @@
 .sermon-engine-stage > legend { margin: 0; padding: 0 0.35rem; color: #29493a; font-family: var(--font-serif); font-size: 1rem; font-weight: 850; }
 .sermon-engine-stage > p { margin: 0 0 0.8rem; color: var(--sermon-muted); font-size: 0.68rem; }
 .sermon-engine-stage .sermon-reference-choices label { background: #fffdf8; padding: 0.9rem; }
+.sermon-engine-stage.is-single .sermon-reference-choices strong { font-size: 1rem; }
+.sermon-engine-stage.is-single .sermon-reference-choices span { font-size: 0.78rem; }
 .sermon-engine-token-total { display: flex; align-items: center; justify-content: flex-end; gap: 0.55rem; margin: 1rem 0 0; color: var(--sermon-muted); font-size: 0.72rem; }
 .sermon-engine-token-total strong { color: #29493a; font-size: 0.82rem; }
 .sermon-form-actions {
