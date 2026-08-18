@@ -105,39 +105,182 @@ function id(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-function isValidGeneratedSermon(
+type GeneratedSermonPayload = Omit<SermonAlternative, "id">;
+
+function shallowStructuredPayloadCandidates(
+  value: unknown,
+  wrapperKeys: readonly string[],
+): unknown[] {
+  const candidates: unknown[] = [value];
+  if (Array.isArray(value) && value.length === 1) candidates.push(value[0]);
+  if (!isRecord(value)) return candidates;
+
+  for (const key of wrapperKeys) {
+    const nested = value[key];
+    if (isRecord(nested)) candidates.push(nested);
+    else if (Array.isArray(nested) && nested.length === 1) candidates.push(nested[0]);
+    else if (nested !== undefined) candidates.push(nested);
+  }
+  const entries = Object.entries(value);
+  if (entries.length === 1) {
+    const nested = entries[0][1];
+    if (isRecord(nested)) candidates.push(nested);
+    if (Array.isArray(nested) && nested.length === 1) candidates.push(nested[0]);
+  }
+  return candidates.slice(0, 8);
+}
+
+function generatedSermonPayloadCandidates(value: unknown): unknown[] {
+  return shallowStructuredPayloadCandidates(value, [
+    "sermon",
+    "alternative",
+    "result",
+    "data",
+    "alternatives",
+  ]);
+}
+
+function normalizeGeneratedSermonPayload(value: unknown): GeneratedSermonPayload | null {
+  for (const candidate of generatedSermonPayloadCandidates(value)) {
+    if (!isRecord(candidate) || !isRecord(candidate.sections)) continue;
+    const sections = candidate.sections;
+    if (
+      typeof candidate.title !== "string" ||
+      typeof candidate.summary !== "string" ||
+      typeof candidate.scripture !== "string" ||
+      typeof sections.introduction !== "string" ||
+      !Array.isArray(sections.points) ||
+      typeof sections.conclusion !== "string" ||
+      typeof sections.application !== "string"
+    ) {
+      continue;
+    }
+    const points = sections.points.map((point) => {
+      if (
+        !isRecord(point) ||
+        typeof point.heading !== "string" ||
+        typeof point.content !== "string"
+      ) {
+        return null;
+      }
+      return {
+        heading: point.heading.trim(),
+        content: point.content.trim(),
+      };
+    });
+    if (points.some((point) => point === null)) continue;
+    return {
+      title: candidate.title.trim(),
+      summary: candidate.summary.trim(),
+      scripture: candidate.scripture.trim(),
+      sections: {
+        introduction: sections.introduction.trim(),
+        points: points as Array<{ heading: string; content: string }>,
+        conclusion: sections.conclusion.trim(),
+        application: sections.application.trim(),
+      },
+    };
+  }
+  return null;
+}
+
+function generatedSermonValidationIssues(
   value: unknown,
   pointCount: number,
   targetCharacters: number,
-): value is SermonAlternative {
-  if (!isSermonAlternative(value) || value.sections.points.length !== pointCount) {
-    return false;
+  existingTitles: ReadonlySet<string> = new Set<string>(),
+): string[] {
+  if (!isSermonAlternative(value)) {
+    return [
+      "title, summary, scripture, sections.introduction, sections.points, sections.conclusion, sections.application 필드를 모두 포함하세요.",
+    ];
   }
+  const issues: string[] = [];
   const bodyCharacters = [
     value.sections.introduction,
     ...value.sections.points.flatMap((point) => [point.heading, point.content]),
     value.sections.conclusion,
     value.sections.application,
   ].join("\n").length;
-  return (
-    value.title.length >= 4 &&
-    value.title.length <= 100 &&
-    value.summary.length >= 20 &&
-    value.summary.length <= 500 &&
-    value.scripture.length >= 4 &&
-    value.scripture.length <= 80 &&
-    value.sections.introduction.length >= 80 &&
-    value.sections.conclusion.length >= 80 &&
-    value.sections.application.length >= 80 &&
-    bodyCharacters >= Math.floor(targetCharacters * 0.65) &&
-    bodyCharacters <= Math.ceil(targetCharacters * 1.4) &&
-    value.sections.points.every(
-      (point) =>
-        point.heading.length >= 4 &&
-        point.heading.length <= 100 &&
-        point.content.length >= 120,
-    )
+  const minimumBodyCharacters = Math.floor(targetCharacters * 0.65);
+  const maximumBodyCharacters = Math.ceil(targetCharacters * 1.4);
+
+  if (value.sections.points.length !== pointCount) {
+    issues.push(`대지는 정확히 ${pointCount}개여야 합니다. 현재 ${value.sections.points.length}개입니다.`);
+  }
+  if (value.title.length < 4 || value.title.length > 100) {
+    issues.push("제목은 4자 이상 100자 이하로 작성하세요.");
+  }
+  if (existingTitles.has(value.title.trim())) {
+    issues.push("기존 초안과 겹치지 않는 새 제목을 사용하세요.");
+  }
+  if (value.summary.length < 20 || value.summary.length > 500) {
+    issues.push("요약은 20자 이상 500자 이하로 작성하세요.");
+  }
+  if (value.scripture.length < 4 || value.scripture.length > 80) {
+    issues.push("성경 본문 표기는 4자 이상 80자 이하로 작성하세요.");
+  }
+  if (value.sections.introduction.length < 80) {
+    issues.push(`도입은 80자 이상이어야 합니다. 현재 ${value.sections.introduction.length}자입니다.`);
+  }
+  if (value.sections.conclusion.length < 80) {
+    issues.push(`결론은 80자 이상이어야 합니다. 현재 ${value.sections.conclusion.length}자입니다.`);
+  }
+  if (value.sections.application.length < 80) {
+    issues.push(`삶의 적용은 80자 이상이어야 합니다. 현재 ${value.sections.application.length}자입니다.`);
+  }
+  if (bodyCharacters < minimumBodyCharacters) {
+    issues.push(
+      `설교 본문 전체는 최소 ${minimumBodyCharacters}자여야 합니다. 현재 ${bodyCharacters}자입니다. 각 단락을 구체적으로 확장하세요.`,
+    );
+  }
+  if (bodyCharacters > maximumBodyCharacters) {
+    issues.push(
+      `설교 본문 전체는 최대 ${maximumBodyCharacters}자여야 합니다. 현재 ${bodyCharacters}자입니다. 핵심을 유지하며 줄이세요.`,
+    );
+  }
+  value.sections.points.forEach((point, index) => {
+    if (point.heading.length < 4 || point.heading.length > 100) {
+      issues.push(`${index + 1}대지 제목은 4자 이상 100자 이하로 작성하세요.`);
+    }
+    if (point.content.length < 120) {
+      issues.push(`${index + 1}대지 내용은 120자 이상이어야 합니다. 현재 ${point.content.length}자입니다.`);
+    }
+  });
+  return issues;
+}
+
+function validateGeneratedSermonPayload(
+  value: unknown,
+  pointCount: number,
+  targetCharacters: number,
+  existingTitles: ReadonlySet<string>,
+): StructuredValueValidation {
+  const payload = normalizeGeneratedSermonPayload(value);
+  if (!payload) {
+    return {
+      ok: false,
+      feedback:
+        "설교 JSON 최상위에 title, summary, scripture, sections 객체를 두고, sections 안에 introduction, points, conclusion, application을 넣으세요.",
+    };
+  }
+  const issues = generatedSermonValidationIssues(
+    { ...payload, id: "validation" },
+    pointCount,
+    targetCharacters,
+    existingTitles,
   );
+  return issues.length
+    ? { ok: false, feedback: issues.slice(0, 8).join("\n") }
+    : { ok: true, value: payload };
+}
+
+function isValidGeneratedSermon(
+  value: unknown,
+  pointCount: number,
+  targetCharacters: number,
+): value is SermonAlternative {
+  return generatedSermonValidationIssues(value, pointCount, targetCharacters).length === 0;
 }
 
 function sermonJsonSchema(pointCount: number) {
@@ -346,7 +489,8 @@ async function readLimitedProviderBody(response: Response): Promise<string> {
   return result;
 }
 
-function balancedJsonCandidate(value: string): string | null {
+function balancedJsonCandidates(value: string): string[] {
+  const candidates: string[] = [];
   let candidateCount = 0;
   for (let start = 0; start < value.length && candidateCount < 32; start += 1) {
     const opening = value[start];
@@ -375,10 +519,54 @@ function balancedJsonCandidate(value: string): string | null {
       const expected = character === "}" ? "{" : "[";
       if (stack.at(-1) !== expected) break;
       stack.pop();
-      if (stack.length === 0) return value.slice(start, index + 1);
+      if (stack.length === 0) {
+        candidates.push(value.slice(start, index + 1));
+        start = index;
+        break;
+      }
     }
   }
-  return null;
+  return candidates;
+}
+
+function parseJsonCandidate(candidate: string): unknown {
+  const parsed = JSON.parse(candidate) as unknown;
+  if (typeof parsed !== "string") return parsed;
+  const nested = parsed.trim();
+  if (nested !== candidate && (nested.startsWith("{") || nested.startsWith("["))) {
+    try {
+      return JSON.parse(nested) as unknown;
+    } catch {
+      // The outer JSON string is still a valid parsed value.
+    }
+  }
+  return parsed;
+}
+
+export function parseStructuredJsonCandidates(value: string): unknown[] {
+  const normalized = value.replace(/^\uFEFF/, "").trim();
+  const candidateTexts = [normalized];
+  let fenceCount = 0;
+  for (const match of normalized.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    if (match[1]?.trim()) candidateTexts.push(match[1].trim());
+    fenceCount += 1;
+    if (fenceCount >= 32) break;
+  }
+  candidateTexts.push(...balancedJsonCandidates(normalized));
+
+  const parsed: unknown[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidateTexts) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      parsed.push(parseJsonCandidate(candidate));
+    } catch {
+      // Continue through the bounded candidate list.
+    }
+  }
+  if (parsed.length) return parsed;
+  throw new SyntaxError("No complete JSON value was found in the AI response.");
 }
 
 /**
@@ -387,33 +575,7 @@ function balancedJsonCandidate(value: string): string | null {
  * The caller still performs the strict sermon schema and length checks afterwards.
  */
 export function parseStructuredJsonText(value: string): unknown {
-  const normalized = value.replace(/^\uFEFF/, "").trim();
-  const candidates = [normalized];
-  for (const match of normalized.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
-    if (match[1]?.trim()) candidates.push(match[1].trim());
-  }
-  const balanced = balancedJsonCandidate(normalized);
-  if (balanced) candidates.push(balanced);
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate) as unknown;
-      if (typeof parsed === "string") {
-        const nested = parsed.trim();
-        if (nested !== candidate && (nested.startsWith("{") || nested.startsWith("["))) {
-          try {
-            return JSON.parse(nested) as unknown;
-          } catch {
-            // The outer JSON string remains the valid parsed value.
-          }
-        }
-      }
-      return parsed;
-    } catch {
-      // Try the next safe candidate. Final shape validation remains authoritative.
-    }
-  }
-  throw new SyntaxError("No complete JSON value was found in the AI response.");
+  return parseStructuredJsonCandidates(value)[0];
 }
 
 function nativeStructuredOutputUnsupported(status: number, body: string): boolean {
@@ -464,6 +626,10 @@ function isEmptyCompletedResponsesResponse(value: unknown): boolean {
   return !hasRefusal && !hasText;
 }
 
+type StructuredValueValidation =
+  | { ok: true; value: unknown }
+  | { ok: false; feedback: string };
+
 async function structuredResponse(args: {
   name: string;
   schema: Record<string, unknown>;
@@ -473,6 +639,8 @@ async function structuredResponse(args: {
   ai?: AiRequestConfig;
   signal?: AbortSignal;
   customDnsChecked?: boolean;
+  validate?: (value: unknown) => StructuredValueValidation;
+  invalidResponseMessage?: string;
 }): Promise<AiGenerated<unknown> | null> {
   if (!args.ai) return null;
   const config = args.ai;
@@ -491,8 +659,21 @@ async function structuredResponse(args: {
     let nativeStructuredOutput = true;
     let customDnsChecked = Boolean(args.customDnsChecked);
     let invalidContentRetryUsed = false;
+    let retryFeedback: string | null = null;
     while (true) {
-      const providerRequest = buildAiProviderRequest(config, args, {
+      const providerRequest = buildAiProviderRequest(config, {
+        name: args.name,
+        schema: args.schema,
+        instructions: retryFeedback
+          ? [
+              args.instructions,
+              "이전 응답이 아래 검증 기준을 충족하지 못했습니다. 같은 설교 전체를 처음부터 다시 작성하고 모든 항목을 교정하세요.",
+              retryFeedback,
+            ].join("\n\n")
+          : args.instructions,
+        input: args.input,
+        maxOutputTokens: args.maxOutputTokens,
+      }, {
         nativeStructuredOutput,
       });
       if (config.engine === "custom" && !customDnsChecked) {
@@ -548,6 +729,21 @@ async function structuredResponse(args: {
         );
       }
       const payload = JSON.parse(raw.replace(/^\uFEFF/, "")) as unknown;
+      if (isRecord(payload) && isRecord(payload.error)) {
+        const providerError = JSON.stringify(payload.error).slice(0, 5_000);
+        if (
+          nativeStructuredOutput &&
+          (config.engine === "custom" || config.engine === "deepseek") &&
+          nativeStructuredOutputUnsupported(400, providerError)
+        ) {
+          nativeStructuredOutput = false;
+          continue;
+        }
+        throw new UserAiProviderError(
+          "AI 제공자가 오류 응답을 반환했습니다. 관리자 AI 엔진 설정을 확인해 주세요.",
+          "upstream",
+        );
+      }
       const text = parseAiProviderResponse(config.engine, payload, providerRequest.endpoint);
       if (!text) {
         if (
@@ -557,6 +753,8 @@ async function structuredResponse(args: {
             isEmptyCompletedResponsesResponse(payload))
         ) {
           invalidContentRetryUsed = true;
+          nativeStructuredOutput = false;
+          retryFeedback = "완료된 JSON 객체가 비어 있었습니다. 모든 필수 필드에 실제 설교 내용을 채우세요.";
           continue;
         }
         throw new UserAiProviderError(
@@ -564,9 +762,9 @@ async function structuredResponse(args: {
           "invalid_response",
         );
       }
-      let value: unknown;
+      let values: unknown[];
       try {
-        value = parseStructuredJsonText(text);
+        values = parseStructuredJsonCandidates(text);
       } catch (caught) {
         if (
           caught instanceof SyntaxError &&
@@ -574,9 +772,38 @@ async function structuredResponse(args: {
           !invalidContentRetryUsed
         ) {
           invalidContentRetryUsed = true;
+          nativeStructuredOutput = false;
+          retryFeedback = "설명이나 마크다운을 제외하고 완전한 JSON 객체 하나만 반환하세요.";
           continue;
         }
         throw caught;
+      }
+      let value = values[0];
+      if (args.validate) {
+        let feedback = "응답이 요청한 구조와 품질 기준을 충족하지 못했습니다.";
+        const validValues: unknown[] = [];
+        for (const candidate of values) {
+          const validation = args.validate(candidate);
+          if (validation.ok) {
+            validValues.push(validation.value);
+            continue;
+          }
+          feedback = validation.feedback;
+        }
+        if (!validValues.length) {
+          if (!invalidContentRetryUsed) {
+            invalidContentRetryUsed = true;
+            retryFeedback = feedback;
+            continue;
+          }
+          throw new UserAiProviderError(
+            args.invalidResponseMessage ?? "AI 제공자가 요청한 구조의 결과를 반환하지 않았습니다.",
+            "invalid_response",
+          );
+        }
+        // When a provider emits an example before its final answer, the last
+        // independently valid JSON object is the intended completion.
+        value = validValues.at(-1);
       }
       return {
         value,
@@ -723,6 +950,100 @@ function normalizeOutline(value: unknown): SermonGenerationOutline | null {
     centralMessage: value.centralMessage.trim(),
     pointHeadings: (value.pointHeadings as string[]).map((heading) => heading.trim()),
   };
+}
+
+function validateGeneratedOutlinePayload(
+  value: unknown,
+  pointCount: number,
+  existingTitles: ReadonlySet<string>,
+): StructuredValueValidation {
+  let outline: SermonGenerationOutline | null = null;
+  for (const candidate of shallowStructuredPayloadCandidates(value, [
+    "outline",
+    "result",
+    "data",
+    "value",
+  ])) {
+    outline = normalizeOutline(candidate);
+    if (outline) break;
+  }
+  if (!outline) {
+    return {
+      ok: false,
+      feedback:
+        "title, summary, scripture, centralMessage, pointHeadings를 가진 JSON 객체 하나를 반환하세요.",
+    };
+  }
+
+  const issues: string[] = [];
+  if (outline.pointHeadings.length !== pointCount) {
+    issues.push(`대지 제목은 정확히 ${pointCount}개여야 합니다. 현재 ${outline.pointHeadings.length}개입니다.`);
+  }
+  if (outline.title.length < 4 || outline.title.length > 80) {
+    issues.push("제목은 4자 이상 80자 이하로 작성하세요.");
+  }
+  if (existingTitles.has(outline.title)) {
+    issues.push("기존 초안과 겹치지 않는 새 제목을 사용하세요.");
+  }
+  if (outline.summary.length < 20 || outline.summary.length > 160) {
+    issues.push("요약은 20자 이상 160자 이하로 작성하세요.");
+  }
+  if (outline.scripture.length < 4 || outline.scripture.length > 80) {
+    issues.push("성경 본문 표기는 4자 이상 80자 이하로 작성하세요.");
+  }
+  if (outline.centralMessage.length < 20 || outline.centralMessage.length > 160) {
+    issues.push("중심 메시지는 20자 이상 160자 이하로 작성하세요.");
+  }
+  outline.pointHeadings.forEach((heading, index) => {
+    if (heading.length < 4 || heading.length > 55) {
+      issues.push(`${index + 1}대지 제목은 4자 이상 55자 이하로 작성하세요.`);
+    }
+  });
+  if (outlineCharacters(outline) > MAX_SERMON_FRAGMENT_CHARACTERS) {
+    issues.push(`개요 전체는 ${MAX_SERMON_FRAGMENT_CHARACTERS}자 이하로 간결하게 작성하세요.`);
+  }
+  return issues.length
+    ? { ok: false, feedback: issues.slice(0, 8).join("\n") }
+    : { ok: true, value: outline };
+}
+
+function validateGeneratedTextPayload(
+  value: unknown,
+  step: SermonGenerationStep,
+): StructuredValueValidation {
+  let text: string | null = null;
+  for (const candidate of shallowStructuredPayloadCandidates(value, [
+    "fragment",
+    "result",
+    "data",
+    "value",
+  ])) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      text = candidate.trim();
+      break;
+    }
+    if (isRecord(candidate) && typeof candidate.text === "string" && candidate.text.trim()) {
+      text = candidate.text.trim();
+      break;
+    }
+  }
+  if (!text) {
+    return { ok: false, feedback: "이번 설교 조각만 text 문자열 필드에 담아 반환하세요." };
+  }
+  const minimum = minimumFragmentCharacters(step);
+  if (text.length < minimum) {
+    return {
+      ok: false,
+      feedback: `이번 설교 조각은 최소 ${minimum}자여야 합니다. 현재 ${text.length}자입니다. 같은 단락을 구체적으로 확장하세요.`,
+    };
+  }
+  if (text.length > MAX_SERMON_FRAGMENT_CHARACTERS) {
+    return {
+      ok: false,
+      feedback: `이번 설교 조각은 최대 ${MAX_SERMON_FRAGMENT_CHARACTERS}자여야 합니다. 현재 ${text.length}자입니다.`,
+    };
+  }
+  return { ok: true, value: { text } };
 }
 
 function outlineCharacters(outline: SermonGenerationOutline): number {
@@ -925,6 +1246,13 @@ export async function generateAiSermonFragment(
       ].join("\n\n"),
       ai,
       signal,
+      validate: (value) =>
+        validateGeneratedOutlinePayload(
+          value,
+          plannedPointCount(request),
+          new Set(existingTitles),
+        ),
+      invalidResponseMessage: `AI 제공자가 ${position}번째 설교 개요의 구조를 자동 보정 후에도 충족하지 못했습니다.`,
     });
     if (!result) return null;
     const outline = normalizeOutline(result.value);
@@ -975,6 +1303,8 @@ export async function generateAiSermonFragment(
     ].join("\n\n"),
     ai,
     signal,
+    validate: (value) => validateGeneratedTextPayload(value, verifiedStep),
+    invalidResponseMessage: `AI 제공자가 ${position}번째 설교의 ${label} 조각 분량을 자동 보정 후에도 충족하지 못했습니다.`,
   });
   if (!result) return null;
   const rawText = isRecord(result.value) && typeof result.value.text === "string"
@@ -1083,6 +1413,9 @@ async function requestAiAlternative(
     .map((title) => title.trim())
     .filter(Boolean)
     .slice(0, 4);
+  const existingTitleSet = new Set(existingTitles);
+  const minimumBodyCharacters = Math.floor(targetCharacters * 0.65);
+  const maximumBodyCharacters = Math.ceil(targetCharacters * 1.4);
 
   return structuredResponse({
     name: `sermon_alternative_${index + 1}`,
@@ -1097,6 +1430,8 @@ async function requestAiAlternative(
       `이번 초안은 다음 방향을 분명히 살려 한 편만 작성하세요: ${SERMON_PERSPECTIVES[index]}.`,
       `도입·정확히 ${pointCount}개 대지·결론·구체적인 삶의 적용을 포함하세요.`,
       `전체 원고는 공백 포함 약 ${targetCharacters.toLocaleString("ko-KR")}자를 목표로 하되 ±20% 안에서 자연스럽게 완결하세요.`,
+      `검증 가능한 본문 합계는 ${minimumBodyCharacters.toLocaleString("ko-KR")}자 이상 ${maximumBodyCharacters.toLocaleString("ko-KR")}자 이하이어야 합니다.`,
+      "도입·결론·삶의 적용은 각각 80자 이상, 각 대지 내용은 120자 이상 작성하세요.",
       existingTitles.length
         ? `이미 완성된 다음 제목과 겹치지 않는 새 제목을 사용하세요: ${existingTitles.join(" / ")}`
         : "다른 관점의 초안과 구별되는 구체적인 제목을 사용하세요.",
@@ -1117,6 +1452,14 @@ async function requestAiAlternative(
     ai,
     signal,
     customDnsChecked,
+    validate: (value) =>
+      validateGeneratedSermonPayload(
+        value,
+        pointCount,
+        targetCharacters,
+        existingTitleSet,
+      ),
+    invalidResponseMessage: `AI 제공자가 ${index + 1}번째 설교의 구조와 분량을 자동 보정 후에도 충족하지 못했습니다.`,
   });
 }
 

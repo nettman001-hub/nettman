@@ -334,23 +334,58 @@ function chatCompletionResponseText(payload: JsonObject): string | null {
   const choice = payload.choices[0];
   if (typeof choice.finish_reason === "string" && choice.finish_reason !== "stop") return null;
   if (!isObject(choice.message) || choice.message.refusal) return null;
-  if (isObject(choice.message.parsed) || Array.isArray(choice.message.parsed)) {
-    return JSON.stringify(choice.message.parsed);
+  const message = choice.message;
+  if (isObject(message.parsed) || Array.isArray(message.parsed)) {
+    return JSON.stringify(message.parsed);
   }
-  const content = choice.message.content;
+  const content = message.content;
   if (typeof content === "string" && content.trim()) return content;
-  if (isObject(content)) return JSON.stringify(content);
-  if (!Array.isArray(content)) return null;
-  const text = content
-    .filter(
-      (item) =>
-        isObject(item) &&
-        (item.type === "text" || item.type === "output_text") &&
-        typeof item.text === "string",
-    )
-    .map((item) => (item as JsonObject).text as string)
-    .join("");
-  return text.trim() ? text : null;
+  if (isObject(content)) {
+    if (typeof content.text === "string" && content.text.trim()) return content.text;
+    if (typeof content.output_text === "string" && content.output_text.trim()) {
+      return content.output_text;
+    }
+    if (isObject(content.json) || Array.isArray(content.json)) {
+      return JSON.stringify(content.json);
+    }
+    if (isObject(content.value) || Array.isArray(content.value)) {
+      return JSON.stringify(content.value);
+    }
+    if (typeof content.value === "string" && content.value.trim()) return content.value;
+    return JSON.stringify(content);
+  }
+  if (Array.isArray(content)) {
+    const text = content
+      .filter(
+        (item) =>
+          isObject(item) &&
+          (item.type === "text" || item.type === "output_text" || item.type === undefined) &&
+          typeof item.text === "string",
+      )
+      .map((item) => (item as JsonObject).text as string)
+      .join("");
+    if (text.trim()) return text;
+  }
+  if (Array.isArray(message.tool_calls)) {
+    for (const toolCall of message.tool_calls) {
+      if (
+        isObject(toolCall) &&
+        isObject(toolCall.function) &&
+        typeof toolCall.function.arguments === "string" &&
+        toolCall.function.arguments.trim()
+      ) {
+        return toolCall.function.arguments;
+      }
+    }
+  }
+  if (
+    isObject(message.function_call) &&
+    typeof message.function_call.arguments === "string" &&
+    message.function_call.arguments.trim()
+  ) {
+    return message.function_call.arguments;
+  }
+  return null;
 }
 
 export function parseAiProviderResponse(
@@ -368,9 +403,33 @@ export function parseAiProviderResponse(
     endpoint &&
     planCustomAiEndpoint(endpoint).style === "chat-completions"
   ) {
-    const text = chatCompletionResponseText(value);
+    const text = chatCompletionResponseText(value) ?? openAiResponseText(value);
     if (text) return text;
-    if ("choices" in value || "error" in value || "usage" in value) return null;
+    if (
+      "choices" in value ||
+      "output" in value ||
+      "output_text" in value ||
+      "status" in value ||
+      "error" in value ||
+      "usage" in value
+    ) {
+      return null;
+    }
+    return JSON.stringify(value);
+  }
+  if (engine === "custom") {
+    const text = openAiResponseText(value) ?? chatCompletionResponseText(value);
+    if (text) return text;
+    if (
+      "choices" in value ||
+      "output" in value ||
+      "output_text" in value ||
+      "status" in value ||
+      "error" in value ||
+      "usage" in value
+    ) {
+      return null;
+    }
     return JSON.stringify(value);
   }
   return openAiResponseText(value);
