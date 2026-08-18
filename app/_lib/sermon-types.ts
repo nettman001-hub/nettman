@@ -1,0 +1,279 @@
+import type { AiEngine, AiReasoningEffort, AiRequestConfig } from "./ai-config";
+import {
+  isAiEngineTier,
+  type AiEngineTier,
+} from "./ai-engine-tiers.ts";
+
+export const SERMON_DURATIONS = [5, 10, 20, 30] as const;
+export const SERMON_TONES = ["위로", "도전", "감동", "경고"] as const;
+export const SERMON_TYPES = ["강해", "주제", "내러티브"] as const;
+export const SERMON_AUDIENCES = ["청장년", "대학부", "청소년", "초등부"] as const;
+export const SERMON_POINT_COUNTS = [1, 2, 3, 4] as const;
+export const SERMON_ALTERNATIVE_POSITIONS = [1, 2, 3, 4, 5] as const;
+
+export type SermonDuration = (typeof SERMON_DURATIONS)[number];
+export type SermonTone = (typeof SERMON_TONES)[number];
+export type SermonType = (typeof SERMON_TYPES)[number];
+export type SermonAudience = (typeof SERMON_AUDIENCES)[number];
+export type SermonPointCount = (typeof SERMON_POINT_COUNTS)[number];
+export type SermonAlternativePosition =
+  (typeof SERMON_ALTERNATIVE_POSITIONS)[number];
+export type SermonAiTiers = [
+  AiEngineTier,
+  AiEngineTier,
+  AiEngineTier,
+  AiEngineTier,
+  AiEngineTier,
+];
+
+export type SermonStage =
+  | "options"
+  | "input"
+  | "generating"
+  | "alternatives"
+  | "editing"
+  | "completed";
+
+export type ReferenceMode = "auto" | "manual";
+
+export type ReferenceFile = {
+  name: string;
+  type: string;
+  size: number;
+  /** TXT 파일만 브라우저에서 안전하게 읽어 생성 요청에 포함합니다. */
+  text?: string;
+};
+
+export type SermonOptions = {
+  topic: string;
+  /** 첫 번째 초안 엔진. 이전 저장 데이터와 수정 요청의 호환성을 위해 유지합니다. */
+  aiTier: AiEngineTier;
+  /** 다섯 초안에 각각 적용할 엔진 등급입니다. */
+  aiTiers: SermonAiTiers;
+  duration: SermonDuration | null;
+  targetCharacters: number | null;
+  tone: SermonTone | "";
+  sermonType: SermonType | "";
+  audience: SermonAudience | "";
+  pointCount: SermonPointCount | null;
+  referenceMode: ReferenceMode;
+};
+
+export type SermonReference = {
+  url: string;
+  notes: string;
+  file: ReferenceFile | null;
+};
+
+export type SermonPoint = {
+  heading: string;
+  content: string;
+};
+
+export type SermonSections = {
+  introduction: string;
+  points: SermonPoint[];
+  conclusion: string;
+  application: string;
+};
+
+export type SermonAlternative = {
+  id: string;
+  title: string;
+  summary: string;
+  scripture: string;
+  sections: SermonSections;
+};
+
+export type SermonGenerationPart = {
+  position: SermonAlternativePosition;
+  step: number;
+  payload: Record<string, unknown>;
+};
+
+export type SermonGeneration = {
+  id: string;
+  mode: "initial" | "regenerate";
+  expectedCount: 1 | 5;
+  alternatives: SermonAlternative[];
+  parts: SermonGenerationPart[];
+  startedAt: string;
+};
+
+export type SermonVersion = {
+  id: string;
+  sermon: SermonAlternative;
+  createdAt: string;
+  instruction?: string;
+};
+
+export type SermonRevision = {
+  id: string;
+  section: "introduction" | "body" | "conclusion" | "application";
+  instruction: string;
+  toneAdjustment: string;
+  createdAt: string;
+};
+
+export type SermonDraft = {
+  id: string;
+  stage: SermonStage;
+  createdAt: string;
+  updatedAt: string;
+  options: SermonOptions;
+  scripture: string;
+  reference: SermonReference;
+  alternatives: SermonAlternative[];
+  generation: SermonGeneration | null;
+  selectedAlternativeId: string | null;
+  versions: SermonVersion[];
+  revisions: SermonRevision[];
+  revisionCount: number;
+  completedAt: string | null;
+  savedSermonId: string | null;
+  saveMode: "server" | "local" | null;
+};
+
+export type GenerateSermonsRequest = {
+  draftId: string;
+  clientUserScope?: string;
+  generationId?: string;
+  alternativePosition?: SermonAlternativePosition;
+  generationStep?: number;
+  generationParts?: SermonGenerationPart[];
+  existingTitles?: string[];
+  options: SermonOptions;
+  scripture: string;
+  reference: SermonReference;
+  ai?: AiRequestConfig;
+};
+
+export type GenerateSermonsResponse = {
+  alternatives: SermonAlternative[];
+  generationId?: string;
+  position?: SermonAlternativePosition;
+  generationStep?: number;
+  generationStepCount?: number;
+  generationParts?: SermonGenerationPart[];
+  complete?: boolean;
+  guestPreview?: boolean;
+  provider: "local" | AiEngine;
+  model?: string;
+  reasoningEffort?: AiReasoningEffort;
+};
+
+export type ReviseSermonRequest = {
+  draftId: string;
+  clientUserScope?: string;
+  sermon: SermonAlternative;
+  options: SermonOptions;
+  section: SermonRevision["section"];
+  instruction: string;
+  toneAdjustment: string;
+  revisionCount: number;
+  ai?: AiRequestConfig;
+};
+
+export type ReviseSermonResponse = {
+  sermon: SermonAlternative;
+  provider: "local" | AiEngine;
+  model?: string;
+  reasoningEffort?: AiReasoningEffort;
+  revisionSummary: string;
+};
+
+export const EMPTY_SERMON_OPTIONS: SermonOptions = {
+  topic: "",
+  aiTier: "basic",
+  aiTiers: ["basic", "basic", "basic", "basic", "basic"],
+  duration: null,
+  targetCharacters: null,
+  tone: "",
+  sermonType: "",
+  audience: "",
+  pointCount: null,
+  referenceMode: "auto",
+};
+
+export const EMPTY_SERMON_REFERENCE: SermonReference = {
+  url: "",
+  notes: "",
+  file: null,
+};
+
+export function durationToTargetCharacters(duration: SermonDuration): number {
+  return ({ 5: 1600, 10: 3000, 20: 5000, 30: 8000 } as const)[duration];
+}
+
+export function normalizeSermonAiTiers(value: {
+  aiTier?: unknown;
+  aiTiers?: unknown;
+}): SermonAiTiers {
+  if (
+    Array.isArray(value.aiTiers) &&
+    value.aiTiers.length === SERMON_ALTERNATIVE_POSITIONS.length &&
+    value.aiTiers.every(isAiEngineTier)
+  ) {
+    return [...value.aiTiers] as SermonAiTiers;
+  }
+  const fallback = isAiEngineTier(value.aiTier) ? value.aiTier : "basic";
+  return [fallback, fallback, fallback, fallback, fallback];
+}
+
+export function sermonAiTierForPosition(
+  options: Pick<SermonOptions, "aiTier" | "aiTiers">,
+  position: SermonAlternativePosition,
+): AiEngineTier {
+  return normalizeSermonAiTiers(options)[position - 1];
+}
+
+export function isSermonOptionsComplete(options: SermonOptions): boolean {
+  return (
+    options.topic.trim().length >= 2 &&
+    isAiEngineTier(options.aiTier) &&
+    normalizeSermonAiTiers(options).every(isAiEngineTier) &&
+    options.duration !== null &&
+    options.tone !== "" &&
+    options.sermonType !== "" &&
+    options.audience !== "" &&
+    options.pointCount !== null
+  );
+}
+
+export function sermonPlainText(sermon: SermonAlternative): string {
+  const points = sermon.sections.points
+    .map((point, index) => `${index + 1}. ${point.heading}\n${point.content}`)
+    .join("\n\n");
+
+  return [
+    sermon.title,
+    `본문: ${sermon.scripture}`,
+    `도입\n${sermon.sections.introduction}`,
+    `본론\n${points}`,
+    `결론\n${sermon.sections.conclusion}`,
+    `적용\n${sermon.sections.application}`,
+  ].join("\n\n");
+}
+
+export function isSermonAlternative(value: unknown): value is SermonAlternative {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<SermonAlternative>;
+  return Boolean(
+    typeof candidate.id === "string" &&
+      typeof candidate.title === "string" &&
+      typeof candidate.summary === "string" &&
+      typeof candidate.scripture === "string" &&
+      candidate.sections &&
+      typeof candidate.sections.introduction === "string" &&
+      Array.isArray(candidate.sections.points) &&
+      candidate.sections.points.length > 0 &&
+      candidate.sections.points.every(
+        (point) =>
+          point &&
+          typeof point.heading === "string" &&
+          typeof point.content === "string",
+      ) &&
+      typeof candidate.sections.conclusion === "string" &&
+      typeof candidate.sections.application === "string",
+  );
+}

@@ -1,0 +1,1 @@
+ALTER TABLE `global_ai_settings` ADD `api_key_encrypted` text;

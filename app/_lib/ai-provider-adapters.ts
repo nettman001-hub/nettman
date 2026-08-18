@@ -1,0 +1,336 @@
+import {
+  AI_ENGINE_PRESETS,
+  type AiEngine,
+  type AiRequestConfig,
+} from "./ai-config.ts";
+import { planCustomAiEndpoint } from "./ai-custom-endpoint.ts";
+
+export type StructuredAiInput = {
+  name: string;
+  schema: Record<string, unknown>;
+  instructions: string;
+  input: string;
+  maxOutputTokens: number;
+};
+
+export type AiProviderRequest = {
+  endpoint: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+};
+
+type JsonObject = Record<string, unknown>;
+
+function isObject(value: unknown): value is JsonObject {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function providerEndpoint(config: AiRequestConfig): string {
+  if (config.engine === "custom") {
+    return planCustomAiEndpoint(config.endpoint).requestEndpoint;
+  }
+
+  const endpoint = AI_ENGINE_PRESETS[config.engine].endpoint;
+  return config.engine === "deepseek"
+    ? `${endpoint.replace(/\/+$/, "")}/chat/completions`
+    : endpoint;
+}
+
+function withoutUnsupportedSchemaConstraints(value: unknown, engine: AiEngine): unknown {
+  if (Array.isArray(value)) {
+    return value.map((nested) => withoutUnsupportedSchemaConstraints(nested, engine));
+  }
+  if (!isObject(value)) return value;
+
+  const result: JsonObject = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (key === "minLength" || key === "maxLength") continue;
+    if (
+      (engine === "anthropic" || engine === "openrouter") &&
+      (key === "maxItems" || key === "minimum" || key === "maximum")
+    ) {
+      continue;
+    }
+    if (
+      (engine === "anthropic" || engine === "openrouter") &&
+      key === "minItems" &&
+      nested !== 0 &&
+      nested !== 1
+    ) {
+      continue;
+    }
+    result[key] = withoutUnsupportedSchemaConstraints(nested, engine);
+  }
+  return result;
+}
+
+function schemaForEngine(engine: AiEngine, schema: Record<string, unknown>): Record<string, unknown> {
+  if (engine !== "anthropic" && engine !== "gemini" && engine !== "openrouter") {
+    return schema;
+  }
+  return withoutUnsupportedSchemaConstraints(schema, engine) as Record<string, unknown>;
+}
+
+export function buildAiProviderRequest(
+  config: AiRequestConfig,
+  input: StructuredAiInput,
+): AiProviderRequest {
+  const endpoint = providerEndpoint(config);
+  const schema = schemaForEngine(config.engine, input.schema);
+
+  if (config.engine === "anthropic") {
+    return {
+      endpoint,
+      headers: {
+        "x-api-key": config.apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: {
+        model: config.model,
+        max_tokens: input.maxOutputTokens,
+        system: input.instructions,
+        messages: [{ role: "user", content: input.input }],
+        output_config: {
+          ...(config.reasoningEffort === "default"
+            ? {}
+            : { effort: config.reasoningEffort }),
+          format: {
+            type: "json_schema",
+            schema,
+          },
+        },
+      },
+    };
+  }
+
+  if (config.engine === "gemini") {
+    return {
+      endpoint,
+      headers: {
+        "x-goog-api-key": config.apiKey,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: {
+        model: config.model,
+        input: input.input,
+        system_instruction: input.instructions,
+        response_format: {
+          type: "text",
+          mime_type: "application/json",
+          schema,
+        },
+        generation_config: {
+          max_output_tokens: input.maxOutputTokens,
+          thinking_summaries: "none",
+          ...(config.reasoningEffort === "default"
+            ? {}
+            : { thinking_level: config.reasoningEffort }),
+        },
+        store: false,
+      },
+    };
+  }
+
+  if (config.engine === "deepseek") {
+    const jsonInstructions = [
+      input.instructions,
+      "반드시 설명이나 마크다운 없이 JSON 객체만 반환하세요.",
+      `다음 JSON 스키마와 동일한 키와 구조를 사용하세요:\n${JSON.stringify(schema)}`,
+    ].join("\n\n");
+    return {
+      endpoint,
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: {
+        model: config.model,
+        messages: [
+          { role: "system", content: jsonInstructions },
+          { role: "user", content: input.input },
+        ],
+        max_tokens: input.maxOutputTokens,
+        stream: false,
+        response_format: { type: "json_object" },
+        thinking: { type: "enabled" },
+        ...(config.reasoningEffort === "default"
+          ? {}
+          : { reasoning_effort: config.reasoningEffort }),
+      },
+    };
+  }
+
+  if (config.engine === "openrouter") {
+    return {
+      endpoint,
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: {
+        model: config.model,
+        messages: [
+          { role: "system", content: input.instructions },
+          { role: "user", content: input.input },
+        ],
+        max_tokens: input.maxOutputTokens,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: input.name,
+            strict: true,
+            schema,
+          },
+        },
+        provider: { require_parameters: true },
+        ...(config.reasoningEffort === "default"
+          ? {}
+          : { reasoning: { effort: config.reasoningEffort } }),
+      },
+    };
+  }
+
+  if (
+    config.engine === "custom" &&
+    planCustomAiEndpoint(config.endpoint).style === "chat-completions"
+  ) {
+    return {
+      endpoint,
+      headers: {
+        ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: {
+        model: config.model,
+        messages: [
+          { role: "system", content: input.instructions },
+          { role: "user", content: input.input },
+        ],
+        max_tokens: input.maxOutputTokens,
+        stream: false,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: input.name,
+            strict: true,
+            schema,
+          },
+        },
+      },
+    };
+  }
+
+  return {
+    endpoint,
+    headers: {
+      ...(
+        config.engine === "custom" && !config.apiKey
+          ? {}
+          : { Authorization: `Bearer ${config.apiKey}` }
+      ),
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: {
+      model: config.model,
+      instructions: input.instructions,
+      input: input.input,
+      store: false,
+      ...(config.reasoningEffort === "default"
+        ? {}
+        : { reasoning: { effort: config.reasoningEffort } }),
+      max_output_tokens: input.maxOutputTokens,
+      text: {
+        format: {
+          type: "json_schema",
+          name: input.name,
+          strict: true,
+          schema,
+        },
+      },
+    },
+  };
+}
+
+function openAiResponseText(payload: JsonObject): string | null {
+  if (typeof payload.status === "string" && payload.status !== "completed") return null;
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text;
+  }
+  if (!Array.isArray(payload.output)) return null;
+  for (const item of payload.output) {
+    if (!isObject(item) || !Array.isArray(item.content)) continue;
+    for (const content of item.content) {
+      if (isObject(content) && typeof content.text === "string" && content.text.trim()) {
+        return content.text;
+      }
+    }
+  }
+  return null;
+}
+
+function anthropicResponseText(payload: JsonObject): string | null {
+  if (payload.stop_reason !== "end_turn" || !Array.isArray(payload.content)) return null;
+  const text = payload.content
+    .filter((item) => isObject(item) && item.type === "text" && typeof item.text === "string")
+    .map((item) => (item as JsonObject).text as string)
+    .join("");
+  return text.trim() ? text : null;
+}
+
+function geminiResponseText(payload: JsonObject): string | null {
+  if (payload.status !== "completed" || !Array.isArray(payload.steps)) return null;
+  for (let index = payload.steps.length - 1; index >= 0; index -= 1) {
+    const step = payload.steps[index];
+    if (!isObject(step) || step.type !== "model_output" || !Array.isArray(step.content)) {
+      continue;
+    }
+    const text = step.content
+      .filter((item) => isObject(item) && item.type === "text" && typeof item.text === "string")
+      .map((item) => (item as JsonObject).text as string)
+      .join("");
+    if (text.trim()) return text;
+  }
+  return null;
+}
+
+function openRouterResponseText(payload: JsonObject): string | null {
+  if (!Array.isArray(payload.choices) || !isObject(payload.choices[0])) return null;
+  const choice = payload.choices[0];
+  if (typeof choice.finish_reason === "string" && choice.finish_reason !== "stop") return null;
+  if (!isObject(choice.message) || choice.message.refusal) return null;
+  const content = choice.message.content;
+  if (typeof content === "string" && content.trim()) return content;
+  if (!Array.isArray(content)) return null;
+  const text = content
+    .filter((item) => isObject(item) && item.type === "text" && typeof item.text === "string")
+    .map((item) => (item as JsonObject).text as string)
+    .join("");
+  return text.trim() ? text : null;
+}
+
+export function parseAiProviderResponse(
+  engine: AiEngine,
+  value: unknown,
+  endpoint?: string,
+): string | null {
+  if (!isObject(value)) return null;
+  if (engine === "anthropic") return anthropicResponseText(value);
+  if (engine === "gemini") return geminiResponseText(value);
+  if (engine === "deepseek") return openRouterResponseText(value);
+  if (engine === "openrouter") return openRouterResponseText(value);
+  if (
+    engine === "custom" &&
+    endpoint &&
+    planCustomAiEndpoint(endpoint).style === "chat-completions"
+  ) {
+    return openRouterResponseText(value);
+  }
+  return openAiResponseText(value);
+}
