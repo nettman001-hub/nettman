@@ -1398,7 +1398,8 @@ test("repairs a 30-minute two-point hosted sermon within the same provider timeo
   try {
     const result = await generateAiSermonAlternative(request, 1, ai);
     assert.equal(bodies.length, 2);
-    assert.match(bodies[1].messages[0].content, /이전 응답/);
+    assert.match(bodies[1].messages[0].content, /기존 초안 JSON/);
+    assert.match(bodies[1].messages[1].content, /사랑으로 다시 걷는 길/);
     assert.match(bodies[1].messages[0].content, /최소 5200자/);
     assert.match(bodies[1].messages[0].content, /정확히 2개/);
     assert.equal(result?.value.sections.points.length, 2);
@@ -1499,6 +1500,95 @@ test("retries truncated and resource-interrupted DeepSeek responses with thinkin
     assert.deepEqual(bodies[0].thinking, { type: "enabled" });
     assert.deepEqual(bodies[1].thinking, { type: "disabled" });
     assert.equal(retriedAfterResourceInterruption?.value.title, valid.title);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
+test("keeps transport and semantic repair budgets separate for a later hosted draft", async () => {
+  const { generateAiSermonAlternative } = await import(
+    new URL("../app/_lib/openai-sermons.ts", import.meta.url)
+  );
+  const textOfLength = (seed, length) => seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+  const sermon = (title, pointLength) => ({
+    title,
+    summary: "하나님의 은혜가 지친 삶을 회복시키고 공동체를 향한 섬김으로 이어지는 과정을 살핍니다.",
+    scripture: "에베소서 2:8-10",
+    sections: {
+      introduction: textOfLength("은혜는 우리의 자격보다 먼저 다가옵니다. ", pointLength >= 1_200 ? 500 : 160),
+      points: [
+        {
+          heading: "우리를 먼저 찾아온 은혜",
+          content: textOfLength("하나님께서 먼저 베푸신 은혜는 우리의 삶을 새롭게 합니다. ", pointLength),
+        },
+        {
+          heading: "이웃에게 흘려보낼 은혜",
+          content: textOfLength("받은 은혜는 관계와 공동체 안에서 구체적인 섬김으로 이어집니다. ", pointLength),
+        },
+      ],
+      conclusion: textOfLength("우리는 은혜를 기억하며 다시 걸어갑니다. ", pointLength >= 1_200 ? 400 : 160),
+      application: textOfLength("이번 주 한 사람을 은혜의 마음으로 섬겨 봅시다. ", pointLength >= 1_200 ? 400 : 160),
+    },
+  });
+  const shortDraft = sermon("이미 저장된 첫 번째 초안", 500);
+  const completedDraft = sermon("확장된 두 번째 은혜의 초안", 1_250);
+  const request = {
+    draftId: "draft-separate-repair-budgets",
+    options: {
+      topic: "하나님의 은혜",
+      aiTier: "advanced",
+      aiTiers: ["advanced", "advanced", "advanced", "advanced", "advanced"],
+      duration: 20,
+      targetCharacters: 5_000,
+      tone: "소망",
+      sermonType: "강해",
+      audience: "청장년",
+      pointCount: 2,
+      referenceMode: "auto",
+    },
+    scripture: "에베소서 2:8-10",
+    reference: { url: "", notes: "", file: null },
+    existingTitles: ["이미 저장된 첫 번째 초안"],
+  };
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const bodies = [];
+  console.warn = () => {};
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init.body));
+    bodies.push(body);
+    if (bodies.length === 1) {
+      return Response.json({
+        choices: [{
+          finish_reason: "length",
+          message: { content: '{"title":"문자열 중간에서 잘린 초안' },
+        }],
+      });
+    }
+    const value = bodies.length === 2 ? shortDraft : completedDraft;
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(value) } }],
+    });
+  };
+  try {
+    const result = await generateAiSermonAlternative(request, 2, {
+      enabled: true,
+      engine: "deepseek",
+      endpoint: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      reasoningEffort: "high",
+      apiKey: "secret-deepseek-key",
+    });
+    assert.equal(bodies.length, 3);
+    assert.match(bodies[1].messages[0].content, /출력 한도 전에 잘렸습니다/);
+    assert.doesNotMatch(bodies[1].messages[1].content, /보정할 기존 초안/);
+    assert.match(bodies[2].messages[0].content, /기존 초안 JSON/);
+    assert.match(bodies[2].messages[0].content, /기존 초안과 겹치지 않는 새 제목/);
+    assert.match(bodies[2].messages[1].content, /이미 저장된 첫 번째 초안/);
+    assert.equal(JSON.stringify(bodies).includes("secret-deepseek-key"), false);
+    assert.equal(result?.value.title, completedDraft.title);
+    assert.equal(result?.value.sections.points.length, 2);
   } finally {
     globalThis.fetch = originalFetch;
     console.warn = originalWarn;
