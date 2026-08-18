@@ -62,13 +62,14 @@
 - 구조화 출력은 BOM·JSON 코드블록·일반 JSON 응답을 처리하고, custom/DeepSeek가 native 형식을 명시적으로 거부할 때만 스키마 프롬프트 방식으로 한 번 재시도합니다.
 - DeepSeek Flash는 일반 생성 모드, Pro는 추론 모드로 호출합니다.
 
-비용 기준은 `app/_lib/ai-engine-tiers.ts`와 `app/_lib/token-wallet.ts`에 함께 정의되어 있습니다.
+비용 공식의 단일 기준은 `app/_lib/sermon-token-pricing.ts`입니다. 생성 1회에 한 번만 차감하며 초안 개수는 비용에 포함하지 않습니다.
 
-| 엔진 등급 | 초안 1개 비용 |
-| --- | ---: |
-| 기본 | 10토큰 |
-| 고급 | 20토큰 |
-| 고급 추론 | 40토큰 |
+```text
+비용 = 엔진 배수 × (설교 분량(분) + 5 + 2 × (대지 수 - 1))
+엔진 배수: 기본 1 / 고급 2 / 고급 추론 4
+```
+
+5분·1대지는 10/20/40토큰, 30분·4대지는 41/82/164토큰입니다. 같은 생성 ID의 초안 1~5와 조각 생성·재개는 중복 차감하지 않습니다.
 
 ### AI 관리자 설정
 
@@ -98,6 +99,7 @@
 | 공급자 요청 | `app/_lib/ai-provider-adapters.ts` | 엔진별 URL·헤더·본문 변환 |
 | AI 모델 목록 | `app/_lib/ai-model-catalog.ts` | 모델 API 요청과 응답 정규화 |
 | 사용자 지정 URL 보안 | `app/_lib/ai-custom-endpoint.ts` | 공개 HTTP/HTTPS 주소·포트 및 DNS 검증 |
+| 토큰 가격 공식 | `app/_lib/sermon-token-pricing.ts` | 엔진·분량·대지 수 기반 생성 1회 비용 |
 | 토큰 원장 | `app/_lib/token-wallet.ts` | 비용, 차감, 환불, 충전 완료 |
 | 토큰 화면 갱신 | `app/_lib/token-wallet-events.ts` | 생성·충전 후 헤더 잔액 갱신 이벤트 |
 | 인증 | `app/_lib/auth-user.ts`, `app/_lib/supabase/*` | SSR 세션 검증, 관리자 판별 |
@@ -137,7 +139,7 @@
 - `PORTONE_API_SECRET`
 - `PORTONE_WEBHOOK_SECRET`
 
-네 값이 모두 있어야 실제 토큰 결제가 활성화됩니다. 웹훅은 `/api/portone/webhook`입니다.
+네 값이 모두 있어야 실제 토큰 충전 결제가 활성화됩니다. 설교 생성 토큰 차감은 결제 설정과 별도로 동작합니다. 웹훅은 `/api/portone/webhook`입니다.
 
 ### 선택·로컬 전용
 
@@ -228,7 +230,7 @@ https://www.sermon-ai.shop/sermon/options
 
 ### 설교 생성이 중간에 멈출 때
 
-1. 사용자 토큰 잔액과 선택 단계 비용을 확인합니다.
+1. 사용자 토큰 잔액과 선택한 엔진·분량·대지 수의 예상 비용을 확인합니다.
 2. 관리자에서 해당 등급 엔진이 활성화됐는지 확인합니다.
 3. 생성 오류 메시지가 새 묶음을 요구하지 않으면 같은 작업에서 재시도합니다.
 4. `sermon_generation_runs`, `sermon_generation_items`, `sermon_generation_claims`의 실행 ID와 순서를 확인합니다.

@@ -14,6 +14,7 @@ import {
   type AiPreferences,
 } from "@/app/_lib/ai-config";
 import type { AiModelCatalogEntry } from "@/app/_lib/ai-model-catalog";
+import { SERMON_TOKEN_MINIMUM_COSTS } from "@/app/_lib/sermon-token-pricing";
 
 type ServerSetting = {
   tier: AiEngineTier;
@@ -346,7 +347,7 @@ export function AdminAiEngineSettingsForm() {
                     {meta.label}
                   </h3>
                   <p className="mt-1 text-sm text-[#6a756f]">
-                    {meta.description} · 설교 1개당 {meta.tokenCost}토큰
+                    {meta.description} · 최소 {SERMON_TOKEN_MINIMUM_COSTS[setting.tier]}토큰부터
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-sm font-extrabold text-[#34483f]">

@@ -15,7 +15,6 @@ import {
   chargeSermonTokens,
   InsufficientTokensError,
   refundTokenCharge,
-  tokenBillingConfigured,
   type TokenCharge,
 } from "@/app/_lib/token-wallet";
 import {
@@ -639,6 +638,12 @@ export async function POST(request: Request): Promise<Response> {
   if (splitGeneration && !user && position !== 1) {
     return error("비회원 미리보기는 첫 번째 초안만 생성할 수 있습니다.", 403);
   }
+  if (user && !user.isDemo && !splitGeneration) {
+    return error(
+      "설교 생성 방식이 변경되었습니다. 화면을 새로고침한 뒤 다시 시작해 주세요.",
+      409,
+    );
+  }
 
   const options = input.options;
   const scripture = typeof input.scripture === "string" ? input.scripture.trim() : "";
@@ -738,6 +743,7 @@ export async function POST(request: Request): Promise<Response> {
         .slice(0, 4)
     : [];
   const duration = options.duration as SermonDuration;
+  const pointCount = options.pointCount as SermonPointCount;
   const normalized: GenerateSermonsRequest = {
     draftId: input.draftId,
     ...(generationId ? { generationId } : {}),
@@ -754,7 +760,7 @@ export async function POST(request: Request): Promise<Response> {
       tone: options.tone.trim(),
       sermonType: options.sermonType as SermonType,
       audience: options.audience as SermonAudience,
-      pointCount: options.pointCount as SermonPointCount,
+      pointCount,
     },
     reference: {
       url: reference.url?.trim().slice(0, 2048) ?? "",
@@ -1166,7 +1172,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     let tokenCharge: TokenCharge | null = null;
-    if (user && !user.isDemo && tokenBillingConfigured()) {
+    if (user && !user.isDemo) {
       if (!db || !databaseReady) {
         return error("토큰 잔액을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.", 503);
       }
@@ -1174,9 +1180,9 @@ export async function POST(request: Request): Promise<Response> {
         tokenCharge = await chargeSermonTokens({
           db,
           userId: user.id,
-          generationId: generationId ?? `legacy-${normalized.draftId}-${crypto.randomUUID()}`,
-          position,
-          alternativeCount: expectedCount,
+          generationId: generationId!,
+          duration,
+          pointCount,
           ai: userAi,
         });
       } catch (caught) {
@@ -1199,8 +1205,10 @@ export async function POST(request: Request): Promise<Response> {
     async function refundFailedGeneration(reason: string): Promise<void> {
       if (
         !tokenCharge ||
+        !tokenCharge.charged ||
         !db ||
         !user ||
+        (position !== undefined && position > 1) ||
         (generationStep !== undefined && generationStep > 1)
       ) {
         return;

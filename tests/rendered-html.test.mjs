@@ -565,6 +565,7 @@ test("keeps public privacy and terms pages grounded in implemented service behav
 test("keeps token pricing, atomic ledger rules, and one-time checkout explicit", async () => {
   const [
     wallet,
+    pricing,
     database,
     generation,
     sermonClient,
@@ -576,6 +577,7 @@ test("keeps token pricing, atomic ledger rules, and one-time checkout explicit",
     shell,
   ] = await Promise.all([
     readFile(new URL("../app/_lib/token-wallet.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_lib/sermon-token-pricing.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/sermon-client.ts", import.meta.url), "utf8"),
@@ -590,9 +592,9 @@ test("keeps token pricing, atomic ledger rules, and one-time checkout explicit",
   assert.match(wallet, /WELCOME_TOKEN_GRANT = 200/);
   assert.match(wallet, /TOKENS_PER_1000_KRW = 200/);
   assert.match(wallet, /MINIMUM_TOPUP_KRW = 1_000/);
-  assert.match(wallet, /basic: 10/);
-  assert.match(wallet, /advanced: 20/);
-  assert.match(wallet, /reasoning: 40/);
+  assert.match(pricing, /basic: 10/);
+  assert.match(pricing, /advanced: 20/);
+  assert.match(pricing, /reasoning: 40/);
   assert.match(wallet, /PORTONE_API_SECRET/);
   assert.match(wallet, /PORTONE_WEBHOOK_SECRET/);
   assert.match(wallet, /pg_advisory_xact_lock/);
@@ -602,7 +604,13 @@ test("keeps token pricing, atomic ledger rules, and one-time checkout explicit",
   assert.match(generation, /InsufficientTokensError/);
   assert.match(generation, /status: 402/);
   assert.match(generation, /refundTokenCharge/);
-  assert.match(generation, /tokenBillingConfigured\(\)/);
+  assert.doesNotMatch(generation, /tokenBillingConfigured\(\)/);
+  assert.match(wallet, /baseReferenceId = `sermon:\$\{generationId\}`/);
+  assert.doesNotMatch(wallet, /sermonTokenCost\(ai\) \* alternativeCount/);
+  assert.match(wallet, /duration: SermonPricingDuration/);
+  assert.match(wallet, /pointCount: SermonPricingPointCount/);
+  assert.match(generation, /!tokenCharge\.charged/);
+  assert.match(generation, /position !== undefined && position > 1/);
   assert.match(checkout, /payMethod: paymentMethod === "card" \? "CARD" : "EASY_PAY"/);
   assert.match(checkout, /KAKAOPAY/);
   assert.match(checkout, /NAVERPAY/);
@@ -636,6 +644,62 @@ test("keeps token pricing, atomic ledger rules, and one-time checkout explicit",
   assert.match(shell, /TOKEN_WALLET_CHANGED_EVENT/);
   assert.match(panel, /notifyTokenWalletChanged\(payload\.wallet\)/);
   assert.match(sermonClient, /notifyTokenWalletChanged\(\)/);
+});
+
+test("prices one sermon generation by engine, duration, and point count only", async () => {
+  const {
+    SERMON_PRICING_DURATIONS,
+    SERMON_PRICING_POINT_COUNTS,
+    SERMON_TOKEN_MINIMUM_COSTS,
+    sermonGenerationTokenCost,
+  } = await import(new URL("../app/_lib/sermon-token-pricing.ts", import.meta.url));
+  const { sermonTokenCost } = await import(
+    new URL("../app/_lib/token-wallet.ts", import.meta.url)
+  );
+  const [options, panel, engineMeta, wallet] = await Promise.all([
+    readFile(new URL("../app/_components/sermon-options.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/tokens/token-wallet-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/_lib/ai-engine-tiers.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_lib/token-wallet.ts", import.meta.url), "utf8"),
+  ]);
+  const multipliers = { basic: 1, advanced: 2, reasoning: 4 };
+
+  for (const [tier, multiplier] of Object.entries(multipliers)) {
+    assert.equal(sermonGenerationTokenCost(tier, 5, 1), SERMON_TOKEN_MINIMUM_COSTS[tier]);
+    for (const duration of SERMON_PRICING_DURATIONS) {
+      for (const pointCount of SERMON_PRICING_POINT_COUNTS) {
+        const expected = multiplier * (duration + 5 + 2 * (pointCount - 1));
+        const actual = sermonGenerationTokenCost(tier, duration, pointCount);
+        assert.equal(actual, expected, `${tier}/${duration}분/${pointCount}대지`);
+        assert.ok(Number.isSafeInteger(actual));
+        assert.ok(actual >= 10);
+      }
+    }
+    assert.ok(
+      sermonGenerationTokenCost(tier, 30, 1) > sermonGenerationTokenCost(tier, 5, 1),
+    );
+    assert.ok(
+      sermonGenerationTokenCost(tier, 5, 4) > sermonGenerationTokenCost(tier, 5, 1),
+    );
+  }
+
+  assert.equal(sermonGenerationTokenCost("basic", 30, 4), 41);
+  assert.equal(sermonGenerationTokenCost("advanced", 30, 4), 82);
+  assert.equal(sermonGenerationTokenCost("reasoning", 30, 4), 164);
+  assert.equal(
+    sermonTokenCost(
+      { engine: "deepseek", model: "deepseek-v4-flash", tier: "advanced" },
+      30,
+      4,
+    ),
+    82,
+  );
+  assert.doesNotMatch(engineMeta, /빠른 초안/);
+  assert.match(options, /현재 조건 예상 차감/);
+  assert.match(options, /초안 개수와 관계없이 생성 1회만 차감/);
+  assert.doesNotMatch(options, /tokenCost \* 5|초안 1편당|다섯 초안 예상 차감/);
+  assert.doesNotMatch(panel, /5개 초안 전체 생성 시|50 · 100 · 200/);
+  assert.doesNotMatch(wallet, /alternativeCount/);
 });
 
 test("removes the retired browser AI settings and clears legacy storage", async () => {

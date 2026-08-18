@@ -22,7 +22,7 @@ export default async function TokensPage() {
         <AppPageHeading
           eyebrow="Token wallet"
           title="토큰 충전"
-          description="구독 없이 필요한 만큼 충전하고, 설교 초안마다 사용한 토큰을 투명하게 확인하세요."
+          description="구독 없이 필요한 만큼 충전하고, 설교 분량과 대지 수에 따라 사용한 토큰을 투명하게 확인하세요."
         />
         <TokenWalletPanel email={user.email} />
       </div>

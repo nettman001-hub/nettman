@@ -305,6 +305,7 @@
 .sermon-engine-stage.is-single .sermon-reference-choices span { font-size: 0.78rem; }
 .sermon-engine-token-total { display: flex; align-items: center; justify-content: flex-end; gap: 0.55rem; margin: 1rem 0 0; color: var(--sermon-muted); font-size: 0.72rem; }
 .sermon-engine-token-total strong { color: #29493a; font-size: 0.82rem; }
+.sermon-engine-pricing-note { margin: 0.45rem 0 0; text-align: right; }
 .sermon-form-actions {
   display: flex;
   align-items: center;

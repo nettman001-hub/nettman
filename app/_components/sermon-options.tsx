@@ -9,6 +9,10 @@ import {
   type AiEngineTier,
 } from "@/app/_lib/ai-engine-tiers";
 import {
+  SERMON_TOKEN_MINIMUM_COSTS,
+  sermonGenerationTokenCost,
+} from "@/app/_lib/sermon-token-pricing";
+import {
   EMPTY_SERMON_OPTIONS,
   MAX_SERMON_TONE_LENGTH,
   SERMON_AUDIENCES,
@@ -145,6 +149,10 @@ export function SermonOptions() {
   );
   const valid = isSermonOptionsComplete(form);
   const showToneError = submitted || (customToneSelected && form.tone.length > 0);
+  const estimatedTokenCost =
+    form.duration && form.pointCount
+      ? sermonGenerationTokenCost(form.aiTier, form.duration, form.pointCount)
+      : null;
 
   if (!ready || !draft) return <SermonLoading label="옵션 입력란을 준비하는 중입니다" />;
 
@@ -395,17 +403,20 @@ export function SermonOptions() {
                     />
                     <strong>{meta.label}</strong>
                     <span>{meta.description}</span>
-                    <span>초안 1편당 {meta.tokenCost}토큰</span>
+                    <span>최소 {SERMON_TOKEN_MINIMUM_COSTS[tier]}토큰부터</span>
                   </label>
                 );
               })}
             </div>
           </fieldset>
           <p className="sermon-engine-token-total">
-            다섯 초안 예상 차감
-            <strong>
-              {AI_ENGINE_TIER_META[form.aiTier].tokenCost * 5}토큰
-            </strong>
+            현재 조건 예상 차감
+            <strong>{estimatedTokenCost === null ? "계산 전" : `${estimatedTokenCost}토큰`}</strong>
+          </p>
+          <p className="sermon-field-hint sermon-engine-pricing-note">
+            {estimatedTokenCost === null
+              ? "분량과 대지 수를 선택하면 예상 차감을 계산합니다."
+              : `${AI_ENGINE_TIER_META[form.aiTier].label} · ${form.duration}분 · ${form.pointCount}대지 기준이며, 초안 개수와 관계없이 생성 1회만 차감합니다.`}
           </p>
         </section>
 

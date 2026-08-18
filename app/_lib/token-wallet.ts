@@ -1,8 +1,14 @@
-import type { AiRequestConfig } from "@/app/_lib/ai-config";
+import type { AiRequestConfig } from "./ai-config.ts";
 import {
   isAiEngineTier,
   type AiEngineTier,
-} from "@/app/_lib/ai-engine-tiers";
+} from "./ai-engine-tiers.ts";
+import {
+  SERMON_TOKEN_MINIMUM_COSTS,
+  sermonGenerationTokenCost,
+  type SermonPricingDuration,
+  type SermonPricingPointCount,
+} from "./sermon-token-pricing.ts";
 
 export const WELCOME_TOKEN_GRANT = 200;
 export const TOKENS_PER_1000_KRW = 200;
@@ -18,11 +24,9 @@ export const TOPUP_PRESETS_USD = [1, 5, 10, 20, 50, 100] as const;
 
 export type SermonTokenTier = AiEngineTier;
 
-export const SERMON_TOKEN_COSTS: Record<SermonTokenTier, number> = {
-  basic: 10,
-  advanced: 20,
-  reasoning: 40,
-};
+/** Minimum prices retained under the historical API name for client compatibility. */
+export const SERMON_TOKEN_COSTS: Record<SermonTokenTier, number> =
+  SERMON_TOKEN_MINIMUM_COSTS;
 
 export function tokenBillingConfigured(): boolean {
   return Boolean(
@@ -67,6 +71,10 @@ function advisoryKey(referenceId: string): number {
   return hash | 0;
 }
 
+function escapeSqlLike(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
 type BillableAi = Pick<AiRequestConfig, "engine" | "model"> & {
   tier?: AiEngineTier;
 };
@@ -83,8 +91,10 @@ export function tokenTierForAi(
 
 export function sermonTokenCost(
   ai: BillableAi | null | undefined,
+  duration: SermonPricingDuration,
+  pointCount: SermonPricingPointCount,
 ): number {
-  return SERMON_TOKEN_COSTS[tokenTierForAi(ai)];
+  return sermonGenerationTokenCost(tokenTierForAi(ai), duration, pointCount);
 }
 
 export function tokensForUsd(usd: number): number {
@@ -169,34 +179,36 @@ export async function chargeSermonTokens(args: {
   db: AppDatabase;
   userId: string;
   generationId: string;
-  position?: number;
-  alternativeCount?: number;
+  duration: SermonPricingDuration;
+  pointCount: SermonPricingPointCount;
   ai?: BillableAi;
 }): Promise<TokenCharge> {
-  const { db, userId, generationId, position, ai } = args;
+  const { db, userId, generationId, duration, pointCount, ai } = args;
   await ensureTokenWallet(db, userId);
-  const alternativeCount = position ? 1 : Math.max(1, args.alternativeCount ?? 5);
-  const cost = sermonTokenCost(ai) * alternativeCount;
-  const baseReferenceId = `sermon:${generationId}:${position ?? "batch"}`;
+  const cost = sermonTokenCost(ai, duration, pointCount);
+  const baseReferenceId = `sermon:${generationId}`;
   const priorCharges = await db
     .prepare(
       `SELECT charge.reference_id,
+              -charge.amount AS charged_cost,
               CASE WHEN refund.reference_id IS NULL THEN 0 ELSE 1 END AS refunded
        FROM token_transactions charge
        LEFT JOIN token_transactions refund
          ON refund.reference_id = 'refund:' || charge.reference_id
        WHERE charge.user_id = ? AND charge.kind = 'generation'
-         AND (charge.reference_id = ? OR charge.reference_id LIKE ?)
+         AND (charge.reference_id = ? OR charge.reference_id LIKE ? ESCAPE '\\')
        ORDER BY charge.created_at ASC`,
     )
-    .bind(userId, baseReferenceId, `${baseReferenceId}:retry:%`)
-    .all<{ reference_id: string; refunded: number }>();
+    // The prefix also finds legacy per-position charges such as `sermon:<id>:1`,
+    // preventing a resumed pre-migration run from being charged a second time.
+    .bind(userId, baseReferenceId, `${escapeSqlLike(baseReferenceId)}:%`)
+    .all<{ reference_id: string; charged_cost: number; refunded: number }>();
   const activeCharge = priorCharges.results.find((row) => integer(row.refunded) === 0);
   if (activeCharge) {
     const wallet = await getTokenWallet(db, userId);
     return {
       referenceId: activeCharge.reference_id,
-      cost,
+      cost: integer(activeCharge.charged_cost),
       balance: wallet.balance,
       charged: false,
     };
@@ -205,14 +217,13 @@ export async function chargeSermonTokens(args: {
     ? `${baseReferenceId}:retry:${priorCharges.results.length}`
     : baseReferenceId;
   const now = new Date().toISOString();
-  const description = position
-    ? `설교 초안 ${position}번 생성`
-    : `설교 초안 ${alternativeCount}개 생성`;
+  const description = `설교 생성 ${duration}분 · ${pointCount}대지`;
   const metadata = JSON.stringify({
     generationId,
-    position: position ?? null,
-    alternativeCount,
+    duration,
+    pointCount,
     tier: tokenTierForAi(ai),
+    pricingVersion: 2,
   });
   const results = await db.batch<{ balance_after: number }>([
     db.prepare("SELECT pg_advisory_xact_lock(?)").bind(advisoryKey(referenceId)),
