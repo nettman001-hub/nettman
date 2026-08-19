@@ -212,8 +212,11 @@ export function loadSermonDraft(id: string): SermonDraft | null {
       ...createEmptySermonDraft(),
       ...parsed,
       id,
+      // Keep "generating" as a one-render recovery marker. SermonInput sends
+      // this recovered bundle to the alternatives page, while a normal
+      // alternatives draft can still be opened here for a deliberate edit.
       stage: completedGenerationAlternatives
-        ? "alternatives"
+        ? "generating"
         : hasLegacyScriptureMismatch
           ? "input"
           : parsed.stage ?? "options",

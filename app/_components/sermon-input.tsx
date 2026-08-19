@@ -84,7 +84,7 @@ export function SermonInput() {
   useEffect(() => {
     const expectedCount = isGuest ? 1 : 5;
     if (
-      draft?.stage === "alternatives" &&
+      draft?.stage === "generating" &&
       !draft.generation &&
       draft.alternatives.length === expectedCount
     ) {

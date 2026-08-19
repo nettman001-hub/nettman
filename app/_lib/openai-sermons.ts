@@ -1520,9 +1520,10 @@ export async function normalizeAiScriptureReference(
     adjudicatedDecision &&
       sameScriptureInterpretation(adjudicatedDecision, verifiedDecision),
   );
-  const hasConsistentDecision = primaryMatchesVerification
-    ? adjudicationMatchesPrimary && adjudicationMatchesVerification
-    : adjudicationMatchesPrimary !== adjudicationMatchesVerification;
+  const hasConsistentDecision =
+    primaryMatchesVerification &&
+    adjudicationMatchesPrimary &&
+    adjudicationMatchesVerification;
   if (!adjudicatedDecision || !hasConsistentDecision) {
     throw new UserAiProviderError(
       "AI가 입력한 성경 본문의 시작 절과 끝 절을 일관되게 확인하지 못했습니다. 본문 표기를 확인한 뒤 다시 시도해 주세요.",

@@ -55,6 +55,17 @@ export function SermonAlternatives() {
     return () => generationController.current?.abort();
   }, []);
 
+  useEffect(() => {
+    const expectedCount = isGuest ? 1 : 5;
+    if (
+      draft?.stage === "generating" &&
+      !draft.generation &&
+      draft.alternatives.length === expectedCount
+    ) {
+      updateDraft((current) => ({ ...current, stage: "alternatives" }));
+    }
+  }, [draft, isGuest, updateDraft]);
+
   if (!ready) return <SermonLoading />;
   if (!draft) {
     return (
