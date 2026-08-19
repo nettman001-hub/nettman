@@ -2,16 +2,38 @@
 
 최종 정리일: 2026-08-19 (Asia/Seoul)
 
-이 문서는 다음 담당자가 현재 기능을 훼손하지 않고 개발, 검증, 배포를 바로 이어가기 위한 기준 문서입니다. 기능 설명은 `README.md`, 최초 요구사항은 `설계.json`, 실제 동작의 최종 기준은 현재 소스와 `tests/rendered-html.test.mjs`입니다.
+이 문서는 다음 담당자가 현재 기능을 훼손하지 않고 개발, 검증, 배포를 바로 이어가기 위한 기준 문서입니다. 기능 설명은 `README.md`, 최초 요구사항은 `설계.json`, 실제 동작의 최종 기준은 원격 `main`의 추적 소스와 세 회귀 테스트(`rendered-html`, `auth-member-security`, `admin-members-security`)입니다.
 
 ## 0. 가장 먼저 확인할 것
 
-> **이번 변경의 시작 기준선은 Sites 버전 27 및 Sites 원격 `main`과 일치한 커밋 `8d0b4918b9428f9857c7cc6db7883691f517710d`입니다.** 로컬 `origin/main` 표시는 손상된 보존 ref 때문에 낡을 수 있으므로, 강제 reset이나 merge로 맞추지 마세요. Google Drive의 Git 디렉터리 제약 때문에 `.git`은 별도 보존 메타데이터를 가리키는 gitfile입니다.
+> **권위 원본은 Sites 소스 저장소의 `main`입니다.** 2026-08-19 운영 기능 기준 커밋은 `721a98cf8b97eb9e74a1316e843f6b84919b5cc4`이며, 이 문서를 갱신한 후속 커밋은 문서만 바꿉니다. 새 컴퓨터에서는 문서에 적힌 과거 SHA로 되돌리지 말고 원격 `main`의 최신 HEAD에서 시작하세요.
 
-- 두 보존 디렉터리를 임의로 삭제하거나 `.git`을 일반 폴더로 다시 복사하지 마세요.
-- 작업 전 `git status`, `git log -1`, `git remote -v`로 기준선을 확인하세요.
-- `.env*`, `.vercel/`, 빌드 산출물과 API 키는 커밋하면 안 됩니다.
-- Google Drive 경로에서 `node_modules` 링크가 깨질 수 있습니다. 설치·빌드 오류가 나면 소스를 로컬 비동기화 폴더로 복사한 뒤 `npm ci`로 다시 검증하세요.
+- 현재 Google Drive 작업 폴더의 `.git`은 `.git-failed-import-20260818`을 가리키는 비정상 복구용 gitfile입니다. 이 Git 메타데이터와 `origin/main` 로컬 캐시는 다른 컴퓨터로 가져가면 안 됩니다.
+- 현재 컴퓨터의 `git branch -vv`에 표시되는 `origin/main`은 낡을 수 있습니다. 강제 reset·checkout·merge로 맞추지 말고, 단기 Sites 자격으로 원격 `main`을 직접 확인하거나 새로 clone하세요.
+- 현재 컴퓨터에서는 `git reset --hard`, `git gc`, `git prune`, 손상 ref 수리, `.git-failed-*`·`.git-unborn-*` 삭제를 실행하지 않습니다. 소스 전달은 Git 메타데이터 수리가 아니라 fresh clone으로 해결합니다.
+- `.env*`, `.vercel/`, `node_modules/`, `.next/`, `.vinext/`, `dist/`, API 키와 인증 토큰은 복사·커밋·메신저 전송 금지입니다.
+- `AI_SETTINGS_ENCRYPTION_KEY`를 바꾸면 DB에 저장된 기존 AI 공급자 키를 복호화할 수 없고, 이 값에 폴백한 최대 24시간짜리 성경 본문 정규화 승인도 무효화될 수 있습니다. 회전 전 공급자 키 재입력·재암호화, 별도 `SCRIPTURE_NORMALIZATION_SECRET`, 환경 폴백을 준비하세요.
+
+### 새 컴퓨터 권장 시작 순서
+
+1. Git과 Node.js 22.13 이상을 설치하고, Google Drive 밖의 짧은 로컬 경로(예: `C:\src\logos-ai`)를 준비합니다.
+2. Codex에 `.openai/hosting.json`의 기존 Sites 프로젝트 ID `appgprj_6a76c13012188191a30b9235f13dd1fe`로 **소스 저장소 단기 쓰기 자격을 발급하고 `main`을 fresh clone**해 달라고 요청합니다. 원격은 현재 Git 설정의 `https://git.chatgpt-team.site/7ec72fcc-7c16-4a43-a492-8096977c110b/appgprj_6a76c13012188191a30b9235f13dd1fe.git`이며, 토큰은 명령 1회용 헤더로만 사용하고 URL이나 Git 설정에 저장하지 않습니다.
+3. clone 직후 `git status`, `git log -5 --oneline`, `git remote -v`를 확인합니다. 작업 트리는 clean이어야 하고 `721a98c`가 최신 HEAD의 조상이어야 합니다.
+4. `npm ci`로 lockfile 그대로 설치합니다. Google Drive의 기존 `node_modules`나 빌드 산출물을 복사하지 않습니다.
+5. Vercel 권한이 있는 계정으로 기존 프로젝트 `sermon-guide-studio-kr`를 link합니다. `.vercel/project.json`은 Git에서 제외되므로 새 컴퓨터마다 다시 연결해야 합니다.
+6. `.env.example`을 계약으로 삼아 승인된 비밀 저장소 또는 Vercel development 환경에서 `.env.local`을 복원합니다. 운영 비밀값을 문서·채팅·Git에 붙이지 말고, 로컬 콜백을 쓸 때 `NEXT_PUBLIC_SITE_URL=http://localhost:3000`과 Supabase Redirect URL을 함께 확인합니다.
+7. 아래 순서로 설치와 기본 실행을 확인합니다.
+
+```powershell
+node --version
+npm --version
+npm ci
+npx --yes vercel@latest link --yes --project sermon-guide-studio-kr
+npx --yes vercel@latest env pull .env.local --yes --environment=development
+npm run dev
+```
+
+운영 DB가 연결된 `.env.local`로 `npm run build`를 실행하면 RLS 보강 스크립트가 실제 DB에 접근합니다. UI만 개발할 때는 운영 DB URL을 넣지 말고, DB 작업은 대상 프로젝트와 백업·마이그레이션 범위를 먼저 확인하세요.
 
 ## 1. 운영 현황
 
@@ -24,9 +46,10 @@
 | 런타임 | Node.js 22.13 이상, Next.js 16.3, React 19.2 |
 | 주 데이터베이스 | Supabase PostgreSQL (`POSTGRES_URL` 또는 `POSTGRES_URL_NON_POOLING`) |
 | 인증 | Supabase Auth 이메일/비밀번호 + Google OAuth |
+| 배포 기준 | 기능 커밋 `721a98c`, Sites 기능 버전 32, Vercel·Sites 동시 배포 완료(2026-08-19) |
 | 최종 검증 | 테스트 79개 통과, ESLint·TypeScript·Next.js·vinext 프로덕션 빌드 통과 |
 
-대표 운영 주소와 Sites 배포본은 2026-08-18에 같은 소스로 배포했습니다. 기능 수정 후에는 두 배포 대상이 서로 다른 버전이 되지 않도록 확인하세요.
+대표 운영 주소와 Sites 배포본은 2026-08-19에 같은 기능 소스로 배포했습니다. 기능 수정 후에는 원격 `main`, Vercel, Sites가 같은 커밋을 가리키는지 확인하세요. Sites 주소는 private 배포이므로 비인증 `401`은 정상입니다.
 
 ## 2. 사용자 핵심 흐름
 
@@ -131,17 +154,18 @@
 | 프로필 옵션 | `app/_lib/profile-options.ts`, `app/my/profile-form.tsx` | 교단·신학 종속 선택과 개인 설정 |
 | 후속 자료 생성 | `app/_lib/sermon-resources.ts`, `app/api/sermon-resources/route.ts` | 스터디·사역 활용 생성, 소유권·공정 이용 검증 |
 | AI 설정 해석 | `app/_lib/managed-ai-engines.ts` | 세 등급 설정 조회, 키 복호화·환경 폴백 |
+| 관리자 AI 안전 응답 | `app/_lib/admin-ai-settings-view.ts`, `app/admin/ai`, `app/api/admin/ai-settings` | 서버 최초 로드, strict DB read, 키 비노출 view, 15초 재시도·저장 |
 | 공급자 요청 | `app/_lib/ai-provider-adapters.ts` | 엔진별 URL·헤더·본문 변환 |
 | AI 모델 목록 | `app/_lib/ai-model-catalog.ts` | 모델 API 요청과 응답 정규화 |
 | 사용자 지정 URL 보안 | `app/_lib/ai-custom-endpoint.ts` | 공개 HTTP/HTTPS 주소·포트 및 DNS 검증 |
 | 토큰 가격 공식 | `app/_lib/sermon-token-pricing.ts` | 엔진·분량·대지 수 기반 생성 1회 비용 |
 | 토큰 원장 | `app/_lib/token-wallet.ts` | 비용, 차감, 환불, 충전 완료 |
 | 토큰 화면 갱신 | `app/_lib/token-wallet-events.ts` | 생성·충전 후 헤더 잔액 갱신 이벤트 |
-| 인증 | `app/_lib/auth-user.ts`, `app/_lib/supabase/*` | SSR 세션 검증, 관리자 판별 |
+| 인증 | `app/_lib/auth-user.ts`, `app/_lib/supabase/*`, `proxy.ts` | SSR 세션·세션 모드 검증, 12초 Supabase 제한, 관리자 판별 |
 | 회원관리 | `app/admin/members`, `app/api/admin/members`, `app/_lib/admin-member-auth.ts`, `app/_lib/admin-member-sync.ts` | Auth 디렉터리 동기화, 목록·상세, 역할·정지·무료 토큰·인증 지원·감사 |
-| DB 호환층 | `db/index.ts` | D1 형태 쿼리를 PostgreSQL로 변환·실행 |
+| DB 호환층 | `db/index.ts` | D1 형태 쿼리를 PostgreSQL로 변환·실행, RLS·인덱스 readiness, 쿼리·transaction 제한 |
 | DB 스키마 | `db/schema.ts`, `drizzle/` | 테이블 정의와 Sites/D1 마이그레이션 |
-| 전체 회귀 검사 | `tests/rendered-html.test.mjs` | 보안·인증·생성·결제·접근성 회귀 방지 |
+| 전체 회귀 검사 | `tests/rendered-html.test.mjs`, `tests/auth-member-security.test.mjs`, `tests/admin-members-security.test.mjs` | 화면·생성·결제·인증·회원관리 보안 회귀 방지 |
 
 ## 5. 환경 변수
 
@@ -159,6 +183,8 @@
 | `SUPABASE_SERVICE_ROLE_KEY` | 상세 Auth 조회·ban 동기화용 서버 전용 키; 브라우저 노출 금지 |
 | `AI_SETTINGS_ENCRYPTION_KEY` | 관리자 저장 API 키 암호화용 32자 이상 비밀값 |
 
+`SCRIPTURE_NORMALIZATION_SECRET`은 성경 본문 정규화 승인 토큰 서명용 32자 이상 선택 비밀값입니다. 없으면 `AI_SETTINGS_ENCRYPTION_KEY` → `SUPABASE_SERVICE_ROLE_KEY` → 선택 공급자 키 순으로 폴백하지만, 역할 분리를 위해 운영에서는 별도 값을 권장합니다. `VERCEL_OIDC_TOKEN`처럼 CLI가 임시 발급한 기기·세션 토큰은 다른 컴퓨터로 복사하지 않습니다.
+
 ### AI 공급자 폴백
 
 - `OPENAI_API_KEY`
@@ -167,7 +193,8 @@
 - `OPENROUTER_API_KEY`
 - `DEEPSEEK_API_KEY`
 - `CUSTOM_AI_API_KEY`
-- `OPENAI_MODEL`은 기본 OpenAI 모델 재정의용 선택값입니다.
+- `OPENAI_MODEL`: 기본 OpenAI 모델 재정의용 선택값
+- `OPENAI_REASONING_EFFORT`: OpenAI 추론 강도 재정의용 선택값
 
 ### 포트원 결제
 
@@ -184,28 +211,46 @@
 - `SERMON_LOCAL_ADMIN=true`: 로컬 폴백 사용자를 관리자로 취급
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`: 과거 Stripe 호환 경로용
 
+환경 변수의 **이름**은 `.env.example`, 실제 운영 **값**은 Vercel/Sites 비밀 설정을 기준으로 합니다. `.env.local`은 Git에서 제외되지만 그대로 복사하거나 전체 내용을 출력하지 않습니다. Sites 런타임 값과 D1/R2 바인딩은 기존 프로젝트가 소유하므로 새 프로젝트 생성이나 임의 재입력으로 대체하지 않습니다.
+
 ## 6. 로컬 실행과 검증
 
-```bash
+```powershell
 npm ci
 npm run dev
 ```
 
-변경 후 최소 검증:
+문서만 바꿨다면 최소한 아래를 확인합니다.
 
-```bash
-node --test tests/rendered-html.test.mjs
-npm run build
+```powershell
+git diff --check
+git status --short
 ```
 
-전체 검증:
+애플리케이션 코드를 바꿨다면 아래 전체 검증을 실행합니다. 현재 기대 결과는 세 테스트 파일 합계 79개 통과입니다.
 
-```bash
-npm test
+```powershell
+node node_modules/typescript/bin/tsc --noEmit --incremental false
+node --test tests/auth-member-security.test.mjs tests/admin-members-security.test.mjs tests/rendered-html.test.mjs
 npm run lint
+npm run build
+npx vinext build
 ```
 
-`npm run build`는 DB URL이 있으면 `scripts/secure-supabase-tables.mjs`를 먼저 실행해 앱 테이블의 RLS를 확인·적용합니다. 운영 DB를 대상으로 빌드할 때는 의도한 프로젝트인지 먼저 확인하세요.
+`npm test`는 Next.js 빌드와 `rendered-html`만 실행하므로 관리자 인증·회원관리 보안 테스트까지 포함한 전체 검증의 대체물이 아닙니다. `npm run build`는 DB URL이 있으면 `scripts/secure-supabase-tables.mjs`를 먼저 실행해 앱 테이블의 RLS를 확인·적용합니다. 운영 DB를 대상으로 빌드할 때는 의도한 프로젝트인지 먼저 확인하세요.
+
+### DB 스키마를 바꿀 때 반드시 함께 수정할 곳
+
+이 프로젝트는 Sites/D1 이력과 Vercel/PostgreSQL 런타임 계약을 함께 유지합니다. 한쪽만 고치면 다른 배포나 콜드 스타트에서 장애가 납니다.
+
+1. `db/schema.ts`의 논리 스키마를 수정합니다.
+2. `npm run db:generate`로 `drizzle/*.sql`, `drizzle/meta/*`, journal을 생성하고 SQL 범위를 직접 검토합니다.
+3. `db/index.ts`의 `schemaStatements`, `requiredSchemaColumns`, 필요한 `requiredUniqueIndexNames`, `protectedTableNames`를 함께 갱신합니다.
+4. 새 보호 테이블이면 `scripts/secure-supabase-tables.mjs`의 `protectedTables`에도 추가합니다.
+5. PostgreSQL의 기존 데이터 보정은 idempotent SQL로 만들고 advisory-lock bootstrap 안에서 실행되게 합니다. 런타임 fast-path가 새 버전을 잘못 최신으로 판단하지 않도록 readiness 조건을 반드시 추가합니다.
+6. RLS, 고유 인덱스, 원장·감사 idempotency 회귀 테스트를 추가한 뒤 전체 검증을 실행합니다.
+
+`drizzle/`은 Sites/D1 이력이며 운영 PostgreSQL에 자동 적용하는 migration runner가 아닙니다. 운영에 `drizzle push`·`drizzle migrate`를 임의 실행하지 않습니다. 운영 DB에 수동 SQL을 먼저 적용하고 소스 계약을 나중에 맞추는 방식도 금지합니다. 특히 회원 삭제, 이메일 변경, 지갑 잔액 직접 수정과 결제 상태 수동 변경은 기존 무결성·감사 원장을 깨뜨릴 수 있습니다. 롤백 시 코드를 이전 커밋으로 돌려도 additive DB 스키마는 자동으로 사라지지 않으므로 DROP·데이터 삭제로 맞추지 않습니다.
 
 ### 설교 생성 수동 점검
 
@@ -218,26 +263,49 @@ npm run lint
 
 ## 7. 배포 절차
 
+배포 전 `git status --short`가 비어 있어야 하며, 검증한 HEAD를 먼저 Sites 소스 저장소 `main`에 푸시합니다. 단기 자격은 per-command HTTP 헤더로만 사용하고 원격 URL·credential helper·파일에 남기지 않습니다. Vercel과 Sites에는 반드시 같은 HEAD를 배포합니다.
+
 ### Vercel / 대표 도메인
 
-1. 테스트와 `npm run build`를 통과시킵니다.
-2. 연결된 프로젝트에서 다음을 실행합니다.
+1. 전체 테스트, ESLint, TypeScript, Next.js 빌드를 통과시킵니다.
+2. `.vercel/project.json`이 기존 `sermon-guide-studio-kr`를 가리키는지 확인합니다. 없으면 새 프로젝트를 만들지 말고 기존 프로젝트에 link합니다.
+3. 연결된 프로젝트에서 다음을 실행합니다.
 
-```bash
-npx vercel deploy --prod --yes
+```powershell
+npx --yes vercel@latest deploy --prod --yes
 ```
 
-3. 출력에 `https://www.sermon-ai.shop` 별칭이 연결됐는지 확인합니다.
-4. 다음 주소를 확인합니다.
+4. 출력에 `https://www.sermon-ai.shop` 별칭이 연결됐는지 확인합니다.
+5. 다음 응답을 확인합니다.
 
 ```text
-https://sermon-ai.shop/sermon/options   → www로 이동, HTTP 200
-https://www.sermon-ai.shop/sermon/options
+https://sermon-ai.shop/                              → 308, www로 이동
+https://www.sermon-ai.shop/                          → 200
+https://www.sermon-ai.shop/admin/ai                  → 비로그인 307, /login으로 이동
+https://www.sermon-ai.shop/api/admin/ai-settings     → 비로그인 401, 장기 대기 없음
 ```
+
+6. 실제 관리자 계정으로 `/admin/ai`를 열어 세 엔진 카드가 즉시 보이는지, 모델 ID 조회와 저장 결과가 버튼 근처에 표시되는지 확인합니다. 오류 카드가 나오면 `다시 시도`가 15초 안에 결과를 돌려주는지 확인합니다.
 
 ### Sites
 
-`.openai/hosting.json`이 있으므로 Sites 배포 시에는 해당 `project_id`를 재사용합니다. `npx vinext build`로 `dist/server/index.js`를 만든 뒤 Sites 호스팅 절차에 따라 같은 소스를 저장·배포합니다. 새 사이트를 만들거나 `project_id`를 바꾸지 마세요.
+`.openai/hosting.json`이 있으므로 반드시 기존 `project_id`를 재사용합니다. 새 사이트를 만들거나 ID·slug를 바꾸지 마세요.
+
+1. 같은 HEAD에서 `npx vinext build`를 실행해 `dist/server/index.js`를 생성합니다.
+2. 현재 설치된 Sites hosting skill의 `package-site.sh`로 `dist/`, `.openai/hosting.json`, `drizzle/`을 패키징합니다. 플러그인 캐시 버전이 바뀔 수 있으므로 이 문서의 고정 절대 경로를 만들지 않습니다.
+3. 원격 `main`에 푸시한 정확한 HEAD SHA와 같은 빌드 archive로 Sites 버전 하나를 저장합니다.
+4. owner-only 상태가 확인되면 private 배포를 사용하고 완료될 때까지 상태를 확인합니다.
+5. 성공 URL은 <https://sermon-guide-studio-kr.nettman001.chatgpt.site>입니다. private Sites 배포는 비인증 요청에 `401`을 반환하는 것이 정상입니다.
+
+배포 후 `git rev-parse HEAD`, Sites 저장 버전의 `source.commit_sha`, Vercel에 올린 소스가 같은지 기록합니다. 실패한 빌드나 저장만 된 Sites 버전을 운영 완료로 보고하지 않습니다.
+
+Sites는 소스·빌드 호환 확인용 private 보조 배포이며 현재 운영 환경 변수는 Vercel과 동등하지 않습니다. Supabase/PostgreSQL 인증·데이터·AI 기능의 최종 운영 검증 대상은 `www.sermon-ai.shop`입니다. Sites를 public로 바꾸거나 운영 대체본으로 간주하지 않습니다.
+
+### 긴급 롤백 원칙
+
+- Vercel은 이전 Ready 배포의 소스 SHA와 환경을 확인한 뒤 promote/재배포합니다. DB를 함께 되돌리거나 테이블·컬럼을 삭제하지 않습니다.
+- Sites는 저장된 이전 버전을 재배포할 수 있지만, 버전 31(`c310b5f`)은 관리자 AI 로딩 고착 수정 전이므로 서비스 복구를 위한 짧은 임시 수단일 뿐입니다.
+- 결제·토큰·회원 상태 변경이 포함된 릴리스는 코드 롤백 전에 원장·감사·웹훅 영향부터 확인합니다.
 
 ## 8. 데이터와 보안 규칙
 
@@ -254,10 +322,12 @@ https://www.sermon-ai.shop/sermon/options
 
 ## 9. 알려진 제약과 다음 작업 후보
 
-1. **Google Drive Git 메타데이터:** `.git` gitfile과 보존 디렉터리 구조를 유지해야 합니다.
-2. **이메일 알림:** 브라우저 알림과 전송 큐는 있으나 실제 이메일 제공자 연결은 별도 운영 작업입니다.
-3. **실계정 E2E:** 자동 테스트는 소스·서버 로직 중심입니다. 인증과 실제 AI 공급자는 운영 비밀값이 필요한 별도 스모크 테스트가 필요합니다.
-4. **결제:** 포트원/KCP 신청과 운영 계약이 완료되지 않았으므로 결제 기능은 아직 운영 대상으로 간주하지 않습니다.
+1. **현재 PC의 Git 메타데이터는 복구용이며 비이식성:** 현재 폴더에서는 보존 디렉터리를 삭제·수리하지 말고, 새 PC에서는 반드시 짧은 비동기화 경로에 fresh clone합니다. 원격 자격 발급이 일시적으로 불가능할 때만 현재 PC에서 `git bundle create <안전한-외부경로> main`으로 `main` 한 브랜치만 내보냅니다. 깨진 refs가 섞일 수 있으므로 `--all`은 사용하지 않습니다.
+2. **Sites 원격 자격:** private 원격은 매번 단기 credential이 필요합니다. clone/fetch/push 명령에만 헤더로 전달하고 Git 설정이나 remote URL에 저장하지 않습니다.
+3. **DB 연결 한도:** 일반 쿼리는 15초 취소와 트랜잭션 서버 한도를 사용하지만 postgres.js의 active-query 취소는 best-effort입니다. 반복적인 pool 고착이 재현되면 공유 역할을 바꾸지 말고 전용 앱 DB role의 서버 `statement_timeout`과 pool 복구 전략을 별도 설계합니다.
+4. **이메일 알림:** 브라우저 알림과 전송 큐는 있으나 실제 이메일 제공자 연결은 별도 운영 작업입니다.
+5. **실계정 E2E:** 자동 테스트는 소스·서버 로직 중심입니다. 인증, 관리자 화면과 실제 AI 공급자는 운영 비밀값이 필요한 별도 스모크 테스트가 필요합니다.
+6. **결제:** 포트원/KCP 신청과 운영 계약이 완료되지 않았으므로 결제 기능은 아직 운영 대상으로 간주하지 않습니다.
 
 ## 10. 장애 시 빠른 확인 순서
 
@@ -268,10 +338,20 @@ https://www.sermon-ai.shop/sermon/options
 3. API 키가 필요 없는 서버라면 키를 비우고, 필요한 서버라면 새 키를 입력해 다시 조회합니다.
 4. `/api/admin/ai-settings/models` 응답 메시지를 확인합니다. 키를 로그에 출력하지 마세요.
 
+### 관리자 AI 화면이 설정을 못 불러올 때
+
+1. 운영 별칭이 최신 배포를 가리키는지, 실제 관리자 계정의 이메일이 `ADMIN_EMAILS`에 있는지 확인합니다.
+2. 화면은 서버에서 최초 설정을 함께 전달하므로 과거의 `관리자 AI 설정을 불러오는 중입니다…` 문구에 무기한 머물러서는 안 됩니다. 실패하면 오류 카드와 `다시 시도` 버튼이 보여야 합니다.
+3. `/api/admin/ai-settings`의 상태를 확인합니다. `401`은 로그인/세션 모드, `403`은 관리자 권한, `503`은 Supabase·PostgreSQL·strict 설정 조회 문제입니다.
+4. strict DB read는 오류를 환경 기본값으로 가장하지 않습니다. 저장 장애 중 PUT을 반복하거나 DB 값을 수동 덮어쓰지 말고 가용성을 먼저 복구합니다.
+5. 브라우저 요청·Supabase·DB에 각각 제한이 있으므로 15초 안팎에 오류로 전환되어야 합니다. 계속 무기한 대기하면 해당 Vercel 배포 로그와 DB pool 상태를 함께 확인합니다.
+
 ### 인증된 화면이 오래 멈출 때
 
-1. 콜드 인스턴스는 `information_schema`의 최신 필수 컬럼을 먼저 확인하고, 스키마가 완비됐으면 요청 시점의 전체 DDL 부트스트랩을 생략합니다.
-2. Supabase 인증 요청은 12초 제한이며, 스키마 보완 트랜잭션은 문장 30초·락 5초 제한입니다. 계속 실패하면 Supabase Auth와 PostgreSQL 가용성을 확인합니다.
+1. 콜드 인스턴스는 최신 필수 컬럼, 보호 테이블 전체의 RLS, 핵심 고유 인덱스를 먼저 확인하고 모두 정상이면 요청 시점의 전체 DDL 부트스트랩을 생략합니다.
+2. Supabase 인증 요청은 12초, 일반 PostgreSQL 쿼리 취소는 15초 제한입니다. 일반 batch는 statement 15초·lock 5초·idle 30초, 외부 Auth 동기화 advisory transaction은 idle 60초를 사용합니다.
+3. readiness가 실패할 때만 스키마 복구 transaction을 실행합니다. 운영 로그에 매 요청마다 다수의 `already exists, skipping` NOTICE가 반복되면 fast-path 조건 또는 실제 스키마 drift를 점검합니다.
+4. 계속 실패하면 Supabase Auth, PostgreSQL/Supavisor 가용성, Vercel 함수 로그를 확인하되 환경 변수 전체나 연결 문자열을 출력하지 않습니다.
 
 ### 설교 생성이 중간에 멈출 때
 
@@ -296,3 +376,7 @@ https://www.sermon-ai.shop/sermon/options
 - DB·환경 변수 변경 여부
 - 배포 주소와 실제 확인 결과
 - 남은 문제, 재현 조건, 안전한 다음 조치
+- 원격 `main`, Vercel, Sites가 가리키는 동일한 HEAD SHA
+- `git status --short`가 빈 clean 작업 트리인지 여부
+
+현재 인수인계 시점에는 미커밋 애플리케이션 변경이 없고, 운영 기능 기준 `721a98c`에서 관리자 AI 설정 무한 로딩 수정까지 배포됐습니다. 이 문서와 `.env.example`을 갱신하는 후속 커밋은 실행 동작을 바꾸지 않습니다. 새 담당자는 원격 `main` 최신 HEAD를 clone한 뒤 이 문서의 새 컴퓨터 체크리스트부터 진행하세요.
