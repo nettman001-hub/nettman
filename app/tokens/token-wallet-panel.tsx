@@ -120,9 +120,16 @@ function formatDate(value: string): string {
 async function readJson<T extends object>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => null)) as
     | T
-    | { error?: string }
+    | { error?: string; code?: string }
     | null;
   if (!response.ok) {
+    // Surface the machine-readable failure code for diagnosis; the code alone
+    // distinguishes identity failures from account-store failures.
+    const code =
+      payload && "code" in payload && typeof payload.code === "string"
+        ? payload.code
+        : undefined;
+    console.warn("[tokens] request failed", { status: response.status, code });
     throw new Error(
       payload && "error" in payload && payload.error
         ? payload.error

@@ -6,6 +6,7 @@ import {
   getSupabasePublicConfig,
 } from "./supabase/config";
 import { createSupabaseServerClient } from "./supabase/server";
+import { logAuthAccessFailure } from "./auth-failure-log";
 import { ensureTokenWallet } from "./token-wallet";
 
 export type AppUserRole = "preacher" | "expert";
@@ -157,12 +158,16 @@ async function verifiedSupabaseIdentity(): Promise<VerifiedIdentityResult> {
   }
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { kind: "anonymous" };
+  const startedAt = Date.now();
   try {
     const { data, error } = await supabase.auth.getClaims();
     if (error) {
-      return isAnonymousAuthError(error)
-        ? { kind: "anonymous" }
-        : { kind: "unavailable" };
+      if (isAnonymousAuthError(error)) return { kind: "anonymous" };
+      logAuthAccessFailure("identity", error, {
+        stage: "get_claims",
+        elapsedMs: Date.now() - startedAt,
+      });
+      return { kind: "unavailable" };
     }
     if (!data?.claims) return { kind: "anonymous" };
     const claims = data.claims as Record<string, unknown>;
@@ -182,7 +187,11 @@ async function verifiedSupabaseIdentity(): Promise<VerifiedIdentityResult> {
           rawSessionId && rawSessionId.length <= 128 ? rawSessionId : null,
       },
     };
-  } catch {
+  } catch (error) {
+    logAuthAccessFailure("identity", error, {
+      stage: "get_claims_throw",
+      elapsedMs: Date.now() - startedAt,
+    });
     return { kind: "unavailable" };
   }
 }
@@ -230,9 +239,13 @@ async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResul
       : { kind: "allowed", user: developmentFallbackUser(user) };
   }
 
+  const startedAt = Date.now();
+  let stage = "ensure_schema";
   try {
     await ensureDatabase(db);
+    stage = "migrate_owner";
     await migrateVerifiedEmailOwner(db, user);
+    stage = "upsert_user";
     const now = new Date().toISOString();
     await db.batch([
       db.prepare(
@@ -254,6 +267,7 @@ async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResul
            last_seen_at = excluded.last_seen_at`,
       ).bind(user.id, user.sessionId, now, now),
     ]);
+    stage = "load_record";
     const record = await db
       .prepare(
         `SELECT u.role, COALESCE(p.display_name, u.name) AS display_name,
@@ -281,6 +295,7 @@ async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResul
       return { kind: "denied", reason: "account_suspended" };
     }
     if (record.status === "suspended") {
+      stage = "lift_suspension";
       await db
         .prepare(
           `UPDATE users
@@ -292,6 +307,7 @@ async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResul
         .bind(now, now, user.id, record.suspended_until)
         .run();
     }
+    stage = "ensure_wallet";
     await ensureTokenWallet(db, user.id);
     return { kind: "allowed", user: {
       id: user.id,
@@ -301,7 +317,11 @@ async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResul
       role: normalizeRole(record?.role),
       isAdmin: isAdminEmail(user.email),
     } };
-  } catch {
+  } catch (error) {
+    logAuthAccessFailure("account_store", error, {
+      stage,
+      elapsedMs: Date.now() - startedAt,
+    });
     // Production account controls are fail-closed. Local development retains a
     // minimal fallback so a database outage cannot grant expert privileges.
     return process.env.NODE_ENV === "production"

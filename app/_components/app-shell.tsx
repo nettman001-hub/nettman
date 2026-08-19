@@ -377,9 +377,15 @@ export function AppShell({ active, children, user }: AppShellProps) {
     }
 
     let cancelled = false;
+    let refreshing = false;
     const controller = new AbortController();
 
     async function refreshTokenWallet() {
+      // Focus and visibilitychange both fire on tab return; collapse the
+      // duplicate into one in-flight request so sibling API calls do not
+      // contend for the same server database connections.
+      if (refreshing) return;
+      refreshing = true;
       try {
         const response = await fetch("/api/tokens", {
           cache: "no-store",
@@ -393,6 +399,8 @@ export function AppShell({ active, children, user }: AppShellProps) {
         if (!cancelled && next) setTokenWallet(next);
       } catch {
         // Keep the last known token values during temporary network failures.
+      } finally {
+        refreshing = false;
       }
     }
 

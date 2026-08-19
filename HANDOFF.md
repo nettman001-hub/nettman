@@ -324,7 +324,7 @@ Sites는 소스·빌드 호환 확인용 private 보조 배포이며 현재 운�
 
 1. **현재 PC의 Git 메타데이터는 복구용이며 비이식성:** 현재 폴더에서는 보존 디렉터리를 삭제·수리하지 말고, 새 PC에서는 반드시 짧은 비동기화 경로에 fresh clone합니다. 원격 자격 발급이 일시적으로 불가능할 때만 현재 PC에서 `git bundle create <안전한-외부경로> main`으로 `main` 한 브랜치만 내보냅니다. 깨진 refs가 섞일 수 있으므로 `--all`은 사용하지 않습니다.
 2. **Sites 원격 자격:** private 원격은 매번 단기 credential이 필요합니다. clone/fetch/push 명령에만 헤더로 전달하고 Git 설정이나 remote URL에 저장하지 않습니다.
-3. **DB 연결 한도:** 일반 쿼리는 15초 취소와 트랜잭션 서버 한도를 사용하지만 postgres.js의 active-query 취소는 best-effort입니다. 반복적인 pool 고착이 재현되면 공유 역할을 바꾸지 말고 전용 앱 DB role의 서버 `statement_timeout`과 pool 복구 전략을 별도 설계합니다.
+3. **DB 연결 한도:** 일반 쿼리는 15초 취소와 트랜잭션 서버 한도를 사용하지만 postgres.js의 active-query 취소는 best-effort입니다. 인스턴스당 커넥션 풀은 `POSTGRES_POOL_MAX`(기본 4, 1~8 강제)로 조절합니다. 과거 `max: 1`에서는 트랜잭션이 유일한 커넥션을 점유하는 동안 같은 인스턴스의 형제 API 요청이 큐에서 15초 데드라인에 걸려 503(`account_store_unavailable`)이 재현되었습니다. 값을 올리기 전에 `POSTGRES_URL`이 Supavisor transaction pooler를 가리키는지 반드시 확인하고, 직결(5432)이라면 2 이하로 유지합니다. 반복적인 pool 고착이 재현되면 공유 역할을 바꾸지 말고 전용 앱 DB role의 서버 `statement_timeout`과 pool 복구 전략을 별도 설계합니다.
 4. **이메일 알림:** 브라우저 알림과 전송 큐는 있으나 실제 이메일 제공자 연결은 별도 운영 작업입니다.
 5. **실계정 E2E:** 자동 테스트는 소스·서버 로직 중심입니다. 인증, 관리자 화면과 실제 AI 공급자는 운영 비밀값이 필요한 별도 스모크 테스트가 필요합니다.
 6. **결제:** 포트원/KCP 신청과 운영 계약이 완료되지 않았으므로 결제 기능은 아직 운영 대상으로 간주하지 않습니다.
@@ -352,6 +352,7 @@ Sites는 소스·빌드 호환 확인용 private 보조 배포이며 현재 운�
 2. Supabase 인증 요청은 12초, 일반 PostgreSQL 쿼리 취소는 15초 제한입니다. 일반 batch는 statement 15초·lock 5초·idle 30초, 외부 Auth 동기화 advisory transaction은 idle 60초를 사용합니다.
 3. readiness가 실패할 때만 스키마 복구 transaction을 실행합니다. 운영 로그에 매 요청마다 다수의 `already exists, skipping` NOTICE가 반복되면 fast-path 조건 또는 실제 스키마 drift를 점검합니다.
 4. 계속 실패하면 Supabase Auth, PostgreSQL/Supavisor 가용성, Vercel 함수 로그를 확인하되 환경 변수 전체나 연결 문자열을 출력하지 않습니다.
+5. 인증 503의 원인은 Vercel 함수 로그의 구조화 경고로 판별합니다. `[auth-access]`는 중앙 인증 실패로 `scope`(`identity`=Supabase 인증, `account_store`=DB 계정 조회), `stage`, `elapsedMs`, PostgreSQL `code`만 남기고, `[db]`는 15초 데드라인 초과(`deadline_exceeded`)와 쿼리 실패(`query_failed`)를 남깁니다. `account_store` + `57014` + `elapsedMs≈15000`은 커넥션 큐 대기 취소(→ `POSTGRES_POOL_MAX` 확인), `53300`은 연결 고갈(→ 풀 축소·pooler 전환), `55P03`은 부트스트랩 advisory lock 경합(→ readiness 실측), `identity` + 12초 부근은 Supabase Auth 지연입니다. API 503 응답 본문의 `code` 필드(`identity_unavailable`/`account_store_unavailable`)와 브라우저 콘솔의 `[tokens] request failed`로도 같은 판별이 가능합니다. 두 경고 모두 비밀값·개인정보·SQL·바인드 값은 기록하지 않습니다.
 
 ### 설교 생성이 중간에 멈출 때
 

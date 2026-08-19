@@ -1,6 +1,7 @@
 import { resolveRequestUserResponse, unauthorizedResponse } from "@/app/_lib/auth-user";
 import {
   ensureTokenWallet,
+  getTokenWallet,
   TOKENS_PER_1000_KRW,
   TOPUP_PRESETS_KRW,
   SERMON_TOKEN_COSTS,
@@ -45,7 +46,12 @@ export async function GET(request: Request): Promise<Response> {
 
   try {
     await ensureDatabase(db);
-    const wallet = await ensureTokenWallet(db, user.id);
+    // Central auth already ensured the wallet for authenticated users in this
+    // request, so a read is enough. Demo users skip persistence and keep the
+    // ensure path.
+    const wallet = user.isDemo
+      ? await ensureTokenWallet(db, user.id)
+      : await getTokenWallet(db, user.id);
     const history = await db
       .prepare(
         `SELECT id, kind, amount, balance_after, description, created_at

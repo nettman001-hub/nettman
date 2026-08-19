@@ -11,12 +11,35 @@ type CancelablePostgresQuery<T> = PromiseLike<T> & { cancel(): unknown };
 const DATABASE_QUERY_TIMEOUT_MS = 15_000;
 type TransactionIdleTimeout = "30s" | "60s";
 
+/**
+ * Structured failure log for operational diagnosis. Only allowlisted
+ * identifier fields are read from the error: message, detail, hint, query,
+ * and parameters can carry bind values or connection details and are never
+ * logged.
+ */
+function logDatabaseQueryFailure(
+  stage: "deadline_exceeded" | "query_failed",
+  error: unknown,
+  elapsedMs: number,
+): void {
+  const record =
+    error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+  console.warn("[db]", {
+    stage,
+    elapsedMs,
+    errorName: typeof record.name === "string" ? record.name.slice(0, 40) : undefined,
+    code: typeof record.code === "string" ? record.code.slice(0, 32) : undefined,
+  });
+}
+
 async function executeWithDatabaseDeadline<T>(
   query: CancelablePostgresQuery<T>,
 ): Promise<T> {
   let settled = false;
+  const startedAt = Date.now();
   const deadline = setTimeout(() => {
     if (settled) return;
+    logDatabaseQueryFailure("deadline_exceeded", null, Date.now() - startedAt);
     try {
       void Promise.resolve(query.cancel()).catch(() => undefined);
     } catch {
@@ -25,6 +48,9 @@ async function executeWithDatabaseDeadline<T>(
   }, DATABASE_QUERY_TIMEOUT_MS);
   try {
     return await query;
+  } catch (error) {
+    logDatabaseQueryFailure("query_failed", error, Date.now() - startedAt);
+    throw error;
   } finally {
     settled = true;
     clearTimeout(deadline);
@@ -695,6 +721,12 @@ let databaseUrl: string | null = null;
 let schemaReady = false;
 let schemaInitialization: Promise<void> | null = null;
 
+function databaseConnectionPoolSize(): number {
+  const configured = Number.parseInt(process.env.POSTGRES_POOL_MAX ?? "", 10);
+  if (!Number.isFinite(configured)) return 4;
+  return Math.min(8, Math.max(1, configured));
+}
+
 export function getD1(): D1Database | null {
   const configuredUrl =
     process.env.POSTGRES_URL?.trim() || process.env.POSTGRES_URL_NON_POOLING?.trim();
@@ -704,7 +736,13 @@ export function getD1(): D1Database | null {
     const client = postgres(configuredUrl, {
       connect_timeout: 10,
       idle_timeout: 20,
-      max: 1,
+      // One instance serves concurrent requests, and transactions reserve a
+      // whole connection each. A single connection queues sibling requests
+      // behind the active transaction until the 15s deadline cancels them,
+      // so keep a small bounded pool. Supavisor transaction pooling stays
+      // compatible because prepare stays off and every advisory lock and
+      // timeout below is transaction-scoped.
+      max: databaseConnectionPoolSize(),
       prepare: false,
       ssl: "require",
     });
