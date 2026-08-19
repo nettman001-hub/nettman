@@ -102,6 +102,7 @@
 ### 관리자 회원관리
 
 - `/admin/members`에서 검색·역할·상태·교단·프로필 완성도 필터와 회원 상세를 제공합니다.
+- `기존 가입 회원 동기화`는 Supabase Auth의 인증 완료 계정을 페이지 단위로 조회해 앱 DB에 없는 UUID만 안전하게 추가합니다. 기존 역할·상태·이름·활동 시각·토큰은 보존하고 이메일 충돌은 자동 병합하지 않습니다.
 - 상세에서는 프로필, 활동량, 토큰·결제 원장, 설교 피드백 메타데이터, 인증 상태와 감사 기록을 확인합니다. 설교 본문이나 피드백 메시지는 기본 회원관리 화면에 노출하지 않습니다.
 - 설교자·전문가 역할 변경은 낙관적 버전을 검사하고, 진행 중인 피드백이 있는 전문가 강등은 차단합니다.
 - 이용 정지·복구는 앱 DB에서 중앙 강제하며 알려진 세션을 폐기합니다. `SUPABASE_SERVICE_ROLE_KEY`가 있으면 상세 Auth 정보와 Supabase Auth ban 상태도 동기화하고, 재설정·인증 메일은 공개 Supabase 설정으로 요청할 수 있습니다.
@@ -128,7 +129,7 @@
 | 토큰 원장 | `app/_lib/token-wallet.ts` | 비용, 차감, 환불, 충전 완료 |
 | 토큰 화면 갱신 | `app/_lib/token-wallet-events.ts` | 생성·충전 후 헤더 잔액 갱신 이벤트 |
 | 인증 | `app/_lib/auth-user.ts`, `app/_lib/supabase/*` | SSR 세션 검증, 관리자 판별 |
-| 회원관리 | `app/admin/members`, `app/api/admin/members`, `app/_lib/admin-member-auth.ts` | 목록·상세, 역할·정지·무료 토큰·인증 지원·감사 |
+| 회원관리 | `app/admin/members`, `app/api/admin/members`, `app/_lib/admin-member-auth.ts`, `app/_lib/admin-member-sync.ts` | Auth 디렉터리 동기화, 목록·상세, 역할·정지·무료 토큰·인증 지원·감사 |
 | DB 호환층 | `db/index.ts` | D1 형태 쿼리를 PostgreSQL로 변환·실행 |
 | DB 스키마 | `db/schema.ts`, `drizzle/` | 테이블 정의와 Sites/D1 마이그레이션 |
 | 전체 회귀 검사 | `tests/rendered-html.test.mjs` | 보안·인증·생성·결제·접근성 회귀 방지 |

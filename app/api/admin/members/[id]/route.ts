@@ -50,6 +50,7 @@ function auditSummary(value: unknown): string {
     "member.role_changed": "업무 역할 변경",
     "member.suspended": "회원 이용 정지",
     "member.reactivated": "회원 이용 복구",
+    "member.auth_directory_synced": "기존 가입 회원 동기화",
     "tokens.free_granted": "무료 토큰 지급",
     "tokens.reclaimed": "토큰 회수",
     "auth.password_reset_requested": "비밀번호 재설정 메일 요청",

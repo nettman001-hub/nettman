@@ -51,6 +51,37 @@ test("free token adjustments atomically connect wallet, ledger, adjustment, and 
   assert.doesNotMatch(route, /lifetime_purchased\s*=/);
 });
 
+test("existing Supabase Auth members sync without changing entitlements or app activity", async () => {
+  const [supabase, sync, route] = await Promise.all([
+    source("app/_lib/supabase/admin.ts"),
+    source("app/_lib/admin-member-sync.ts"),
+    source("app/api/admin/members/sync/route.ts"),
+  ]);
+
+  assert.match(supabase, /client\.auth\.admin\.listUsers\(\{ page, perPage \}\)/);
+  assert.match(supabase, /const perPage = 1_000/);
+  assert.match(supabase, /reportedTotal > maximumUsers/);
+  assert.match(supabase, /seenIds\.has\(user\.id\)/);
+  assert.match(supabase, /!user\.emailConfirmedAt/);
+  assert.match(supabase, /AbortSignal\.timeout\(ADMIN_REQUEST_TIMEOUT_MS\)/);
+  assert.match(supabase, /bannedUntil: user\.bannedUntil/);
+  assert.match(route, /requireAdminRequest\(request\)/);
+  assert.match(route, /readAdminJsonBody\(request, 4_096\)/);
+  assert.match(route, /listAdminAuthDirectoryUsers\(\)[\s\S]*synchronizeAdminAuthDirectory/);
+  assert.match(route, /readAdminAuthDirectorySyncReplay\([\s\S]*listAdminAuthDirectoryUsers\(\)/);
+  assert.match(sync, /hasForeignEmailOwner/);
+  assert.match(sync, /ON CONFLICT\(id\) DO UPDATE SET/);
+  assert.match(sync, /email = excluded\.email/);
+  assert.match(sync, /member\.auth_directory_synced/);
+  assert.doesNotMatch(sync, /migrateVerifiedEmailOwner/);
+  assert.doesNotMatch(sync, /token_wallets|token_transactions|WELCOME_TOKEN_GRANT/);
+  assert.doesNotMatch(sync, /role = excluded\.role|status = excluded\.status/);
+  assert.doesNotMatch(sync, /last_seen_at = excluded\.last_seen_at/);
+  assert.match(sync, /unchanged \+= 1/);
+  assert.match(sync, /suspended \? "suspended" : "active"/);
+  assert.match(sync, /Supabase Auth 정지 상태 동기화/);
+});
+
 test("role and status changes only audit rows returned by the guarded mutation", async () => {
   const [route, consultation] = await Promise.all([
     source("app/api/admin/members/[id]/route.ts"),

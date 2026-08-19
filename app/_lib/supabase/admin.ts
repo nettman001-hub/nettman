@@ -5,6 +5,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_ACCESS_TOKEN_LENGTH = 16_384;
 const PERMANENT_BAN_DURATION = "876000h";
+const ADMIN_REQUEST_TIMEOUT_MS = 30_000;
 
 export type AdminAuthUserInfo = {
   id: string;
@@ -13,6 +14,16 @@ export type AdminAuthUserInfo = {
   lastSignInAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  bannedUntil: string | null;
+};
+
+export type AdminAuthDirectoryUser = {
+  id: string;
+  email: string;
+  name: string;
+  emailConfirmedAt: string | null;
+  createdAt: string | null;
+  lastSignInAt: string | null;
   bannedUntil: string | null;
 };
 
@@ -35,6 +46,15 @@ export type AdminAuthResult<T extends object = Record<never, never>> =
   | AdminAuthFailure;
 
 type AdminClient = ReturnType<typeof createClient>;
+
+const adminFetch: typeof fetch = (input, init) => {
+  const deadline = AbortSignal.timeout(ADMIN_REQUEST_TIMEOUT_MS);
+  const signals = init?.signal ? [init.signal, deadline] : [deadline];
+  return globalThis.fetch(input, {
+    ...init,
+    signal: signals.length === 1 ? deadline : AbortSignal.any(signals),
+  });
+};
 
 function usableSecret(value: string | undefined): string | null {
   const normalized = value?.trim();
@@ -106,6 +126,7 @@ function createSupabaseAdminClient(): AdminClient | null {
       persistSession: false,
       detectSessionInUrl: false,
     },
+    global: { fetch: adminFetch },
   });
 }
 
@@ -156,6 +177,30 @@ function safeAuthUser(value: unknown): AdminAuthUserInfo | null {
   };
 }
 
+function safeDirectoryUser(value: unknown): AdminAuthDirectoryUser | null {
+  const raw = errorRecord(value);
+  if (raw.is_anonymous === true || safeDate(raw.deleted_at)) return null;
+  if (
+    raw.banned_until != null &&
+    (typeof raw.banned_until !== "string" ||
+      raw.banned_until.length > 80 ||
+      !Number.isFinite(Date.parse(raw.banned_until)))
+  ) {
+    return null;
+  }
+  const user = safeAuthUser(raw);
+  if (!user) return null;
+  return {
+    id: user.id,
+    email: user.email,
+    name: (user.email.split("@", 1)[0] || "회원").slice(0, 80),
+    emailConfirmedAt: user.emailConfirmedAt,
+    createdAt: user.createdAt,
+    lastSignInAt: user.lastSignInAt,
+    bannedUntil: user.bannedUntil,
+  };
+}
+
 function normalizedEmail(value: string): string | null {
   const email = value.trim().toLowerCase();
   if (!email || email.length > 254 || /[\r\n]/.test(email)) return null;
@@ -197,6 +242,90 @@ export async function getAdminAuthUserInfo(
   } catch (error) {
     return providerFailure(error);
   }
+}
+
+type AdminAuthDirectoryResult = AdminAuthResult<{
+  users: AdminAuthDirectoryUser[];
+  authTotal: number;
+  skipped: number;
+}>;
+
+let pendingDirectoryRequest: Promise<AdminAuthDirectoryResult> | null = null;
+
+async function loadAdminAuthDirectoryUsers(): Promise<AdminAuthDirectoryResult> {
+  try {
+    const client = createSupabaseAdminClient();
+    if (!client) return unavailable();
+    const perPage = 1_000;
+    const maximumUsers = 20_000;
+    const users: AdminAuthDirectoryUser[] = [];
+    const seenIds = new Set<string>();
+    let skipped = 0;
+    let authTotal = 0;
+    let page = 1;
+    let processed = 0;
+    let complete = false;
+
+    while (processed < maximumUsers) {
+      const { data, error } = await client.auth.admin.listUsers({ page, perPage });
+      if (error) return providerFailure(error);
+      const pageUsers = Array.isArray(data.users) ? data.users : [];
+      processed += pageUsers.length;
+      const reportedTotal = Number(data.total ?? 0);
+      if (Number.isSafeInteger(reportedTotal) && reportedTotal > 0) {
+        authTotal = reportedTotal;
+        if (reportedTotal > maximumUsers) {
+          return {
+            available: true,
+            ok: false,
+            code: "provider_error",
+            error: "인증 회원 수가 동기화 안전 한도를 초과했습니다.",
+          };
+        }
+      }
+      for (const rawUser of pageUsers) {
+        const user = safeDirectoryUser(rawUser);
+        if (!user || !user.emailConfirmedAt) {
+          skipped += 1;
+          continue;
+        }
+        if (seenIds.has(user.id)) continue;
+        seenIds.add(user.id);
+        users.push(user);
+      }
+
+      if (pageUsers.length < perPage || (authTotal > 0 && processed >= authTotal)) {
+        complete = true;
+        break;
+      }
+      const nextPage = Number(data.nextPage ?? 0);
+      page = Number.isSafeInteger(nextPage) && nextPage > page ? nextPage : page + 1;
+    }
+    if (!complete) {
+      return {
+        available: true,
+        ok: false,
+        code: "provider_error",
+        error: "인증 회원 목록이 동기화 안전 한도를 초과했습니다.",
+      };
+    }
+    authTotal = Math.max(authTotal, users.length + skipped);
+    return success({ users, authTotal, skipped });
+  } catch (error) {
+    return providerFailure(error);
+  }
+}
+
+/** Returns the complete, email-addressable Supabase Auth directory safely. */
+export function listAdminAuthDirectoryUsers(): Promise<AdminAuthDirectoryResult> {
+  if (pendingDirectoryRequest) return pendingDirectoryRequest;
+  const request = loadAdminAuthDirectoryUsers();
+  pendingDirectoryRequest = request;
+  const clearPending = () => {
+    if (pendingDirectoryRequest === request) pendingDirectoryRequest = null;
+  };
+  void request.then(clearPending, clearPending);
+  return request;
 }
 
 export async function sendAdminPasswordReset(

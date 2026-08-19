@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppNotice } from "@/app/_components/app-notice";
 import { AppPageHeading } from "@/app/_components/app-page-heading";
 import {
@@ -124,6 +124,11 @@ export function MembersClient({
   const [data, setData] = useState<MembersListResponse>(EMPTY_RESPONSE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [reloadSequence, setReloadSequence] = useState(0);
+  const syncInFlight = useRef(false);
 
   const params = useMemo(
     () => listSearchParams(filters, cursor),
@@ -165,6 +170,64 @@ export function MembersClient({
     [params],
   );
 
+  const synchronizeExistingMembers = useCallback(
+    async () => {
+      if (syncInFlight.current) return;
+      syncInFlight.current = true;
+      setSyncing(true);
+      setSyncError("");
+      setSyncMessage("");
+      try {
+        const response = await fetch("/api/admin/members/sync", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ requestId: crypto.randomUUID() }),
+        });
+        const body: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message =
+            body &&
+            typeof body === "object" &&
+            typeof (body as { error?: unknown }).error === "string"
+              ? String((body as { error: string }).error)
+              : "기존 가입 회원을 동기화하지 못했습니다.";
+          throw new Error(message);
+        }
+        const result = body && typeof body === "object"
+          ? body as Record<string, unknown>
+          : {};
+        const created = Math.max(0, Number(result.created) || 0);
+        const updated = Math.max(0, Number(result.updated) || 0);
+        const unchanged = Math.max(0, Number(result.unchanged) || 0);
+        const conflicts = Math.max(0, Number(result.conflicts) || 0);
+        const skipped = Math.max(0, Number(result.skipped) || 0);
+        const details = [
+          `신규 ${created.toLocaleString("ko-KR")}명`,
+          updated > 0 ? `정보 갱신 ${updated.toLocaleString("ko-KR")}명` : "",
+          `기존 확인 ${unchanged.toLocaleString("ko-KR")}명`,
+          conflicts > 0 ? `충돌 ${conflicts.toLocaleString("ko-KR")}명` : "",
+          skipped > 0 ? `미인증·동기화 제외 ${skipped.toLocaleString("ko-KR")}명` : "",
+        ].filter(Boolean).join(" · ");
+        setSyncMessage(`기존 가입 회원 동기화 완료 — ${details}`);
+        setReloadSequence((current) => current + 1);
+      } catch (caught) {
+        setSyncError(
+          caught instanceof Error
+            ? caught.message
+            : "기존 가입 회원을 동기화하지 못했습니다.",
+        );
+      } finally {
+        syncInFlight.current = false;
+        setSyncing(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     const controller = new AbortController();
     const visibleParams = new URLSearchParams(params);
@@ -177,7 +240,7 @@ export function MembersClient({
     );
     void load(controller.signal);
     return () => controller.abort();
-  }, [load, params]);
+  }, [load, params, reloadSequence]);
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -255,12 +318,34 @@ export function MembersClient({
         description="회원의 사역 정보와 서비스 활동을 확인하고 업무 역할, 이용 상태와 토큰을 안전하게 관리합니다."
       />
 
+      {syncMessage ? (
+        <div className="mt-5">
+          <AppNotice tone="success" title="기존 가입 회원을 반영했습니다.">
+            {syncMessage}
+          </AppNotice>
+        </div>
+      ) : null}
+      {syncError ? (
+        <div className="mt-5">
+          <AppNotice tone="warning" title="기존 가입 회원 동기화가 필요합니다.">
+            <span>{syncError}</span>{" "}
+            <button
+              type="button"
+              className="font-extrabold underline underline-offset-2"
+              onClick={() => void synchronizeExistingMembers()}
+            >
+              다시 시도
+            </button>
+          </AppNotice>
+        </div>
+      ) : null}
+
       <section
         className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
         aria-label="회원 현황"
       >
         {[
-          ["전체 회원", formatCount(data.stats.total), "서비스에 등록된 회원"],
+          ["전체 회원", formatCount(data.stats.total), "인증 회원 동기화 후 서비스에 등록된 회원"],
           ["이용 중", formatCount(data.stats.active), "현재 서비스를 이용할 수 있음"],
           ["정지", formatCount(data.stats.suspended), "관리자 조치로 이용 제한"],
           ["전문가", formatCount(data.stats.experts), "설교 피드백 업무 가능"],
@@ -291,15 +376,25 @@ export function MembersClient({
               회원 찾기
             </h2>
           </div>
-          {hasFilters ? (
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
-              onClick={clearFilters}
-              className="min-h-10 rounded-xl px-3 text-xs font-extrabold text-[#52645c] underline underline-offset-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
+              disabled={syncing}
+              onClick={() => void synchronizeExistingMembers()}
+              className="min-h-10 rounded-xl border border-[#9aae9f] bg-[#eef4ef] px-3 text-xs font-extrabold text-[#315746] hover:bg-[#e2ece4] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] disabled:cursor-wait disabled:opacity-60"
             >
-              검색·필터 초기화
+              {syncing ? "기존 회원 확인 중…" : "기존 가입 회원 동기화"}
             </button>
-          ) : null}
+            {hasFilters ? (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="min-h-10 rounded-xl px-3 text-xs font-extrabold text-[#52645c] underline underline-offset-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
+              >
+                검색·필터 초기화
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <form className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={submitSearch} role="search">

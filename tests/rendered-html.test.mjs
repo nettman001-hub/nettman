@@ -284,6 +284,11 @@ test("keeps the administrator member directory responsive and server-backed", as
   assert.match(listClient, /최근 등록순/);
   assert.match(listClient, /params\.set\("profile"/);
   assert.match(listClient, /params\.set\("sort"/);
+  assert.match(listClient, /\/api\/admin\/members\/sync/);
+  assert.match(listClient, /기존 가입 회원 동기화/);
+  assert.match(listClient, /syncInFlight/);
+  assert.match(listClient, /reloadSequence/);
+  assert.doesNotMatch(listClient, /automaticSyncStarted/);
   assert.match(listClient, /<table/);
   assert.match(listClient, /lg:hidden/);
   assert.match(listClient, /aria-label="회원 목록 페이지 이동"/);
