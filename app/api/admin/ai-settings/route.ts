@@ -211,15 +211,16 @@ export async function PUT(request: Request): Promise<Response> {
         db
           .prepare(
             `INSERT INTO global_ai_settings
-              (id, enabled, engine, endpoint, model, reasoning_effort,
+              (id, enabled, engine, endpoint, model, reasoning_effort, max_output_tokens,
                api_key_encrypted, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
               enabled = excluded.enabled,
               engine = excluded.engine,
               endpoint = excluded.endpoint,
               model = excluded.model,
               reasoning_effort = excluded.reasoning_effort,
+              max_output_tokens = excluded.max_output_tokens,
               api_key_encrypted = excluded.api_key_encrypted,
               updated_by = excluded.updated_by,
               updated_at = excluded.updated_at`,
@@ -231,6 +232,7 @@ export async function PUT(request: Request): Promise<Response> {
             setting.preferences.endpoint,
             setting.preferences.model,
             setting.preferences.reasoningEffort,
+            setting.preferences.maxOutputTokens,
             setting.encryptedApiKey,
             auth.user.id,
             now,

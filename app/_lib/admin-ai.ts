@@ -53,7 +53,7 @@ export async function readGlobalAiPreferences(
   try {
     const row = await db
       .prepare(
-        `SELECT enabled, engine, endpoint, model, reasoning_effort
+        `SELECT enabled, engine, endpoint, model, reasoning_effort, max_output_tokens
          FROM global_ai_settings WHERE id = ?`,
       )
       .bind(GLOBAL_AI_SETTINGS_ID)
@@ -63,6 +63,7 @@ export async function readGlobalAiPreferences(
         endpoint: string;
         model: string;
         reasoning_effort: string;
+        max_output_tokens: number | null;
       }>();
     if (!row) return environmentPreferences();
     const parsed = validateAiPreferences({
@@ -71,6 +72,7 @@ export async function readGlobalAiPreferences(
       endpoint: row.endpoint,
       model: row.model,
       reasoningEffort: row.reasoning_effort,
+      maxOutputTokens: row.max_output_tokens,
     });
     return parsed.ok ? parsed.value : DEFAULT_AI_PREFERENCES;
   } catch {

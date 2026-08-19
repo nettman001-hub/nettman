@@ -78,6 +78,13 @@
       "when": 1786982871686,
       "tag": "0010_third_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1787126015154,
+      "tag": "0011_add_ai_max_output_tokens",
+      "breakpoints": true
     }
   ]
 }

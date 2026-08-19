@@ -57,6 +57,7 @@ function defaultPreferencesForTier(tier: AiEngineTier): AiPreferences {
     endpoint: preset.endpoint,
     model: tier === "reasoning" ? "deepseek-v4-pro" : preset.defaultModel,
     reasoningEffort: tier === "reasoning" ? "max" : preset.defaultReasoningEffort,
+    maxOutputTokens: null,
   };
 }
 
@@ -76,6 +77,7 @@ function parsedPreferences(
     endpoint: string;
     model: string;
     reasoning_effort: string;
+    max_output_tokens: number | null;
   } | undefined,
   tier: AiEngineTier,
 ): AiPreferences {
@@ -86,6 +88,7 @@ function parsedPreferences(
     endpoint: row.endpoint,
     model: row.model,
     reasoningEffort: row.reasoning_effort,
+    maxOutputTokens: row.max_output_tokens,
   });
   return parsed.ok ? parsed.value : defaultPreferencesForTier(tier);
 }
@@ -98,7 +101,7 @@ export async function readManagedAiEngineSettings(
     await ensureDatabase(db);
     const result = await db
       .prepare(
-        `SELECT id, enabled, engine, endpoint, model, reasoning_effort, api_key_encrypted
+        `SELECT id, enabled, engine, endpoint, model, reasoning_effort, max_output_tokens, api_key_encrypted
          FROM global_ai_settings
          WHERE id IN (?, ?, ?, ?)`,
       )
@@ -110,6 +113,7 @@ export async function readManagedAiEngineSettings(
         endpoint: string;
         model: string;
         reasoning_effort: string;
+        max_output_tokens: number | null;
         api_key_encrypted: string | null;
       }>();
     const rows = new Map(result.results.map((row) => [row.id, row]));

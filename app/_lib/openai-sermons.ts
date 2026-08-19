@@ -893,6 +893,13 @@ type StructuredValueValidation =
       };
     };
 
+export function resolveSermonMaxOutputTokens(
+  ai: Pick<AiRequestConfig, "maxOutputTokens"> | null | undefined,
+  automaticTokens: number,
+): number {
+  return ai?.maxOutputTokens ?? automaticTokens;
+}
+
 async function structuredResponse(args: {
   name: string;
   schema: Record<string, unknown>;
@@ -1933,7 +1940,7 @@ export async function generateAiSermonFragment(
     const result = await structuredResponse({
       name: `sermon_${position}_outline`,
       schema: outlineFragmentSchema(plannedPointCount(request)),
-      maxOutputTokens: 1_600,
+      maxOutputTokens: resolveSermonMaxOutputTokens(ai, 1_600),
       instructions: [
         "당신은 한국 교회 목회자의 설교 준비를 돕는 신중한 편집 파트너입니다.",
         `이번 설교의 방향은 다음과 같습니다: ${perspective}.`,
@@ -1999,7 +2006,7 @@ export async function generateAiSermonFragment(
   const result = await structuredResponse({
     name: `sermon_${position}_${verifiedStep.key.replaceAll("-", "_")}`,
     schema: textFragmentSchema(verifiedStep),
-    maxOutputTokens: 1_800,
+    maxOutputTokens: resolveSermonMaxOutputTokens(ai, 1_800),
     instructions: [
       "당신은 한국어 설교를 짧은 조각으로 이어 쓰는 신중한 목회 편집자입니다.",
       `이번 호출에서는 ${label}의 ${verifiedStep.fragmentIndex}/${verifiedStep.fragmentCount} 조각 하나만 작성하세요.`,
@@ -2140,9 +2147,12 @@ async function requestAiAlternative(
   return structuredResponse({
     name: `sermon_alternative_${index + 1}`,
     schema: sermonJsonSchema(pointCount),
-    maxOutputTokens: Math.min(
-      24_000,
-      Math.max(4_000, Math.ceil(targetCharacters * 2.25)),
+    maxOutputTokens: resolveSermonMaxOutputTokens(
+      ai,
+      Math.min(
+        24_000,
+        Math.max(4_000, Math.ceil(targetCharacters * 2.25)),
+      ),
     ),
     instructions: [
       "당신은 한국 교회 목회자의 설교 준비를 돕는 편집 파트너입니다.",
@@ -2320,9 +2330,12 @@ export async function reviseAiSermon(
   const result = await structuredResponse({
     name: "revised_sermon",
     schema: sermonJsonSchema(pointCount),
-    maxOutputTokens: Math.min(
-      24_000,
-      Math.max(6_000, (request.options.targetCharacters ?? 3_000) * 3),
+    maxOutputTokens: resolveSermonMaxOutputTokens(
+      ai,
+      Math.min(
+        24_000,
+        Math.max(6_000, (request.options.targetCharacters ?? 3_000) * 3),
+      ),
     ),
     instructions: [
       "당신은 한국어 설교 원고를 다듬는 신중한 목회 편집자입니다.",

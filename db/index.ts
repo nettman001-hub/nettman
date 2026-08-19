@@ -272,6 +272,7 @@ const schemaStatements = [
     id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0,
     engine TEXT NOT NULL DEFAULT 'openai', endpoint TEXT NOT NULL, model TEXT NOT NULL,
     reasoning_effort TEXT NOT NULL DEFAULT 'low',
+    max_output_tokens INTEGER,
     api_key_encrypted TEXT,
     updated_by TEXT NOT NULL, updated_at TEXT NOT NULL
   )`,
@@ -470,6 +471,13 @@ export async function ensureDatabase(db: D1Database): Promise<void> {
         await db
           .prepare(
             "ALTER TABLE global_ai_settings ADD COLUMN IF NOT EXISTS api_key_encrypted TEXT",
+          )
+          .run();
+      }
+      if (!globalAiColumns.results.some((column) => column.name === "max_output_tokens")) {
+        await db
+          .prepare(
+            "ALTER TABLE global_ai_settings ADD COLUMN IF NOT EXISTS max_output_tokens INTEGER",
           )
           .run();
       }

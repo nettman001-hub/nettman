@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AI_ENGINES,
   AI_ENGINE_PRESETS,
+  AI_MAX_OUTPUT_TOKENS_MAX,
+  AI_MAX_OUTPUT_TOKENS_MIN,
   aiReasoningEffortsForModel,
   type AiEngine,
   type AiPreferences,
@@ -84,6 +86,7 @@ export function AdminAiSettingsForm() {
       endpoint: preset.endpoint,
       model: preset.defaultModel,
       reasoningEffort: preset.defaultReasoningEffort,
+      maxOutputTokens: preferences.maxOutputTokens,
     });
     setModels([]);
     setKeyConfigured(null);
@@ -198,6 +201,30 @@ export function AdminAiSettingsForm() {
           >
             {reasoningEfforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
           </select>
+        </label>
+
+        <label className="sm:col-span-2 text-sm font-extrabold text-[#34483f]">
+          최대 출력 토큰 (선택)
+          <input
+            type="number"
+            inputMode="numeric"
+            min={AI_MAX_OUTPUT_TOKENS_MIN}
+            max={AI_MAX_OUTPUT_TOKENS_MAX}
+            step={1}
+            value={preferences.maxOutputTokens ?? ""}
+            placeholder="자동(기본값)"
+            onChange={(event) =>
+              setPreferences({
+                ...preferences,
+                maxOutputTokens:
+                  event.target.value === "" ? null : Number(event.target.value),
+              })
+            }
+            className="mt-2 min-h-12 w-full rounded-xl border border-[#ccc8bf] bg-white px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-[#b97838]"
+          />
+          <span className="mt-2 block text-xs font-medium leading-5 text-[#6a756f]">
+            비워 두면 작업별 기본값을 사용합니다 ({AI_MAX_OUTPUT_TOKENS_MIN.toLocaleString("ko-KR")}–{AI_MAX_OUTPUT_TOKENS_MAX.toLocaleString("ko-KR")}). 너무 낮거나 모델 허용 범위를 넘으면 응답이 잘리거나 오류가 날 수 있습니다.
+          </span>
         </label>
 
         <label className="sm:col-span-2 text-sm font-extrabold text-[#34483f]">

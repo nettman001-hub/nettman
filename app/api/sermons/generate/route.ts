@@ -130,6 +130,7 @@ async function generationSignature(
             endpoint: ai.endpoint,
             model: ai.model,
             reasoningEffort: ai.reasoningEffort,
+            maxOutputTokens: ai.maxOutputTokens,
           }
         : { source: "local", tier };
     }),

@@ -9,6 +9,8 @@ import {
 import {
   AI_ENGINES,
   AI_ENGINE_PRESETS,
+  AI_MAX_OUTPUT_TOKENS_MAX,
+  AI_MAX_OUTPUT_TOKENS_MIN,
   aiReasoningEffortsForModel,
   type AiEngine,
   type AiPreferences,
@@ -138,6 +140,7 @@ export function AdminAiEngineSettingsForm() {
         endpoint: preset.endpoint,
         model: preset.defaultModel,
         reasoningEffort: preset.defaultReasoningEffort,
+        maxOutputTokens: setting.preferences.maxOutputTokens,
       },
       apiKey: "",
       apiKeyConfigured: false,
@@ -412,6 +415,46 @@ export function AdminAiEngineSettingsForm() {
                       </option>
                     ))}
                   </select>
+                </label>
+
+                <label
+                  className="text-sm font-extrabold text-[#34483f] sm:col-span-2"
+                  htmlFor={`admin-ai-max-output-tokens-${setting.tier}`}
+                >
+                  최대 출력 토큰 (선택)
+                  <input
+                    id={`admin-ai-max-output-tokens-${setting.tier}`}
+                    type="number"
+                    inputMode="numeric"
+                    min={AI_MAX_OUTPUT_TOKENS_MIN}
+                    max={AI_MAX_OUTPUT_TOKENS_MAX}
+                    step={1}
+                    value={setting.preferences.maxOutputTokens ?? ""}
+                    placeholder="자동(기본값)"
+                    aria-describedby={`admin-ai-max-output-tokens-help-${setting.tier}`}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      updateSetting(setting.tier, (current) => ({
+                        ...current,
+                        preferences: {
+                          ...current.preferences,
+                          maxOutputTokens: value === "" ? null : Number(value),
+                        },
+                      }));
+                    }}
+                    className="mt-2 min-h-12 w-full rounded-xl border border-[#ccc8bf] bg-white px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-[#b97838]"
+                  />
+                  <span
+                    id={`admin-ai-max-output-tokens-help-${setting.tier}`}
+                    className="mt-2 block text-xs font-medium leading-5 text-[#6a756f]"
+                  >
+                    비워 두면 설교 분량과 작업 단계에 맞춘 기본값을 사용합니다.
+                    입력하면 설교 생성·조각·수정 요청의 최대 출력 토큰으로
+                    적용됩니다 ({AI_MAX_OUTPUT_TOKENS_MIN.toLocaleString("ko-KR")}–
+                    {AI_MAX_OUTPUT_TOKENS_MAX.toLocaleString("ko-KR")}). 너무
+                    낮으면 응답이 잘리고, 모델 허용 범위를 넘으면 오류가 날 수
+                    있습니다.
+                  </span>
                 </label>
 
                 <label className="text-sm font-extrabold text-[#34483f] sm:col-span-2">

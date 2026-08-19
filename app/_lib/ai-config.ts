@@ -127,6 +127,7 @@ export type AiPreferences = {
   endpoint: string;
   model: string;
   reasoningEffort: AiReasoningEffort;
+  maxOutputTokens: number | null;
 };
 
 export type AiRequestConfig = AiPreferences & {
@@ -159,7 +160,11 @@ export const DEFAULT_AI_PREFERENCES: AiPreferences = {
   endpoint: AI_ENGINE_PRESETS.openai.endpoint,
   model: AI_ENGINE_PRESETS.openai.defaultModel,
   reasoningEffort: AI_ENGINE_PRESETS.openai.defaultReasoningEffort,
+  maxOutputTokens: null,
 };
+
+export const AI_MAX_OUTPUT_TOKENS_MIN = 500;
+export const AI_MAX_OUTPUT_TOKENS_MAX = 128_000;
 
 export function aiReasoningEffortsForModel(
   engine: AiEngine,
@@ -399,6 +404,26 @@ export function validateAiModel(value: unknown): ValidationResult<string> {
   return { ok: true, value: model };
 }
 
+export function validateAiMaxOutputTokens(
+  value: unknown,
+): ValidationResult<number | null> {
+  if (value === undefined || value === null || value === "") {
+    return { ok: true, value: null };
+  }
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < AI_MAX_OUTPUT_TOKENS_MIN ||
+    value > AI_MAX_OUTPUT_TOKENS_MAX
+  ) {
+    return {
+      ok: false,
+      error: `최대 출력 토큰은 ${AI_MAX_OUTPUT_TOKENS_MIN.toLocaleString("ko-KR")}부터 ${AI_MAX_OUTPUT_TOKENS_MAX.toLocaleString("ko-KR")} 사이의 정수로 입력하거나 비워 주세요.`,
+    };
+  }
+  return { ok: true, value };
+}
+
 export function validateAiPreferences(value: unknown): ValidationResult<AiPreferences> {
   if (!isPlainObject(value)) {
     return { ok: false, error: "AI 연결 설정 형식을 확인해 주세요." };
@@ -429,6 +454,8 @@ export function validateAiPreferences(value: unknown): ValidationResult<AiPrefer
       error: `${preset.label}에서 지원하는 추론 강도를 다시 선택해 주세요.`,
     };
   }
+  const maxOutputTokens = validateAiMaxOutputTokens(value.maxOutputTokens);
+  if (!maxOutputTokens.ok) return maxOutputTokens;
 
   return {
     ok: true,
@@ -438,6 +465,7 @@ export function validateAiPreferences(value: unknown): ValidationResult<AiPrefer
       endpoint: endpoint.value,
       model: model.value,
       reasoningEffort: value.reasoningEffort as AiReasoningEffort,
+      maxOutputTokens: maxOutputTokens.value,
     },
   };
 }

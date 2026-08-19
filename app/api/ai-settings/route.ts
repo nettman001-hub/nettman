@@ -95,14 +95,15 @@ export async function PUT(request: Request): Promise<Response> {
     await db
       .prepare(
         `INSERT INTO global_ai_settings
-          (id, enabled, engine, endpoint, model, reasoning_effort, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          (id, enabled, engine, endpoint, model, reasoning_effort, max_output_tokens, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           enabled = excluded.enabled,
           engine = excluded.engine,
           endpoint = excluded.endpoint,
           model = excluded.model,
           reasoning_effort = excluded.reasoning_effort,
+          max_output_tokens = excluded.max_output_tokens,
           updated_by = excluded.updated_by,
           updated_at = excluded.updated_at`,
       )
@@ -113,6 +114,7 @@ export async function PUT(request: Request): Promise<Response> {
         preferences.endpoint,
         preferences.model,
         preferences.reasoningEffort,
+        preferences.maxOutputTokens,
         auth.user.id,
         now,
       )

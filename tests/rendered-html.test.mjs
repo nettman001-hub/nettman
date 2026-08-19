@@ -231,6 +231,66 @@ test("keeps AI controls admin-only and encrypts provider keys at rest", async ()
   assert.match(adminPage, /if \(!user\.isAdmin\) redirect\("\/home"\)/);
 });
 
+test("stores an optional per-engine maximum output token override", async () => {
+  const {
+    AI_MAX_OUTPUT_TOKENS_MAX,
+    AI_MAX_OUTPUT_TOKENS_MIN,
+    validateAiPreferences,
+  } = await import(new URL("../app/_lib/ai-config.ts", import.meta.url));
+  const { resolveSermonMaxOutputTokens } = await import(
+    new URL("../app/_lib/openai-sermons.ts", import.meta.url)
+  );
+  const base = {
+    enabled: true,
+    engine: "deepseek",
+    endpoint: "https://api.deepseek.com",
+    model: "deepseek-v4-flash",
+    reasoningEffort: "high",
+  };
+
+  assert.equal(validateAiPreferences(base).value.maxOutputTokens, null);
+  assert.equal(validateAiPreferences({ ...base, maxOutputTokens: null }).value.maxOutputTokens, null);
+  assert.equal(validateAiPreferences({ ...base, maxOutputTokens: "" }).value.maxOutputTokens, null);
+  assert.equal(validateAiPreferences({ ...base, maxOutputTokens: 32_000 }).value.maxOutputTokens, 32_000);
+  for (const value of [
+    AI_MAX_OUTPUT_TOKENS_MIN - 1,
+    AI_MAX_OUTPUT_TOKENS_MAX + 1,
+    2_048.5,
+    "32000",
+    Number.NaN,
+  ]) {
+    assert.equal(validateAiPreferences({ ...base, maxOutputTokens: value }).ok, false);
+  }
+  assert.equal(resolveSermonMaxOutputTokens(undefined, 1_800), 1_800);
+  assert.equal(resolveSermonMaxOutputTokens({ maxOutputTokens: null }, 18_000), 18_000);
+  assert.equal(resolveSermonMaxOutputTokens({ maxOutputTokens: 32_000 }, 18_000), 32_000);
+
+  const [schema, database, managed, route, form, generation, sermons, migration] =
+    await Promise.all([
+      readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+      readFile(new URL("../db/index.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/_lib/managed-ai-engines.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/api/admin/ai-settings/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/admin/ai/admin-ai-engine-settings-form.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/_lib/openai-sermons.ts", import.meta.url), "utf8"),
+      readFile(new URL("../drizzle/0011_add_ai_max_output_tokens.sql", import.meta.url), "utf8"),
+    ]);
+  assert.match(schema, /maxOutputTokens: integer\("max_output_tokens"\)/);
+  assert.match(database, /ADD COLUMN IF NOT EXISTS max_output_tokens INTEGER/);
+  assert.match(managed, /SELECT id, enabled, engine, endpoint, model, reasoning_effort, max_output_tokens/);
+  assert.match(route, /max_output_tokens = excluded\.max_output_tokens/);
+  assert.match(form, /최대 출력 토큰 \(선택\)/);
+  assert.match(form, /value=\{setting\.preferences\.maxOutputTokens \?\? ""\}/);
+  assert.match(form, /value === "" \? null : Number\(value\)/);
+  assert.match(form, /aria-describedby=\{`admin-ai-max-output-tokens-help-/);
+  assert.match(generation, /maxOutputTokens: ai\.maxOutputTokens/);
+  assert.match(sermons, /maxOutputTokens: 500/);
+  assert.match(sermons, /resolveSermonMaxOutputTokens\(ai, 1_600\)/);
+  assert.match(sermons, /resolveSermonMaxOutputTokens\(ai, 1_800\)/);
+  assert.match(migration, /ADD `max_output_tokens` integer/);
+});
+
 test("rejects unsafe custom AI endpoints before any provider call", async () => {
   const aiConfigSource = await readFile(
     new URL("../app/_lib/ai-config.ts", import.meta.url),
@@ -853,6 +913,7 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(openai.endpoint, AI_ENGINE_PRESETS.openai.endpoint);
   assert.match(openai.headers.Authorization, /^Bearer secret-openai-key$/);
   assert.deepEqual(openai.body.reasoning, { effort: "low" });
+  assert.equal(openai.body.max_output_tokens, 12000);
   assert.equal(JSON.stringify(openai.body).includes("secret-openai-key"), false);
   assert.equal(
     parseAiProviderResponse("openai", { status: "completed", output_text: '{"title":"은혜"}' }),
@@ -874,6 +935,7 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(anthropic.headers["x-api-key"], "secret-anthropic-key");
   assert.equal(anthropic.headers.Authorization, undefined);
   assert.equal(anthropic.body.output_config.effort, "medium");
+  assert.equal(anthropic.body.max_tokens, 12000);
   assert.equal(JSON.stringify(anthropic.body).includes("minLength"), false);
   assert.equal(JSON.stringify(anthropic.body).includes("minItems"), false);
   assert.equal(JSON.stringify(anthropic.body).includes("maxItems"), false);
@@ -898,6 +960,7 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(gemini.headers["x-goog-api-key"], "secret-gemini-key");
   assert.equal(gemini.body.store, false);
   assert.equal(gemini.body.generation_config.thinking_level, "medium");
+  assert.equal(gemini.body.generation_config.max_output_tokens, 12000);
   assert.equal(gemini.body.response_format.mime_type, "application/json");
   assert.equal(JSON.stringify(gemini.body).includes("secret-gemini-key"), false);
   assert.equal(
@@ -920,6 +983,7 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(openrouter.body.provider.require_parameters, true);
   assert.equal(openrouter.body.response_format.type, "json_schema");
   assert.deepEqual(openrouter.body.reasoning, { effort: "medium" });
+  assert.equal(openrouter.body.max_tokens, 12000);
   assert.equal(JSON.stringify(openrouter.body).includes("secret-openrouter-key"), false);
   assert.equal(
     parseAiProviderResponse("openrouter", {
@@ -935,6 +999,7 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(deepseek.body.model, "deepseek-v4-flash");
   assert.equal(deepseek.body.response_format.type, "json_object");
   assert.deepEqual(deepseek.body.thinking, { type: "disabled" });
+  assert.equal(deepseek.body.max_tokens, 12000);
   assert.equal(deepseek.body.reasoning_effort, undefined);
   assert.match(deepseek.body.messages[0].content, /JSON 객체 하나만 반환/);
   assert.match(deepseek.body.messages[0].content, /"required":\["title","items"\]/);
@@ -991,6 +1056,7 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(customChat.endpoint, "https://gateway.example/v1/chat/completions");
   assert.equal(customChat.body.messages[0].role, "system");
   assert.equal(customChat.body.response_format.type, "json_schema");
+  assert.equal(customChat.body.max_tokens, 12000);
   assert.match(customChat.body.messages[0].content, /JSON 객체 하나만 반환/);
   assert.equal(customChat.body.instructions, undefined);
   assert.equal(

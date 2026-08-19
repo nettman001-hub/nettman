@@ -37,6 +37,7 @@ export const globalAiSettings = sqliteTable("global_ai_settings", {
   endpoint: text("endpoint").notNull(),
   model: text("model").notNull(),
   reasoningEffort: text("reasoning_effort").notNull().default("low"),
+  maxOutputTokens: integer("max_output_tokens"),
   apiKeyEncrypted: text("api_key_encrypted"),
   updatedBy: text("updated_by").notNull(),
   updatedAt: text("updated_at").notNull(),
