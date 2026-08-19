@@ -1,6 +1,8 @@
 import type {
   GenerateSermonsRequest,
   GenerateSermonsResponse,
+  NormalizeScriptureRequest,
+  NormalizeScriptureResponse,
   ReviseSermonRequest,
   ReviseSermonResponse,
   SermonAlternative,
@@ -10,6 +12,20 @@ import { isSermonAlternative } from "./sermon-types.ts";
 import { notifyTokenWalletChanged } from "./token-wallet-events.ts";
 
 export const GENERATION_REQUEST_TIMEOUT_MS = 250_000;
+export const SCRIPTURE_NORMALIZATION_GRANT_INVALID =
+  "scripture_normalization_grant_invalid";
+
+export class SermonClientError extends Error {
+  readonly code: string | null;
+  readonly status: number;
+
+  constructor(message: string, status: number, code: string | null = null) {
+    super(message);
+    this.name = "SermonClientError";
+    this.status = status;
+    this.code = code;
+  }
+}
 
 function throwIfGenerationAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -30,13 +46,56 @@ function isGenerationPart(value: unknown): value is SermonGenerationPart {
   );
 }
 
-async function responseError(response: Response, fallback: string): Promise<string> {
+async function responseError(
+  response: Response,
+  fallback: string,
+): Promise<SermonClientError> {
   try {
-    const body = (await response.json()) as { error?: string };
-    return body.error || fallback;
+    const body = (await response.json()) as { error?: string; code?: string };
+    return new SermonClientError(
+      body.error || fallback,
+      response.status,
+      typeof body.code === "string" ? body.code : null,
+    );
   } catch {
-    return fallback;
+    return new SermonClientError(fallback, response.status);
   }
+}
+
+export async function requestScriptureNormalization(
+  request: NormalizeScriptureRequest,
+  signal?: AbortSignal,
+): Promise<NormalizeScriptureResponse> {
+  throwIfGenerationAborted(signal);
+  const response = await fetch("/api/sermons/normalize-scripture", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      "성경 본문 표기를 AI가 확인하지 못했습니다.",
+    );
+  }
+  const body = (await response.json()) as Partial<NormalizeScriptureResponse>;
+  if (
+    typeof body.scripture !== "string" ||
+    !body.scripture.trim() ||
+    typeof body.normalizedByAi !== "boolean" ||
+    (body.grant !== null && typeof body.grant !== "string") ||
+    (body.grantExpiresAt !== null && typeof body.grantExpiresAt !== "string")
+  ) {
+    throw new Error("AI가 확인한 성경 본문 표기가 올바르지 않습니다.");
+  }
+  return {
+    scripture: body.scripture.trim(),
+    normalizedByAi: body.normalizedByAi,
+    grant: body.grant ?? null,
+    grantExpiresAt: body.grantExpiresAt ?? null,
+  };
 }
 
 async function usesFragmentedGeneration(
@@ -52,8 +111,9 @@ async function usesFragmentedGeneration(
     signal,
   });
   if (!response.ok) {
-    throw new Error(
-      await responseError(response, "AI 엔진의 생성 방식을 확인하지 못했습니다."),
+    throw await responseError(
+      response,
+      "AI 엔진의 생성 방식을 확인하지 못했습니다.",
     );
   }
   const body = (await response.json()) as { fragmented?: unknown };
@@ -84,7 +144,7 @@ async function requestSermonGenerationInternal(
     signal,
   });
   if (!response.ok) {
-    throw new Error(await responseError(response, "설교 생성에 실패했습니다."));
+    throw await responseError(response, "설교 생성에 실패했습니다.");
   }
   const result = (await response.json()) as GenerateSermonsResponse;
   notifyTokenWalletChanged();
@@ -112,6 +172,11 @@ export async function requestSermonGenerationSequence(
   const clientUserScope = options.clientUserScope ?? null;
   const useFragmentedGeneration = await usesFragmentedGeneration(request, options.signal);
   const alternatives = [...(options.completed ?? [])];
+  if (alternatives.some((alternative) => alternative.scripture !== request.scripture)) {
+    throw new Error(
+      "저장된 초안의 본문 범위가 현재 본문과 달라 새 초안 묶음으로 다시 시작해 주세요.",
+    );
+  }
   let parts = useFragmentedGeneration
     ? (options.completedParts ?? []).filter(isGenerationPart)
     : [];
@@ -191,6 +256,7 @@ export async function requestSermonGenerationSequence(
         if (
           result.alternatives.length !== 1 ||
           !isSermonAlternative(result.alternatives[0]) ||
+          result.alternatives[0].scripture !== request.scripture ||
           (result.position !== undefined && result.position !== position)
         ) {
           throw new Error(`${position}번째 설교 초안의 응답 형식이 올바르지 않습니다.`);
@@ -248,7 +314,7 @@ export async function requestSermonRevision(
     signal,
   });
   if (!response.ok) {
-    throw new Error(await responseError(response, "설교 수정에 실패했습니다."));
+    throw await responseError(response, "설교 수정에 실패했습니다.");
   }
   return (await response.json()) as ReviseSermonResponse;
 }

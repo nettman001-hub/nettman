@@ -3,10 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  requestScriptureNormalization,
   requestSermonGenerationSequence,
+  SCRIPTURE_NORMALIZATION_GRANT_INVALID,
+  SermonClientError,
 } from "@/app/_lib/sermon-client";
 import {
   createSermonGeneration,
+  hasActiveScriptureNormalizationGrant,
+  sermonGenerationUsesScripture,
   sermonDraftUrl,
 } from "@/app/_lib/sermon-store";
 import {
@@ -14,6 +19,7 @@ import {
   isSermonAlternative,
   isSermonOptionsComplete,
   type ReferenceFile,
+  type SermonGeneration,
   type SermonReference,
 } from "@/app/_lib/sermon-types";
 import {
@@ -23,9 +29,12 @@ import {
   useSermonWorkflow,
 } from "./sermon-workflow";
 
-const SCRIPTURE_PATTERN =
-  /^(?:[가-힣\d\s]+\d{1,3}:\d{1,3}(?:\s*[-~]\s*\d{1,3})?|[가-힣\d\s]+\d{1,3}장\s*\d{1,3}절.*)$/;
 const SUPPORTED_EXTENSIONS = ["pdf", "docx", "txt"];
+
+function validScriptureInput(value: string): boolean {
+  const normalized = value.trim();
+  return normalized.length >= 2 && normalized.length <= 120;
+}
 
 function validUrl(value: string): boolean {
   if (!value.trim()) return true;
@@ -48,6 +57,7 @@ export function SermonInput() {
   });
   const [submitted, setSubmitted] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [normalizingScripture, setNormalizingScripture] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationStep, setGenerationStep] = useState<{
@@ -72,7 +82,7 @@ export function SermonInput() {
   }, []);
 
   const scriptureValid = useMemo(
-    () => SCRIPTURE_PATTERN.test(scripture.trim()) && scripture.trim().length <= 80,
+    () => validScriptureInput(scripture),
     [scripture],
   );
   const urlValid = validUrl(reference.url);
@@ -135,7 +145,7 @@ export function SermonInput() {
     setGenerating(true);
     setStopping(false);
     setGenerationStep(null);
-    const cleanScripture = scripture.trim();
+    const scriptureInput = scripture.trim();
     const cleanReference = draft.options.referenceMode === "manual"
       ? {
           ...reference,
@@ -144,54 +154,103 @@ export function SermonInput() {
         }
       : { ...EMPTY_SERMON_REFERENCE };
     const expectedCount: 1 | 5 = isGuest ? 1 : 5;
-    const resumable =
-      draft.generation?.mode === "initial" &&
-      draft.generation.expectedCount === expectedCount &&
-      draft.generation.alternatives.length < expectedCount &&
-      draft.scripture === cleanScripture &&
-      JSON.stringify(draft.reference) === JSON.stringify(cleanReference);
-    const generation = resumable && draft.generation
-      ? draft.generation
-      : createSermonGeneration("initial", expectedCount);
-    setGenerationProgress(generation.alternatives.length);
-    updateDraft((current) => ({
-      ...current,
-      scripture: cleanScripture,
-      reference: cleanReference,
-      stage: "generating",
-      alternatives: current.alternatives,
-      generation,
-      selectedAlternativeId: null,
-      versions: [],
-      revisions: [],
-      revisionCount: 0,
-      completedAt: null,
-      savedSermonId: null,
-      saveMode: null,
-    }));
-
     const controller = new AbortController();
     generationController.current = controller;
+    let generation: SermonGeneration | null = null;
     try {
+      const reusableNormalization =
+        draft.scriptureNormalization?.canonical === scriptureInput &&
+        draft.scriptureNormalization.aiTier === draft.options.aiTier &&
+        draft.scripture === scriptureInput &&
+        hasActiveScriptureNormalizationGrant(
+          draft.scriptureNormalization,
+          scriptureInput,
+          draft.options.aiTier,
+          clientUserScope ?? null,
+        )
+          ? draft.scriptureNormalization
+          : null;
+      setNormalizingScripture(!reusableNormalization);
+      const normalizationResponse = reusableNormalization
+        ? {
+            scripture: reusableNormalization.canonical,
+            normalizedByAi: reusableNormalization.normalizedByAi,
+            grant: reusableNormalization.grant,
+            grantExpiresAt: reusableNormalization.grantExpiresAt,
+          }
+        : await requestScriptureNormalization(
+            {
+              draftId: draft.id,
+              scripture: scriptureInput,
+              aiTier: draft.options.aiTier,
+              clientUserScope: clientUserScope ?? undefined,
+            },
+            controller.signal,
+          );
+      const canonicalScripture = normalizationResponse.scripture;
+      setNormalizingScripture(false);
+      if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      const scriptureNormalization = reusableNormalization ?? {
+        input: scriptureInput,
+        canonical: canonicalScripture,
+        normalizedAt: new Date().toISOString(),
+        aiTier: draft.options.aiTier,
+        clientUserScope: clientUserScope ?? null,
+        normalizedByAi: normalizationResponse.normalizedByAi,
+        grant: normalizationResponse.grant,
+        grantExpiresAt: normalizationResponse.grantExpiresAt,
+      };
+      setScripture(canonicalScripture);
+
+      const resumable =
+        draft.generation?.mode === "initial" &&
+        draft.generation.expectedCount === expectedCount &&
+        draft.generation.alternatives.length < expectedCount &&
+        draft.scripture === canonicalScripture &&
+        sermonGenerationUsesScripture(draft.generation, canonicalScripture) &&
+        JSON.stringify(draft.reference) === JSON.stringify(cleanReference);
+      generation = resumable && draft.generation
+        ? draft.generation
+        : createSermonGeneration("initial", expectedCount);
+      const activeGeneration = generation;
+      setGenerationProgress(activeGeneration.alternatives.length);
+      updateDraft((current) => ({
+        ...current,
+        scripture: canonicalScripture,
+        scriptureNormalization,
+        reference: cleanReference,
+        stage: "generating",
+        alternatives: [],
+        generation: activeGeneration,
+        selectedAlternativeId: null,
+        versions: [],
+        revisions: [],
+        revisionCount: 0,
+        completedAt: null,
+        savedSermonId: null,
+        saveMode: null,
+      }));
+
       const result = await requestSermonGenerationSequence(
         {
           draftId: draft.id,
           options: draft.options,
-          scripture: cleanScripture,
+          scripture: canonicalScripture,
+          scriptureNormalizationGrant: scriptureNormalization.grant ?? undefined,
           reference: cleanReference,
         },
         {
-          generationId: generation.id,
+          generationId: activeGeneration.id,
           expectedCount,
-          completed: generation.alternatives,
-          completedParts: generation.parts,
+          completed: activeGeneration.alternatives,
+          completedParts: activeGeneration.parts,
           signal: controller.signal,
           clientUserScope: clientUserScope ?? null,
           onStepProgress: (parts, position, completed, total) => {
             if (controller.signal.aborted) return;
             setGenerationStep({ position, completed, total });
             updateDraft((current) =>
-              current.generation?.id === generation.id
+              current.generation?.id === activeGeneration.id
                 ? {
                     ...current,
                     generation: { ...current.generation, parts },
@@ -205,7 +264,7 @@ export function SermonInput() {
             setGenerationProgress(completedCount);
             setGenerationStep(null);
             updateDraft((current) =>
-              current.generation?.id === generation.id
+              current.generation?.id === activeGeneration.id
                 ? {
                     ...current,
                     generation: {
@@ -226,6 +285,9 @@ export function SermonInput() {
       if (
         result.alternatives.length !== expectedCount ||
         !result.alternatives.every(isSermonAlternative) ||
+        result.alternatives.some(
+          (alternative) => alternative.scripture !== canonicalScripture,
+        ) ||
         new Set(result.alternatives.map((item) => item.title)).size !== expectedCount
       ) {
         throw new Error(
@@ -236,7 +298,8 @@ export function SermonInput() {
       }
       updateDraft((current) => ({
         ...current,
-        scripture: cleanScripture,
+        scripture: canonicalScripture,
+        scriptureNormalization,
         reference: cleanReference,
         alternatives: result.alternatives,
         generation: null,
@@ -250,6 +313,9 @@ export function SermonInput() {
       }));
       router.push(sermonDraftUrl("/sermon/alternatives", draft.id));
     } catch (caught) {
+      const normalizationGrantInvalid =
+        caught instanceof SermonClientError &&
+        caught.code === SCRIPTURE_NORMALIZATION_GRANT_INVALID;
       const message =
         controller.signal.aborted ||
         (caught instanceof Error && caught.name === "AbortError")
@@ -260,20 +326,25 @@ export function SermonInput() {
       const restartRequired =
         message.includes("새 초안 묶음") || message.includes("새 묶음으로 다시 시작");
       setError(message);
-      updateDraft((current) =>
-        current.generation?.id === generation.id
-          ? {
-              ...current,
-              stage: "input",
-              generation: restartRequired ? null : current.generation,
-            }
-          : current,
-      );
+      updateDraft((current) => {
+        const next =
+          generation && current.generation?.id === generation.id
+            ? {
+                ...current,
+                stage: "input" as const,
+                generation: restartRequired ? null : current.generation,
+              }
+            : current;
+        return normalizationGrantInvalid
+          ? { ...next, scriptureNormalization: null }
+          : next;
+      });
     } finally {
       if (generationController.current === controller) {
         generationController.current = null;
       }
       setGenerating(false);
+      setNormalizingScripture(false);
       setStopping(false);
       setGenerationStep(null);
     }
@@ -300,8 +371,9 @@ export function SermonInput() {
         <p className="sermon-eyebrow">Step 02</p>
         <h2>말씀의 중심이 될 본문을 놓아 주세요</h2>
         <p>
-          장과 절을 함께 입력하면 선택한 방향에 맞춰 서로 다른 다섯 개의 초안을
-          준비합니다.
+          {isGuest
+            ? "비회원 미리보기에서는 입력한 본문 범위를 그대로 보존합니다. 로그인하면 AI가 익숙한 장·절 표현을 표준 본문 표기로 확인합니다."
+            : "익숙한 방식으로 장과 절을 입력하면 AI가 표준 본문 표기로 확인한 뒤 전체 범위를 보존해 초안을 준비합니다."}
         </p>
         <OptionBadges draft={draft} />
       </section>
@@ -321,17 +393,17 @@ export function SermonInput() {
           <input
             id="scripture-input"
             value={scripture}
-            maxLength={80}
+            maxLength={120}
             onChange={(event) => setScripture(event.target.value)}
-            placeholder="예: 갈라디아서 5:22-23"
+            placeholder="예: 요한복음 3장 16~17절"
             autoComplete="off"
             aria-invalid={submitted && !scriptureValid}
             aria-describedby="scripture-help"
           />
           <p id="scripture-help" className={submitted && !scriptureValid ? "sermon-field-error" : "sermon-field-hint"}>
             {submitted && !scriptureValid
-              ? "예: 요한복음 3:16 형식으로 장과 절을 입력해 주세요."
-              : "책 이름, 장, 절을 입력해 주세요. 예: 요한복음 3:16"}
+              ? "책 이름과 장·절을 120자 이하로 입력해 주세요."
+              : "요한복음 3:16-18 · 요한복음 3장 16절 · 요한복음 3장 16~17절 모두 입력할 수 있습니다."}
           </p>
         </div>
       </section>
@@ -424,14 +496,18 @@ export function SermonInput() {
           <p className="sermon-eyebrow">Five alternatives</p>
           <h3>
             {generating
-              ? `${isGuest ? "미리보기 1편" : "초안 5편"} 중 ${completedCount}개 완성`
+              ? normalizingScripture
+                ? "AI가 성경 본문 범위를 확인하고 있습니다"
+                : `${isGuest ? "미리보기 1편" : "초안 5편"} 중 ${completedCount}개 완성`
               : pendingGeneration
                 ? `${completedCount}개를 저장했습니다. 남은 초안을 이어 만드세요`
                 : "서로 다른 다섯 방향을 준비합니다"}
           </h3>
           <p>
             {generating
-              ? generationStep
+              ? normalizingScripture
+                ? "입력한 시작 절과 끝 절을 빠뜨리지 않고 표준 본문 표기로 정리합니다."
+                : generationStep
                 ? `${generationStep.position}번째 초안을 ${generationStep.completed}/${generationStep.total}단계로 나눠 만들고 있습니다. 완성된 단계는 바로 저장합니다.`
                 : completedCount < (isGuest ? 1 : 5)
                 ? `${completedCount + 1}번째 초안을 생성 중입니다. 한 편이 끝날 때마다 바로 저장합니다.`
@@ -500,7 +576,9 @@ export function SermonInput() {
             disabled={!canGenerate}
           >
             {generating
-              ? `${completedCount}/${isGuest ? 1 : 5} 생성 중…`
+              ? normalizingScripture
+                ? "본문 확인 중…"
+                : `${completedCount}/${isGuest ? 1 : 5} 생성 중…`
               : pendingGeneration
                 ? "남은 초안 이어 만들기"
                 : isGuest

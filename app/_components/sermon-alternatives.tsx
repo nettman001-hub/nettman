@@ -3,12 +3,22 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { requestSermonGenerationSequence } from "@/app/_lib/sermon-client";
+import {
+  requestScriptureNormalization,
+  requestSermonGenerationSequence,
+  SCRIPTURE_NORMALIZATION_GRANT_INVALID,
+  SermonClientError,
+} from "@/app/_lib/sermon-client";
 import {
   createSermonGeneration,
+  hasActiveScriptureNormalizationGrant,
+  sermonGenerationUsesScripture,
   sermonDraftUrl,
 } from "@/app/_lib/sermon-store";
-import { isSermonAlternative } from "@/app/_lib/sermon-types";
+import {
+  isSermonAlternative,
+  type SermonGeneration,
+} from "@/app/_lib/sermon-types";
 import {
   OptionBadges,
   SermonLoading,
@@ -100,53 +110,96 @@ export function SermonAlternatives() {
       setGuestMessage(true);
       return;
     }
-    const resumable =
+    const hasPendingGeneration =
       draft.generation?.mode === "regenerate" &&
       draft.generation.expectedCount === 5 &&
       draft.generation.alternatives.length < 5;
     if (
-      !resumable &&
+      !hasPendingGeneration &&
       !window.confirm(
         "현재 다섯 초안을 새 결과로 바꿀까요? 새 다섯 편이 모두 완성될 때까지 현재 결과는 유지됩니다.",
       )
     ) {
       return;
     }
-    const generation = resumable && draft.generation
-      ? draft.generation
-      : createSermonGeneration("regenerate", 5);
     setRegenerating(true);
     setStopping(false);
     setGenerationStep(null);
-    setGenerationProgress(generation.alternatives.length);
+    setGenerationProgress(draft.generation?.alternatives.length ?? 0);
     setError("");
-    updateDraft((current) => ({
-      ...current,
-      stage: "generating",
-      generation,
-    }));
     const controller = new AbortController();
     generationController.current = controller;
+    let generation: SermonGeneration | null = null;
     try {
+      let canonicalScripture = draft.scripture;
+      let scriptureNormalization = draft.scriptureNormalization;
+      if (
+        !hasActiveScriptureNormalizationGrant(
+          scriptureNormalization,
+          canonicalScripture,
+          draft.options.aiTier,
+          clientUserScope ?? null,
+        )
+      ) {
+        const normalized = await requestScriptureNormalization(
+          {
+            draftId: draft.id,
+            scripture: canonicalScripture,
+            aiTier: draft.options.aiTier,
+            clientUserScope: clientUserScope ?? undefined,
+          },
+          controller.signal,
+        );
+        canonicalScripture = normalized.scripture;
+        scriptureNormalization = {
+          input: draft.scripture,
+          canonical: normalized.scripture,
+          normalizedAt: new Date().toISOString(),
+          aiTier: draft.options.aiTier,
+          clientUserScope: clientUserScope ?? null,
+          normalizedByAi: normalized.normalizedByAi,
+          grant: normalized.grant,
+          grantExpiresAt: normalized.grantExpiresAt,
+        };
+      }
+      const resumable = Boolean(
+        hasPendingGeneration &&
+          draft.generation &&
+          draft.scripture === canonicalScripture &&
+          sermonGenerationUsesScripture(draft.generation, canonicalScripture),
+      );
+      generation = resumable && draft.generation
+        ? draft.generation
+        : createSermonGeneration("regenerate", 5);
+      const activeGeneration = generation;
+      setGenerationProgress(activeGeneration.alternatives.length);
+      updateDraft((current) => ({
+        ...current,
+        scripture: canonicalScripture,
+        scriptureNormalization,
+        stage: "generating",
+        generation: activeGeneration,
+      }));
       const result = await requestSermonGenerationSequence(
         {
           draftId: draft.id,
           options: draft.options,
-          scripture: draft.scripture,
+          scripture: canonicalScripture,
+          scriptureNormalizationGrant: scriptureNormalization?.grant ?? undefined,
           reference: draft.reference,
         },
         {
-          generationId: generation.id,
+          generationId: activeGeneration.id,
           expectedCount: 5,
-          completed: generation.alternatives,
-          completedParts: generation.parts,
+          completed: activeGeneration.alternatives,
+          completedParts: activeGeneration.parts,
           signal: controller.signal,
           clientUserScope: clientUserScope ?? null,
           onStepProgress: (parts, position, completed, total) => {
             if (controller.signal.aborted) return;
             setGenerationStep({ position, completed, total });
             updateDraft((current) =>
-              current.generation?.id === generation.id
+              current.generation?.id === activeGeneration.id
                 ? {
                     ...current,
                     generation: { ...current.generation, parts },
@@ -160,7 +213,7 @@ export function SermonAlternatives() {
             setGenerationProgress(completedCount);
             setGenerationStep(null);
             updateDraft((current) =>
-              current.generation?.id === generation.id
+              current.generation?.id === activeGeneration.id
                 ? {
                     ...current,
                     generation: {
@@ -180,12 +233,17 @@ export function SermonAlternatives() {
       if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
       if (
         result.alternatives.length !== 5 ||
-        !result.alternatives.every(isSermonAlternative)
+        !result.alternatives.every(isSermonAlternative) ||
+        result.alternatives.some(
+          (alternative) => alternative.scripture !== canonicalScripture,
+        )
       ) {
         throw new Error("다섯 초안을 모두 생성하지 못했습니다.");
       }
       updateDraft((current) => ({
         ...current,
+        scripture: canonicalScripture,
+        scriptureNormalization,
         alternatives: result.alternatives,
         generation: null,
         selectedAlternativeId: null,
@@ -199,6 +257,9 @@ export function SermonAlternatives() {
       }));
       setSelectedId(null);
     } catch (caught) {
+      const normalizationGrantInvalid =
+        caught instanceof SermonClientError &&
+        caught.code === SCRIPTURE_NORMALIZATION_GRANT_INVALID;
       const message =
         controller.signal.aborted ||
         (caught instanceof Error && caught.name === "AbortError")
@@ -209,15 +270,19 @@ export function SermonAlternatives() {
       const restartRequired =
         message.includes("새 초안 묶음") || message.includes("새 묶음으로 다시 시작");
       setError(message);
-      updateDraft((current) =>
-        current.generation?.id === generation.id
-          ? {
-              ...current,
-              stage: "alternatives",
-              generation: restartRequired ? null : current.generation,
-            }
-          : current,
-      );
+      updateDraft((current) => {
+        const next =
+          generation && current.generation?.id === generation.id
+            ? {
+                ...current,
+                stage: "alternatives" as const,
+                generation: restartRequired ? null : current.generation,
+              }
+            : current;
+        return normalizationGrantInvalid
+          ? { ...next, scriptureNormalization: null }
+          : next;
+      });
     } finally {
       if (generationController.current === controller) {
         generationController.current = null;

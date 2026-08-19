@@ -31,6 +31,7 @@ import {
   type ManagedAiRequestConfigs,
 } from "@/app/_lib/managed-ai-engines";
 import { isAiEngineTier } from "@/app/_lib/ai-engine-tiers";
+import { verifyScriptureNormalizationGrant } from "@/app/_lib/scripture-normalization-grant";
 import { ensureDatabase, getD1 } from "@/db";
 import {
   SERMON_AUDIENCES,
@@ -88,20 +89,25 @@ type DraftGenerationState = {
   active_generation_id: string | null;
 };
 
-function error(message: string, status = 400): Response {
-  return Response.json({ error: message }, { status });
+function error(message: string, status = 400, code?: string): Response {
+  return Response.json(
+    { error: message, ...(code ? { code } : {}) },
+    { status },
+  );
 }
 
 function isOneOf(value: unknown, allowed: readonly unknown[]): boolean {
   return allowed.includes(value);
 }
 
-function validScripture(value: string): boolean {
+function validScriptureInput(value: string): boolean {
   return (
-    value.length >= 4 &&
-    value.length <= 80 &&
-    (/^[가-힣\d\s]+\d{1,3}:\d{1,3}(?:\s*[-~]\s*\d{1,3})?$/.test(value) ||
-      /^[가-힣\d\s]+\d{1,3}장\s*\d{1,3}절/.test(value))
+    value.length >= 2 &&
+    value.length <= 120 &&
+    ![...value].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    })
   );
 }
 
@@ -684,8 +690,8 @@ export async function POST(request: Request): Promise<Response> {
   if (!isOneOf(options.pointCount, SERMON_POINT_COUNTS)) {
     return error("대지 수는 1개부터 4개까지 선택할 수 있습니다.");
   }
-  if (!validScripture(scripture)) {
-    return error("성경 본문을 ‘요한복음 3:16’과 같은 형식으로 입력해 주세요.");
+  if (!validScriptureInput(scripture)) {
+    return error("책 이름과 장·절을 120자 이하로 입력해 주세요.");
   }
 
   if (input.ai !== undefined) {
@@ -703,6 +709,28 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
   const userAi = user ? managedAiConfigs[selectedAiTier] : undefined;
+  if (user && userAi) {
+    const normalizationGrant =
+      typeof input.scriptureNormalizationGrant === "string"
+        ? input.scriptureNormalizationGrant
+        : "";
+    if (
+      !verifyScriptureNormalizationGrant({
+        token: normalizationGrant,
+        subject: user.id,
+        draftId: input.draftId,
+        aiTier: selectedAiTier,
+        scripture,
+        providerApiKey: userAi.apiKey,
+      })
+    ) {
+      return error(
+        "성경 본문 AI 확인 증표가 없거나 만료되었습니다. 본문 입력 화면에서 다시 확인해 주세요.",
+        409,
+        "scripture_normalization_grant_invalid",
+      );
+    }
+  }
   if (
     generationStep !== undefined &&
     !usesFragmentedSermonGeneration(userAi)

@@ -67,6 +67,31 @@ export type SermonReference = {
   file: ReferenceFile | null;
 };
 
+export type ScriptureNormalization = {
+  input: string;
+  canonical: string;
+  normalizedAt: string;
+  aiTier: AiEngineTier;
+  clientUserScope: string | null;
+  normalizedByAi: boolean;
+  grant: string | null;
+  grantExpiresAt: string | null;
+};
+
+export type NormalizeScriptureRequest = {
+  draftId: string;
+  scripture: string;
+  aiTier: AiEngineTier;
+  clientUserScope?: string;
+};
+
+export type NormalizeScriptureResponse = {
+  scripture: string;
+  normalizedByAi: boolean;
+  grant: string | null;
+  grantExpiresAt: string | null;
+};
+
 export type SermonPoint = {
   heading: string;
   content: string;
@@ -124,6 +149,7 @@ export type SermonDraft = {
   updatedAt: string;
   options: SermonOptions;
   scripture: string;
+  scriptureNormalization: ScriptureNormalization | null;
   reference: SermonReference;
   alternatives: SermonAlternative[];
   generation: SermonGeneration | null;
@@ -146,6 +172,7 @@ export type GenerateSermonsRequest = {
   existingTitles?: string[];
   options: SermonOptions;
   scripture: string;
+  scriptureNormalizationGrant?: string;
   reference: SermonReference;
   ai?: AiRequestConfig;
 };

@@ -199,6 +199,7 @@ export function SermonOptions() {
       ...(changed
         ? {
             scripture: "",
+            scriptureNormalization: null,
             alternatives: [],
             generation: null,
             selectedAlternativeId: null,

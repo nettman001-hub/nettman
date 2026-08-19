@@ -1,12 +1,13 @@
 import {
   EMPTY_SERMON_OPTIONS,
   EMPTY_SERMON_REFERENCE,
+  isSermonAlternative,
   normalizeSermonAiTiers,
   type SermonDraft,
   type SermonGeneration,
   type SermonGenerationPart,
-} from "./sermon-types";
-import type { SermonRecord } from "./data";
+} from "./sermon-types.ts";
+import type { SermonRecord } from "./data.ts";
 
 export const SERMON_ACTIVE_DRAFT_KEY = "sermon-guide:active-draft:v1";
 export const SERMON_DRAFT_PREFIX = "sermon-guide:draft:v1:";
@@ -48,6 +49,7 @@ export function createEmptySermonDraft(): SermonDraft {
       aiTiers: [...EMPTY_SERMON_OPTIONS.aiTiers],
     },
     scripture: "",
+    scriptureNormalization: null,
     reference: { ...EMPTY_SERMON_REFERENCE },
     alternatives: [],
     generation: null,
@@ -75,6 +77,49 @@ export function createSermonGeneration(
   };
 }
 
+export function sermonGenerationUsesScripture(
+  generation: SermonGeneration,
+  scripture: string,
+): boolean {
+  if (
+    generation.alternatives.some(
+      (alternative) => alternative.scripture !== scripture,
+    )
+  ) {
+    return false;
+  }
+  return generation.parts.every((part) => {
+    if (part.payload.kind !== "outline") return true;
+    const outline = part.payload.outline;
+    return Boolean(
+      outline &&
+        typeof outline === "object" &&
+        !Array.isArray(outline) &&
+        "scripture" in outline &&
+        outline.scripture === scripture,
+    );
+  });
+}
+
+export function hasActiveScriptureNormalizationGrant(
+  normalization: SermonDraft["scriptureNormalization"],
+  scripture: string,
+  aiTier: SermonDraft["options"]["aiTier"],
+  clientUserScope: string | null,
+): boolean {
+  if (
+    !normalization?.normalizedByAi ||
+    normalization.canonical !== scripture ||
+    normalization.aiTier !== aiTier ||
+    normalization.clientUserScope !== clientUserScope ||
+    !normalization.grant
+  ) {
+    return false;
+  }
+  const expiresAt = Date.parse(normalization.grantExpiresAt ?? "");
+  return Number.isFinite(expiresAt) && expiresAt > Date.now() + 30 * 60_000;
+}
+
 export function loadSermonDraft(id: string): SermonDraft | null {
   if (typeof window === "undefined" || !id) return null;
   try {
@@ -84,31 +129,102 @@ export function loadSermonDraft(id: string): SermonDraft | null {
     if (parsed.id !== id || !parsed.options || !parsed.reference) return null;
     const options = { ...EMPTY_SERMON_OPTIONS, ...parsed.options };
     const aiTiers = normalizeSermonAiTiers(options);
+    const storedScripture =
+      typeof parsed.scripture === "string" ? parsed.scripture.trim() : "";
+    const alternatives = Array.isArray(parsed.alternatives)
+      ? parsed.alternatives.filter(isSermonAlternative)
+      : [];
+    const generation =
+      parsed.generation &&
+      typeof parsed.generation === "object" &&
+      typeof parsed.generation.id === "string" &&
+      (parsed.generation.mode === "initial" || parsed.generation.mode === "regenerate") &&
+      (parsed.generation.expectedCount === 1 || parsed.generation.expectedCount === 5) &&
+      Array.isArray(parsed.generation.alternatives)
+        ? {
+            ...parsed.generation,
+            // Keep partial-generation labels untouched. If an older provider
+            // collapsed a range, sermonGenerationUsesScripture will reject the
+            // partial bundle and start it again instead of mixing old content
+            // into newly canonicalized alternatives.
+            alternatives: parsed.generation.alternatives.filter(isSermonAlternative),
+            parts: Array.isArray(parsed.generation.parts)
+              ? parsed.generation.parts.filter(isGenerationPart)
+              : [],
+          }
+        : null;
+    const versions = Array.isArray(parsed.versions)
+      ? parsed.versions.flatMap((version) => {
+          if (!version || typeof version !== "object") {
+            return [];
+          }
+          if (!isSermonAlternative(version.sermon)) return [];
+          return [
+            {
+              ...version,
+              sermon: version.sermon,
+            },
+          ];
+        })
+      : [];
+    const hasActiveInitialGeneration = Boolean(
+      generation?.mode === "initial" &&
+        generation.alternatives.length < generation.expectedCount,
+    );
+    const hasLegacyScriptureMismatch = Boolean(
+      storedScripture &&
+        (alternatives.some(
+          (alternative) => alternative.scripture !== storedScripture,
+        ) ||
+          versions.some(
+            (version) => version.sermon.scripture !== storedScripture,
+          )),
+    );
+    const discardLegacyResults =
+      hasActiveInitialGeneration || hasLegacyScriptureMismatch;
     return {
       ...createEmptySermonDraft(),
       ...parsed,
       id,
+      stage: hasLegacyScriptureMismatch ? "input" : parsed.stage ?? "options",
+      scripture: storedScripture,
       options: { ...options, aiTier: aiTiers[0], aiTiers },
-      reference: { ...EMPTY_SERMON_REFERENCE, ...parsed.reference },
-      alternatives: Array.isArray(parsed.alternatives) ? parsed.alternatives : [],
-      generation:
-        parsed.generation &&
-        typeof parsed.generation === "object" &&
-        typeof parsed.generation.id === "string" &&
-        (parsed.generation.mode === "initial" || parsed.generation.mode === "regenerate") &&
-        (parsed.generation.expectedCount === 1 || parsed.generation.expectedCount === 5) &&
-        Array.isArray(parsed.generation.alternatives)
-          ? {
-              ...parsed.generation,
-              parts: Array.isArray(parsed.generation.parts)
-                ? parsed.generation.parts.filter(isGenerationPart)
-                : [],
-            }
+      scriptureNormalization:
+        parsed.scriptureNormalization &&
+        typeof parsed.scriptureNormalization === "object" &&
+        typeof parsed.scriptureNormalization.input === "string" &&
+        typeof parsed.scriptureNormalization.canonical === "string" &&
+        typeof parsed.scriptureNormalization.normalizedAt === "string" &&
+        (parsed.scriptureNormalization.aiTier === "basic" ||
+          parsed.scriptureNormalization.aiTier === "advanced" ||
+          parsed.scriptureNormalization.aiTier === "reasoning") &&
+        (parsed.scriptureNormalization.clientUserScope === null ||
+          typeof parsed.scriptureNormalization.clientUserScope === "string") &&
+        typeof parsed.scriptureNormalization.normalizedByAi === "boolean" &&
+        (parsed.scriptureNormalization.grant === null ||
+          typeof parsed.scriptureNormalization.grant === "string") &&
+        (parsed.scriptureNormalization.grantExpiresAt === null ||
+          typeof parsed.scriptureNormalization.grantExpiresAt === "string")
+          ? parsed.scriptureNormalization
           : null,
-      versions: Array.isArray(parsed.versions) ? parsed.versions : [],
-      revisions: Array.isArray(parsed.revisions) ? parsed.revisions : [],
+      reference: { ...EMPTY_SERMON_REFERENCE, ...parsed.reference },
+      alternatives: discardLegacyResults ? [] : alternatives,
+      generation,
+      selectedAlternativeId: discardLegacyResults
+        ? null
+        : parsed.selectedAlternativeId ?? null,
+      versions: discardLegacyResults ? [] : versions,
+      revisions:
+        discardLegacyResults || !Array.isArray(parsed.revisions)
+          ? []
+          : parsed.revisions,
       revisionCount:
-        typeof parsed.revisionCount === "number" ? parsed.revisionCount : 0,
+        discardLegacyResults || typeof parsed.revisionCount !== "number"
+          ? 0
+          : parsed.revisionCount,
+      completedAt: discardLegacyResults ? null : parsed.completedAt ?? null,
+      savedSermonId: discardLegacyResults ? null : parsed.savedSermonId ?? null,
+      saveMode: discardLegacyResults ? null : parsed.saveMode ?? null,
     };
   } catch {
     return null;
@@ -142,10 +258,20 @@ export function addSermonToHistory(draft: SermonDraft): void {
   } catch {
     history = [];
   }
+  const historyDraft: SermonDraft = draft.scriptureNormalization
+    ? {
+        ...draft,
+        scriptureNormalization: {
+          ...draft.scriptureNormalization,
+          grant: null,
+          grantExpiresAt: null,
+        },
+      }
+    : draft;
   const withoutDuplicate = history.filter((item) => item.id !== draft.id);
   window.localStorage.setItem(
     SERMON_HISTORY_KEY,
-    JSON.stringify([draft, ...withoutDuplicate].slice(0, 100)),
+    JSON.stringify([historyDraft, ...withoutDuplicate].slice(0, 100)),
   );
 }
 
@@ -169,7 +295,7 @@ export function completedDraftToRecord(draft: SermonDraft): SermonRecord | null 
   return {
     id: draft.savedSermonId || draft.id,
     title: selected.title,
-    scripture: selected.scripture || draft.scripture,
+    scripture: draft.scripture || selected.scripture,
     sermonType: draft.options.sermonType || "강해",
     audience: draft.options.audience || "청장년",
     pointCount: selected.sections.points.length,
