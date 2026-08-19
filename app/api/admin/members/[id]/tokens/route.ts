@@ -29,9 +29,8 @@ export async function POST(
   const { id: rawId } = await context.params;
   const userId = memberIdParam(rawId);
   if (!userId) return adminJson({ error: "회원 식별자를 확인해 주세요." }, 400);
-  if (userId === auth.user.id) {
-    return adminJson({ error: "관리자는 자신의 토큰을 직접 조정할 수 없습니다." }, 409);
-  }
+  // Administrators may adjust their own wallet; the audit ledger still
+  // records the actor and target identically, so self-grants stay traceable.
 
   const parsed = await readAdminJsonBody(request);
   if (!parsed.ok) return parsed.response;
