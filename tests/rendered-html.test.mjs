@@ -2944,6 +2944,12 @@ test("accepts natural scripture notation and normalizes it before creating a gen
       generateBody.indexOf("createSermonGeneration"),
   );
   assert.match(input, /scriptureNormalization\?\.canonical === scriptureInput/);
+  assert.match(
+    input,
+    /canonicalScripture !== scriptureInput[\s\S]*setPendingScriptureConfirmation\(scriptureNormalization\)[\s\S]*return;/,
+  );
+  assert.match(input, /AI가 인식한 본문 범위를 확인해 주세요/);
+  assert.match(input, /확인한 본문으로 생성/);
   assert.match(client, /fetch\("\/api\/sermons\/normalize-scripture"/);
   assert.match(normalizeRoute, /normalizeAiScriptureReference/);
   assert.doesNotMatch(normalizeRoute, /chargeSermonTokens|generationId/);

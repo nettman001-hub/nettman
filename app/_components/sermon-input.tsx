@@ -21,6 +21,7 @@ import {
   type ReferenceFile,
   type SermonGeneration,
   type SermonReference,
+  type ScriptureNormalization,
 } from "@/app/_lib/sermon-types";
 import {
   OptionBadges,
@@ -60,6 +61,8 @@ export function SermonInput() {
   const [normalizingScripture, setNormalizingScripture] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
+  const [pendingScriptureConfirmation, setPendingScriptureConfirmation] =
+    useState<ScriptureNormalization | null>(null);
   const [generationStep, setGenerationStep] = useState<{
     position: number;
     completed: number;
@@ -73,6 +76,7 @@ export function SermonInput() {
   useEffect(() => {
     if (!draft || hydratedId.current === draft.id) return;
     hydratedId.current = draft.id;
+    setPendingScriptureConfirmation(null);
     setScripture(draft.scripture);
     setReference(draft.reference);
   }, [draft]);
@@ -169,7 +173,19 @@ export function SermonInput() {
     generationController.current = controller;
     let generation: SermonGeneration | null = null;
     try {
-      const reusableNormalization =
+      const confirmedNormalization =
+        pendingScriptureConfirmation?.input === scriptureInput &&
+        pendingScriptureConfirmation.aiTier === draft.options.aiTier &&
+        pendingScriptureConfirmation.clientUserScope === (clientUserScope ?? null) &&
+        hasActiveScriptureNormalizationGrant(
+          pendingScriptureConfirmation,
+          pendingScriptureConfirmation.canonical,
+          draft.options.aiTier,
+          clientUserScope ?? null,
+        )
+          ? pendingScriptureConfirmation
+          : null;
+      const storedNormalization =
         draft.scriptureNormalization?.canonical === scriptureInput &&
         draft.scriptureNormalization.aiTier === draft.options.aiTier &&
         draft.scripture === scriptureInput &&
@@ -181,6 +197,7 @@ export function SermonInput() {
         )
           ? draft.scriptureNormalization
           : null;
+      const reusableNormalization = confirmedNormalization ?? storedNormalization;
       setNormalizingScripture(!reusableNormalization);
       const normalizationResponse = reusableNormalization
         ? {
@@ -211,6 +228,16 @@ export function SermonInput() {
         grant: normalizationResponse.grant,
         grantExpiresAt: normalizationResponse.grantExpiresAt,
       };
+      if (
+        !isGuest &&
+        scriptureNormalization.normalizedByAi &&
+        canonicalScripture !== scriptureInput &&
+        !confirmedNormalization
+      ) {
+        setPendingScriptureConfirmation(scriptureNormalization);
+        return;
+      }
+      setPendingScriptureConfirmation(null);
       setScripture(canonicalScripture);
 
       const resumable =
@@ -405,7 +432,10 @@ export function SermonInput() {
             id="scripture-input"
             value={scripture}
             maxLength={120}
-            onChange={(event) => setScripture(event.target.value)}
+            onChange={(event) => {
+              setScripture(event.target.value);
+              setPendingScriptureConfirmation(null);
+            }}
             placeholder="예: 요한복음 3장 16~17절"
             autoComplete="off"
             aria-invalid={submitted && !scriptureValid}
@@ -418,6 +448,19 @@ export function SermonInput() {
           </p>
         </div>
       </section>
+
+      {pendingScriptureConfirmation ? (
+        <div className="sermon-inline-alert" role="status">
+          <div>
+            <strong>AI가 인식한 본문 범위를 확인해 주세요</strong>
+            <p>
+              입력: {pendingScriptureConfirmation.input} · 인식 결과:{" "}
+              {pendingScriptureConfirmation.canonical}
+            </p>
+            <p>범위가 맞으면 아래 버튼을 한 번 더 눌러 설교 생성을 시작합니다.</p>
+          </div>
+        </div>
+      ) : null}
 
       {draft.options.referenceMode === "manual" ? (
         <section className="sermon-form-card" aria-labelledby="manual-reference-title">
@@ -592,6 +635,8 @@ export function SermonInput() {
                 : `${completedCount}/${isGuest ? 1 : 5} 생성 중…`
               : pendingGeneration
                 ? "남은 초안 이어 만들기"
+                : pendingScriptureConfirmation
+                  ? "확인한 본문으로 생성"
                 : isGuest
                   ? "미리보기 생성"
                   : "AI 설교 생성"}
