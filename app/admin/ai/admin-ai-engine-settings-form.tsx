@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import type {
+  AdminAiSettingView,
+  AdminAiSettingsInitialState,
+  AdminAiSettingsView,
+} from "@/app/_lib/admin-ai-settings-view";
 import {
   AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
@@ -18,19 +23,8 @@ import {
 import type { AiModelCatalogEntry } from "@/app/_lib/ai-model-catalog";
 import { SERMON_TOKEN_MINIMUM_COSTS } from "@/app/_lib/sermon-token-pricing";
 
-type ServerSetting = {
-  tier: AiEngineTier;
-  preferences: AiPreferences;
-  apiKeyConfigured: boolean;
-  apiKeySource: "saved" | "environment" | null;
-  apiKeyEnvironmentName: string;
-};
-
-type SettingsResponse = {
-  settings: ServerSetting[];
-  persistence: "database";
-  encryptionConfigured: boolean;
-};
+type ServerSetting = AdminAiSettingView;
+type SettingsResponse = AdminAiSettingsView;
 
 type DraftSetting = ServerSetting & {
   apiKey: string;
@@ -43,6 +37,37 @@ type SaveFeedback = {
   type: "success" | "error";
   message: string;
 };
+
+type AdminAiEngineSettingsFormProps = {
+  initialState: AdminAiSettingsInitialState;
+};
+
+const REQUEST_DEADLINE_MS = 15_000;
+
+async function requestJsonWithDeadline<T extends object>(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_DEADLINE_MS);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    return await responseJson<T>(response);
+  } catch (caught) {
+    if (timedOut) {
+      throw new Error(
+        "요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.",
+      );
+    }
+    throw caught;
+  } finally {
+    clearTimeout(deadline);
+  }
+}
 
 async function responseJson<T extends object>(response: Response): Promise<T> {
   const body = (await response.json().catch(() => null)) as
@@ -73,44 +98,71 @@ function toDraftSettings(settings: ServerSetting[]): DraftSetting[] {
   });
 }
 
-export function AdminAiEngineSettingsForm() {
-  const [settings, setSettings] = useState<DraftSetting[]>([]);
-  const [encryptionConfigured, setEncryptionConfigured] = useState(true);
-  const [loading, setLoading] = useState(true);
+function initialFormState(initialState: AdminAiSettingsInitialState): {
+  settings: DraftSetting[];
+  encryptionConfigured: boolean;
+  error: string;
+} {
+  if (!initialState.ok) {
+    return {
+      settings: [],
+      encryptionConfigured: true,
+      error: initialState.error,
+    };
+  }
+  try {
+    return {
+      settings: toDraftSettings(initialState.view.settings),
+      encryptionConfigured: initialState.view.encryptionConfigured,
+      error: "",
+    };
+  } catch {
+    return {
+      settings: [],
+      encryptionConfigured: true,
+      error: "AI 엔진 설정 응답이 올바르지 않습니다.",
+    };
+  }
+}
+
+export function AdminAiEngineSettingsForm({
+  initialState,
+}: AdminAiEngineSettingsFormProps) {
+  const [initial] = useState(() => initialFormState(initialState));
+  const [settings, setSettings] = useState<DraftSetting[]>(initial.settings);
+  const [encryptionConfigured, setEncryptionConfigured] = useState(
+    initial.encryptionConfigured,
+  );
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(initial.error);
   const [notice, setNotice] = useState("");
   const [saveFeedback, setSaveFeedback] = useState<SaveFeedback | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const response = await fetch("/api/admin/ai-settings", {
+  async function retryLoad() {
+    if (loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const body = await requestJsonWithDeadline<SettingsResponse>(
+        "/api/admin/ai-settings",
+        {
           cache: "no-store",
-        });
-        const body = await responseJson<SettingsResponse>(response);
-        if (!cancelled) {
-          setSettings(toDraftSettings(body.settings));
-          setEncryptionConfigured(body.encryptionConfigured);
-        }
-      } catch (caught) {
-        if (!cancelled) {
-          setError(
-            caught instanceof Error
-              ? caught.message
-              : "AI 설정을 불러오지 못했습니다.",
-          );
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+          headers: { Accept: "application/json" },
+        },
+      );
+      setSettings(toDraftSettings(body.settings));
+      setEncryptionConfigured(body.encryptionConfigured);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "AI 설정을 불러오지 못했습니다.",
+      );
+    } finally {
+      setLoading(false);
     }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }
 
   const enabledCount = useMemo(
     () => settings.filter((setting) => setting.preferences.enabled).length,
@@ -157,7 +209,9 @@ export function AdminAiEngineSettingsForm() {
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/admin/ai-settings/models", {
+      const body = await requestJsonWithDeadline<{
+        models: AiModelCatalogEntry[];
+      }>("/api/admin/ai-settings/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -171,7 +225,6 @@ export function AdminAiEngineSettingsForm() {
               : {}),
         }),
       });
-      const body = await responseJson<{ models: AiModelCatalogEntry[] }>(response);
       updateSetting(tier, (current) => ({
         ...current,
         models: body.models,
@@ -208,19 +261,21 @@ export function AdminAiEngineSettingsForm() {
     setNotice("");
     setSaveFeedback(null);
     try {
-      const response = await fetch("/api/admin/ai-settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          settings: settings.map((setting) => ({
-            tier: setting.tier,
-            ...setting.preferences,
-            ...(setting.apiKey ? { apiKey: setting.apiKey } : {}),
-            clearApiKey: setting.clearApiKey,
-          })),
-        }),
-      });
-      const body = await responseJson<SettingsResponse>(response);
+      const body = await requestJsonWithDeadline<SettingsResponse>(
+        "/api/admin/ai-settings",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            settings: settings.map((setting) => ({
+              tier: setting.tier,
+              ...setting.preferences,
+              ...(setting.apiKey ? { apiKey: setting.apiKey } : {}),
+              clearApiKey: setting.clearApiKey,
+            })),
+          }),
+        },
+      );
       setSettings(toDraftSettings(body.settings));
       setEncryptionConfigured(body.encryptionConfigured);
       setSaveFeedback({
@@ -240,17 +295,25 @@ export function AdminAiEngineSettingsForm() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="rounded-[1.75rem] border border-[#ddd7cd] bg-white p-7 text-sm text-[#67736d]">
-        관리자 AI 설정을 불러오는 중입니다…
-      </div>
-    );
-  }
   if (!settings.length) {
     return (
-      <div className="rounded-[1.75rem] border border-[#e2c6bb] bg-[#fff7f2] p-7 text-sm font-semibold text-[#984d34]">
-        {error || "관리자 AI 설정을 불러오지 못했습니다."}
+      <div
+        className="rounded-[1.75rem] border border-[#e2c6bb] bg-[#fff7f2] p-7"
+        aria-busy={loading}
+      >
+        <p role={loading ? "status" : "alert"} className="text-sm font-semibold text-[#984d34]">
+          {loading
+            ? "관리자 AI 설정을 다시 불러오는 중입니다…"
+            : error || "관리자 AI 설정을 불러오지 못했습니다."}
+        </p>
+        <button
+          type="button"
+          onClick={() => void retryLoad()}
+          disabled={loading}
+          className="mt-4 min-h-11 rounded-xl bg-[#315746] px-4 text-sm font-extrabold text-white hover:bg-[#26483b] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] focus-visible:ring-offset-2 disabled:opacity-50"
+        >
+          {loading ? "다시 시도 중…" : "다시 시도"}
+        </button>
       </div>
     );
   }

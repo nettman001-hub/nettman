@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { getSupabasePublicConfig } from "./config";
+import { timedSupabaseFetch } from "./timed-fetch";
 
 export async function createSupabaseServerClient() {
   const config = getSupabasePublicConfig();
@@ -8,6 +9,7 @@ export async function createSupabaseServerClient() {
 
   const cookieStore = await cookies();
   return createServerClient(config.url, config.publishableKey, {
+    global: { fetch: timedSupabaseFetch },
     cookies: {
       getAll() {
         return cookieStore.getAll();

@@ -93,41 +93,60 @@ function parsedPreferences(
   return parsed.ok ? parsed.value : defaultPreferencesForTier(tier);
 }
 
+/**
+ * Reads the persisted settings without hiding storage failures. Administrator
+ * reads and writes use this variant so a failed query can never be mistaken
+ * for an empty/default configuration.
+ */
+export async function readManagedAiEngineSettingsStrict(
+  db: AppDatabase,
+): Promise<ManagedAiEngineSetting[]> {
+  await ensureDatabase(db);
+  const result = await db
+    .prepare(
+      `SELECT id, enabled, engine, endpoint, model, reasoning_effort, max_output_tokens, api_key_encrypted
+         FROM global_ai_settings
+         WHERE id IN (?, ?, ?, ?)`,
+    )
+    .bind(...AI_ENGINE_TIERS, LEGACY_GLOBAL_AI_SETTINGS_ID)
+    .all<{
+      id: string;
+      enabled: number;
+      engine: string;
+      endpoint: string;
+      model: string;
+      reasoning_effort: string;
+      max_output_tokens: number | null;
+      api_key_encrypted: string | null;
+    }>();
+  const rows = new Map(result.results.map((row) => [row.id, row]));
+  const environment = await environmentSettings();
+  return AI_ENGINE_TIERS.map((tier, index) => {
+    const row =
+      rows.get(tier) ??
+      (tier === "basic"
+        ? rows.get(LEGACY_GLOBAL_AI_SETTINGS_ID)
+        : undefined);
+    return {
+      tier,
+      preferences: row
+        ? parsedPreferences(row, tier)
+        : environment[index].preferences,
+      encryptedApiKey: row?.api_key_encrypted ?? null,
+    };
+  });
+}
+
+/**
+ * Runtime inference remains operational when persistence is temporarily
+ * unavailable by falling back to server environment configuration.
+ */
 export async function readManagedAiEngineSettings(
   db: AppDatabase | null,
 ): Promise<ManagedAiEngineSetting[]> {
   if (!db) return environmentSettings();
   try {
-    await ensureDatabase(db);
-    const result = await db
-      .prepare(
-        `SELECT id, enabled, engine, endpoint, model, reasoning_effort, max_output_tokens, api_key_encrypted
-         FROM global_ai_settings
-         WHERE id IN (?, ?, ?, ?)`,
-      )
-      .bind(...AI_ENGINE_TIERS, LEGACY_GLOBAL_AI_SETTINGS_ID)
-      .all<{
-        id: string;
-        enabled: number;
-        engine: string;
-        endpoint: string;
-        model: string;
-        reasoning_effort: string;
-        max_output_tokens: number | null;
-        api_key_encrypted: string | null;
-      }>();
-    const rows = new Map(result.results.map((row) => [row.id, row]));
-    const environment = await environmentSettings();
-    return AI_ENGINE_TIERS.map((tier, index) => {
-      const row = rows.get(tier) ?? (tier === "basic" ? rows.get(LEGACY_GLOBAL_AI_SETTINGS_ID) : undefined);
-      return {
-        tier,
-        preferences: row
-          ? parsedPreferences(row, tier)
-          : environment[index].preferences,
-        encryptedApiKey: row?.api_key_encrypted ?? null,
-      };
-    });
+    return await readManagedAiEngineSettingsStrict(db);
   } catch {
     return environmentSettings();
   }

@@ -6,6 +6,45 @@ type PostgresRows = PostgresRow[] & {
   count?: number | null;
 };
 type ExecuteQuery = (query: string, values: readonly unknown[]) => Promise<PostgresRows>;
+type CancelablePostgresQuery<T> = PromiseLike<T> & { cancel(): unknown };
+
+const DATABASE_QUERY_TIMEOUT_MS = 15_000;
+type TransactionIdleTimeout = "30s" | "60s";
+
+async function executeWithDatabaseDeadline<T>(
+  query: CancelablePostgresQuery<T>,
+): Promise<T> {
+  let settled = false;
+  const deadline = setTimeout(() => {
+    if (settled) return;
+    try {
+      void Promise.resolve(query.cancel()).catch(() => undefined);
+    } catch {
+      // The query promise remains authoritative if cancellation itself fails.
+    }
+  }, DATABASE_QUERY_TIMEOUT_MS);
+  try {
+    return await query;
+  } finally {
+    settled = true;
+    clearTimeout(deadline);
+  }
+}
+
+async function applyTransactionDeadlines(
+  executeQuery: ExecuteQuery,
+  idleTimeout: TransactionIdleTimeout,
+): Promise<void> {
+  // set_config(..., true) is transaction-local, so these limits remain safe
+  // behind Supavisor transaction pooling and cost a single round trip.
+  await executeQuery(
+    `SELECT
+       set_config('statement_timeout', '15s', true),
+       set_config('lock_timeout', '5s', true),
+       set_config('idle_in_transaction_session_timeout', $1, true)`,
+    [idleTimeout],
+  );
+}
 
 type ConvertedQuery = {
   text: string;
@@ -198,7 +237,9 @@ class PostgresD1Database implements D1Database {
 
   constructor(private readonly client: ReturnType<typeof postgres>) {
     this.executeQuery = async (query, values) =>
-      (await client.unsafe(query, [...values] as never[])) as unknown as PostgresRows;
+      (await executeWithDatabaseDeadline(
+        client.unsafe(query, [...values] as never[]),
+      )) as unknown as PostgresRows;
   }
 
   prepare(query: string): PostgresPreparedStatement {
@@ -217,7 +258,10 @@ class PostgresD1Database implements D1Database {
 
     const results = await this.client.begin(async (transaction) => {
       const executeInTransaction: ExecuteQuery = async (query, values) =>
-        (await transaction.unsafe(query, [...values] as never[])) as unknown as PostgresRows;
+        (await executeWithDatabaseDeadline(
+          transaction.unsafe(query, [...values] as never[]),
+        )) as unknown as PostgresRows;
+      await applyTransactionDeadlines(executeInTransaction, "30s");
       const batchResults: D1Result<T>[] = [];
       for (const statement of statements as PostgresPreparedStatement[]) {
         batchResults.push(await statement.executeWith<T>(executeInTransaction));
@@ -233,7 +277,12 @@ class PostgresD1Database implements D1Database {
   ): Promise<T> {
     const result = await this.client.begin(async (transaction) => {
       const executeInTransaction: ExecuteQuery = async (query, values) =>
-        (await transaction.unsafe(query, [...values] as never[])) as unknown as PostgresRows;
+        (await executeWithDatabaseDeadline(
+          transaction.unsafe(query, [...values] as never[]),
+        )) as unknown as PostgresRows;
+      // Advisory-lock operations can legitimately wait on a bounded external
+      // Supabase request while the transaction is otherwise idle.
+      await applyTransactionDeadlines(executeInTransaction, "60s");
       const lockedDb = new PostgresTransactionDatabase(executeInTransaction);
       await lockedDb
         .prepare("SELECT pg_advisory_xact_lock(?)")
@@ -355,6 +404,12 @@ const schemaStatements = [
     engine TEXT NOT NULL DEFAULT 'openai', endpoint TEXT NOT NULL, model TEXT NOT NULL,
     reasoning_effort TEXT NOT NULL DEFAULT 'low', updated_at TEXT NOT NULL
   )`,
+  `ALTER TABLE user_ai_preferences
+    ADD COLUMN IF NOT EXISTS engine TEXT NOT NULL DEFAULT 'openai'`,
+  `UPDATE user_ai_preferences
+    SET engine = 'custom'
+    WHERE engine = 'openai'
+      AND lower(rtrim(endpoint, '/')) <> 'https://api.openai.com/v1/responses'`,
   `CREATE TABLE IF NOT EXISTS global_ai_settings (
     id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0,
     engine TEXT NOT NULL DEFAULT 'openai', endpoint TEXT NOT NULL, model TEXT NOT NULL,
@@ -363,6 +418,10 @@ const schemaStatements = [
     api_key_encrypted TEXT,
     updated_by TEXT NOT NULL, updated_at TEXT NOT NULL
   )`,
+  `ALTER TABLE global_ai_settings
+    ADD COLUMN IF NOT EXISTS api_key_encrypted TEXT`,
+  `ALTER TABLE global_ai_settings
+    ADD COLUMN IF NOT EXISTS max_output_tokens INTEGER`,
   `CREATE TABLE IF NOT EXISTS managed_ai_usage (
     user_id TEXT NOT NULL, usage_date TEXT NOT NULL,
     request_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
@@ -438,6 +497,7 @@ const schemaStatements = [
     revision_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
   )`,
   `ALTER TABLE sermon_drafts ADD COLUMN IF NOT EXISTS audience_situation TEXT NOT NULL DEFAULT '일반'`,
+  `ALTER TABLE sermon_drafts ADD COLUMN IF NOT EXISTS active_generation_id TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_sermon_drafts_user_updated ON sermon_drafts(user_id, updated_at)`,
   `CREATE INDEX IF NOT EXISTS idx_sermon_drafts_status ON sermon_drafts(status)`,
   `CREATE TABLE IF NOT EXISTS sermon_alternatives (
@@ -521,6 +581,115 @@ const schemaStatements = [
   ),
 ];
 
+const requiredSchemaColumns = [
+  ["users", "status"],
+  ["users", "status_reason"],
+  ["users", "suspended_until"],
+  ["users", "status_changed_at"],
+  ["users", "status_changed_by"],
+  ["users", "updated_at"],
+  ["users", "last_seen_at"],
+  ["users", "version"],
+  ["user_auth_sessions", "user_id"],
+  ["user_auth_sessions", "session_id"],
+  ["user_auth_sessions", "first_seen_at"],
+  ["user_auth_sessions", "last_seen_at"],
+  ["user_auth_sessions", "revoked_at"],
+  ["user_auth_sessions", "revoked_by"],
+  ["admin_audit_logs", "request_id"],
+  ["admin_audit_logs", "target_user_id"],
+  ["admin_audit_logs", "before_json"],
+  ["admin_audit_logs", "after_json"],
+  ["token_adjustments", "idempotency_key"],
+  ["token_adjustments", "transaction_id"],
+  ["token_adjustments", "actor_user_id"],
+  ["user_profiles", "denomination"],
+  ["user_profiles", "theology"],
+  ["user_profiles", "phone"],
+  ["user_ai_preferences", "engine"],
+  ["global_ai_settings", "api_key_encrypted"],
+  ["global_ai_settings", "max_output_tokens"],
+  ["sermon_drafts", "active_generation_id"],
+  ["sermon_drafts", "audience_situation"],
+  ["sermons", "audience_situation"],
+  ["sermon_resource_usage", "active_request_id"],
+] as const;
+
+const requiredUniqueIndexNames = [
+  "idx_users_email",
+  "idx_user_auth_sessions_user_session",
+  "idx_admin_audit_logs_request",
+  "idx_managed_ai_usage_user_date",
+  "idx_sermon_resource_usage_user_date",
+  "idx_token_transactions_reference",
+  "idx_token_adjustments_idempotency",
+  "idx_token_adjustments_transaction",
+  "idx_token_topups_checkout_session",
+  "idx_payment_orders_payment_id",
+  "idx_alternatives_draft_position",
+  "idx_generation_items_run_position",
+  "idx_generation_claims_run_position",
+  "idx_generation_parts_run_position_step",
+  "idx_versions_draft_number",
+  "idx_sermons_draft",
+  "idx_consultations_sermon_user",
+] as const;
+
+type SchemaReadinessRow = {
+  column_count: number;
+  rls_table_count: number;
+  unique_index_count: number;
+};
+
+async function hasCurrentDatabaseSchema(db: D1Database): Promise<boolean> {
+  const requiredColumns = requiredSchemaColumns.map(
+    () => "(table_name = ? AND column_name = ?)",
+  ).join(" OR ");
+  const protectedTables = protectedTableNames.map(() => "?").join(", ");
+  const uniqueIndexes = requiredUniqueIndexNames.map(() => "?").join(", ");
+  const results = await db.batch<SchemaReadinessRow>([
+    db
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*)
+              FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND (${requiredColumns})) AS column_count,
+           (SELECT COUNT(*)
+              FROM pg_catalog.pg_class AS protected_table
+              JOIN pg_catalog.pg_namespace AS protected_namespace
+                ON protected_namespace.oid = protected_table.relnamespace
+             WHERE protected_namespace.nspname = current_schema()
+               AND protected_table.relkind IN ('r', 'p')
+               AND protected_table.relname IN (${protectedTables})
+               AND protected_table.relrowsecurity) AS rls_table_count,
+           (SELECT COUNT(*)
+              FROM pg_catalog.pg_class AS unique_index
+              JOIN pg_catalog.pg_namespace AS index_namespace
+                ON index_namespace.oid = unique_index.relnamespace
+              JOIN pg_catalog.pg_index AS index_metadata
+                ON index_metadata.indexrelid = unique_index.oid
+             WHERE index_namespace.nspname = current_schema()
+               AND unique_index.relkind IN ('i', 'I')
+               AND unique_index.relname IN (${uniqueIndexes})
+               AND index_metadata.indisunique
+               AND index_metadata.indisvalid
+               AND index_metadata.indisready) AS unique_index_count`,
+      )
+      .bind(
+        ...requiredSchemaColumns.flat(),
+        ...protectedTableNames,
+        ...requiredUniqueIndexNames,
+      ),
+  ]);
+  const row = results[0]?.results[0];
+  return (
+    Number(row?.column_count ?? -1) === requiredSchemaColumns.length &&
+    Number(row?.rls_table_count ?? -1) === protectedTableNames.length &&
+    Number(row?.unique_index_count ?? -1) === requiredUniqueIndexNames.length
+  );
+}
+
 let database: D1Database | null = null;
 let databaseUrl: string | null = null;
 let schemaReady = false;
@@ -566,6 +735,10 @@ export async function ensureDatabase(db: D1Database): Promise<void> {
   if (schemaReady) return;
   if (!schemaInitialization) {
     schemaInitialization = (async () => {
+      if (await hasCurrentDatabaseSchema(db)) {
+        schemaReady = true;
+        return;
+      }
       // Separate Vercel instances can cold-start at the same time. PostgreSQL's
       // CREATE TABLE IF NOT EXISTS still races while catalog rows are being
       // created, so serialize the complete bootstrap transaction per database.
@@ -573,62 +746,6 @@ export async function ensureDatabase(db: D1Database): Promise<void> {
         db.prepare("SELECT pg_advisory_xact_lock(731202608)"),
         ...schemaStatements.map((statement) => db.prepare(statement)),
       ]);
-      const columns = await db
-        .prepare(
-          `SELECT column_name AS name
-           FROM information_schema.columns
-           WHERE table_schema = current_schema()
-             AND table_name = 'user_ai_preferences'`,
-        )
-        .all<{ name: string }>();
-      if (!columns.results.some((column) => column.name === "engine")) {
-        throw new Error("AI engine migration is required");
-      }
-      const globalAiColumns = await db
-        .prepare(
-          `SELECT column_name AS name
-           FROM information_schema.columns
-           WHERE table_schema = current_schema()
-             AND table_name = 'global_ai_settings'`,
-        )
-        .all<{ name: string }>();
-      if (!globalAiColumns.results.some((column) => column.name === "api_key_encrypted")) {
-        await db
-          .prepare(
-            "ALTER TABLE global_ai_settings ADD COLUMN IF NOT EXISTS api_key_encrypted TEXT",
-          )
-          .run();
-      }
-      if (!globalAiColumns.results.some((column) => column.name === "max_output_tokens")) {
-        await db
-          .prepare(
-            "ALTER TABLE global_ai_settings ADD COLUMN IF NOT EXISTS max_output_tokens INTEGER",
-          )
-          .run();
-      }
-      const draftColumns = await db
-        .prepare(
-          `SELECT column_name AS name
-           FROM information_schema.columns
-           WHERE table_schema = current_schema()
-             AND table_name = 'sermon_drafts'`,
-        )
-        .all<{ name: string }>();
-      if (!draftColumns.results.some((column) => column.name === "active_generation_id")) {
-        await db
-          .prepare(
-            "ALTER TABLE sermon_drafts ADD COLUMN IF NOT EXISTS active_generation_id TEXT",
-          )
-          .run();
-      }
-      await db
-        .prepare(
-          `UPDATE user_ai_preferences
-           SET engine = 'custom'
-           WHERE engine = 'openai'
-             AND lower(rtrim(endpoint, '/')) <> 'https://api.openai.com/v1/responses'`,
-        )
-        .run();
       schemaReady = true;
     })().catch((error) => {
       schemaInitialization = null;

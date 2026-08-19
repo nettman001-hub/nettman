@@ -1,4 +1,8 @@
 import {
+  adminAiSettingsViewFromSettings,
+  loadAdminAiSettingsView,
+} from "@/app/_lib/admin-ai-settings-view";
+import {
   AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
   isAiEngineTier,
@@ -7,14 +11,10 @@ import {
 import {
   aiSettingsEncryptionConfigured,
   encryptManagedAiApiKey,
-  managedAiKeyStatus,
-  readManagedAiEngineSettings,
+  readManagedAiEngineSettingsStrict,
   resolveManagedAiApiKey,
   type ManagedAiEngineSetting,
 } from "@/app/_lib/managed-ai-engines";
-import {
-  aiApiKeyEnvironmentName,
-} from "@/app/_lib/admin-ai";
 import {
   validateAiApiKey,
   validateAiPreferences,
@@ -25,7 +25,7 @@ import {
   resolveRequestUserResponse,
   unauthorizedResponse,
 } from "@/app/_lib/auth-user";
-import { ensureDatabase, getD1 } from "@/db";
+import { getD1 } from "@/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,25 +56,6 @@ async function requireAdmin(request: Request) {
   return { user };
 }
 
-async function responseSettings(
-  settings: ManagedAiEngineSetting[],
-): Promise<object[]> {
-  return Promise.all(
-    settings.map(async (setting) => {
-      const keyStatus = await managedAiKeyStatus(setting);
-      return {
-        tier: setting.tier,
-        preferences: setting.preferences,
-        apiKeyConfigured: keyStatus.configured,
-        apiKeySource: keyStatus.source,
-        apiKeyEnvironmentName: aiApiKeyEnvironmentName(
-          setting.preferences.engine,
-        ),
-      };
-    }),
-  );
-}
-
 export async function GET(request: Request): Promise<Response> {
   const auth = await requireAdmin(request);
   if ("response" in auth) return auth.response;
@@ -83,13 +64,7 @@ export async function GET(request: Request): Promise<Response> {
     return json({ error: "AI 엔진 설정 저장소에 연결할 수 없습니다." }, 503);
   }
   try {
-    await ensureDatabase(db);
-    const settings = await readManagedAiEngineSettings(db);
-    return json({
-      settings: await responseSettings(settings),
-      persistence: "database",
-      encryptionConfigured: aiSettingsEncryptionConfigured(),
-    });
+    return json(await loadAdminAiSettingsView(db));
   } catch {
     return json({ error: "AI 엔진 설정을 불러오지 못했습니다." }, 503);
   }
@@ -172,8 +147,7 @@ export async function PUT(request: Request): Promise<Response> {
   }
 
   try {
-    await ensureDatabase(db);
-    const current = await readManagedAiEngineSettings(db);
+    const current = await readManagedAiEngineSettingsStrict(db);
     const currentByTier = new Map(current.map((setting) => [setting.tier, setting]));
     const prepared: ManagedAiEngineSetting[] = [];
 
@@ -242,12 +216,8 @@ export async function PUT(request: Request): Promise<Response> {
       ),
     );
 
-    const saved = await readManagedAiEngineSettings(db);
-    return json({
-      settings: await responseSettings(saved),
-      persistence: "database",
-      encryptionConfigured: aiSettingsEncryptionConfigured(),
-    });
+    const saved = await readManagedAiEngineSettingsStrict(db);
+    return json(await adminAiSettingsViewFromSettings(saved));
   } catch {
     return json({ error: "AI 엔진 설정을 저장하지 못했습니다." }, 503);
   }

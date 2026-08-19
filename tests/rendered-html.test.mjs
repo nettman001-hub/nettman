@@ -366,6 +366,7 @@ test("keeps AI controls admin-only and encrypts provider keys at rest", async ()
   const [
     settingsRoute,
     adminAi,
+    adminAiView,
     generateRoute,
     reviseRoute,
     myPage,
@@ -376,6 +377,7 @@ test("keeps AI controls admin-only and encrypts provider keys at rest", async ()
   ] = await Promise.all([
     readFile(new URL("../app/api/ai-settings/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/admin-ai.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_lib/admin-ai-settings-view.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/sermons/revise/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/my/page.tsx", import.meta.url), "utf8"),
@@ -391,16 +393,45 @@ test("keeps AI controls admin-only and encrypts provider keys at rest", async ()
   assert.match(adminAi, /OPENAI_API_KEY/);
   assert.match(adminAi, /serverAiApiKey/);
   assert.match(adminPage, /AdminAiEngineSettingsForm/);
+  assert.match(adminPage, /loadAdminAiSettingsView/);
+  assert.match(adminPage, /initialState=\{initialState\}/);
   assert.match(managedRoute, /encryptManagedAiApiKey/);
   assert.match(managedRoute, /INSERT INTO global_ai_settings/);
+  assert.match(managedRoute, /loadAdminAiSettingsView/);
+  assert.match(managedRoute, /adminAiSettingsViewFromSettings/);
   assert.match(managedAi, /AES-GCM/);
   assert.match(managedAi, /AI_SETTINGS_ENCRYPTION_KEY/);
+  assert.match(managedAi, /export async function readManagedAiEngineSettingsStrict/);
+  assert.match(
+    managedAi,
+    /return await readManagedAiEngineSettingsStrict\(db\);[\s\S]*catch \{[\s\S]*return environmentSettings\(\);/,
+  );
+  assert.match(adminAiView, /apiKeyConfigured/);
+  assert.match(adminAiView, /apiKeyEnvironmentName/);
+  assert.match(adminAiView, /await readManagedAiEngineSettingsStrict\(db\)/);
+  assert.doesNotMatch(adminAiView, /await readManagedAiEngineSettings\(db\)/);
+  assert.match(adminAiView, /VIEW_DEADLINE_MS = 15_000/);
+  assert.match(adminAiView, /Promise\.race/);
+  assert.doesNotMatch(adminAiView, /\b(?:encryptedApiKey|apiKey):/);
+  assert.equal(
+    [...managedRoute.matchAll(/readManagedAiEngineSettingsStrict/g)].length,
+    3,
+  );
+  assert.doesNotMatch(managedRoute, /\breadManagedAiEngineSettings\(db\)/);
   assert.match(managedForm, /type="password"/);
   assert.match(managedForm, /기본·고급·고급 추론 엔진/);
   assert.match(managedForm, /type SaveFeedback/);
   assert.match(managedForm, /saveFeedback\.message/);
   assert.match(managedForm, /saveFeedback\?\.type === "success"/);
   assert.match(managedForm, /"저장 완료"/);
+  assert.match(managedForm, /REQUEST_DEADLINE_MS = 15_000/);
+  assert.equal(
+    [...managedForm.matchAll(/requestJsonWithDeadline</g)].length,
+    4,
+  );
+  assert.match(managedForm, /onClick=\{\(\) => void retryLoad\(\)\}/);
+  assert.doesNotMatch(managedForm, /useEffect/);
+  assert.doesNotMatch(managedForm, /관리자 AI 설정을 불러오는 중입니다…/);
   assert.match(generateRoute, /if \(input\.ai !== undefined\)[\s\S]*관리자만 설정/);
   assert.match(reviseRoute, /if \(input\.ai !== undefined\)[\s\S]*관리자만 설정/);
   assert.doesNotMatch(myPage, /AiSettingsForm|개인 AI 연결/);
@@ -619,7 +650,10 @@ test("lets only administrators load models with encrypted or newly entered provi
   );
 
   assert.match(form, /모델 ID 조회/);
-  assert.match(form, /fetch\("\/api\/admin\/ai-settings\/models"/);
+  assert.match(
+    form,
+    /requestJsonWithDeadline<[\s\S]*?\("\/api\/admin\/ai-settings\/models"/,
+  );
   assert.match(form, /models: AiModelCatalogEntry\[\]/);
   assert.match(form, /value=\{model\.id\}/);
   assert.match(form, /label=\{model\.name\}/);

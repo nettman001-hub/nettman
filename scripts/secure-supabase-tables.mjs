@@ -47,6 +47,13 @@ const sql = postgres(databaseUrl, {
 
 try {
   await sql.begin(async (transaction) => {
+    // Keep deployment security work bounded. SET LOCAL is transaction-scoped,
+    // so it is safe when POSTGRES_URL points at Supavisor transaction pooling.
+    await transaction.unsafe("SET LOCAL statement_timeout = '30s'");
+    await transaction.unsafe("SET LOCAL lock_timeout = '5s'");
+    await transaction.unsafe(
+      "SET LOCAL idle_in_transaction_session_timeout = '45s'",
+    );
     await transaction`SELECT pg_advisory_xact_lock(731202608)`;
 
     for (const table of protectedTables) {

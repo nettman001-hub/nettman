@@ -1,7 +1,10 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ensureDatabase, getD1 } from "../../db";
-import { getSupabasePublicConfig } from "./supabase/config";
+import {
+  AUTH_SESSION_MODE_COOKIE,
+  getSupabasePublicConfig,
+} from "./supabase/config";
 import { createSupabaseServerClient } from "./supabase/server";
 import { ensureTokenWallet } from "./token-wallet";
 
@@ -141,7 +144,17 @@ function isAnonymousAuthError(value: unknown): boolean {
   );
 }
 
+async function hasValidSessionMode(): Promise<boolean> {
+  const mode = (await cookies()).get(AUTH_SESSION_MODE_COOKIE)?.value;
+  return mode === "session" || mode === "persistent";
+}
+
 async function verifiedSupabaseIdentity(): Promise<VerifiedIdentityResult> {
+  // API requests bypass the page proxy to avoid a duplicate Supabase network
+  // validation. Preserve the session-mode policy centrally before trusting claims.
+  if (!(await hasValidSessionMode())) {
+    return { kind: "anonymous" };
+  }
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { kind: "anonymous" };
   try {

@@ -96,3 +96,127 @@ test("member admin guard separates email admin authority and app session revocat
   assert.match(source, /WHERE user_id = \? AND revoked_at IS NULL/);
   assert.match(source, /appRevoked: true/);
 });
+
+test("server auth and database waits have bounded deadlines", async () => {
+  const [
+    timedFetch,
+    server,
+    supabaseProxy,
+    rootProxy,
+    authUser,
+    database,
+    securityScript,
+  ] = await Promise.all([
+    readFile(new URL("app/_lib/supabase/timed-fetch.ts", root), "utf8"),
+    readFile(new URL("app/_lib/supabase/server.ts", root), "utf8"),
+    readFile(new URL("app/_lib/supabase/proxy.ts", root), "utf8"),
+    readFile(new URL("proxy.ts", root), "utf8"),
+    readFile(new URL("app/_lib/auth-user.ts", root), "utf8"),
+    readFile(new URL("db/index.ts", root), "utf8"),
+    readFile(new URL("scripts/secure-supabase-tables.mjs", root), "utf8"),
+  ]);
+
+  assert.match(timedFetch, /SUPABASE_FETCH_TIMEOUT_MS = 12_000/);
+  assert.match(timedFetch, /AbortSignal\.timeout\(SUPABASE_FETCH_TIMEOUT_MS\)/);
+  assert.match(timedFetch, /AbortSignal\.any\(\[callerSignal, deadline\]\)/);
+  assert.match(timedFetch, /input instanceof Request \? input\.signal/);
+  assert.match(server, /global: \{ fetch: timedSupabaseFetch \}/);
+  assert.match(supabaseProxy, /global: \{ fetch: timedSupabaseFetch \}/);
+  assert.match(supabaseProxy, /catch \{[\s\S]*let the page or API authorization fail closed/);
+  assert.ok(rootProxy.includes("api(?:/|$)"));
+  assert.match(authUser, /async function hasValidSessionMode/);
+  assert.match(authUser, /mode === "session" \|\| mode === "persistent"/);
+  assert.match(
+    authUser,
+    /if \(!\(await hasValidSessionMode\(\)\)\)[\s\S]*return \{ kind: "anonymous" \};[\s\S]*supabase\.auth\.getClaims\(\)/,
+  );
+  assert.match(securityScript, /SET LOCAL statement_timeout = '30s'/);
+  assert.match(securityScript, /SET LOCAL lock_timeout = '5s'/);
+  assert.match(
+    securityScript,
+    /SET LOCAL idle_in_transaction_session_timeout = '45s'/,
+  );
+  assert.doesNotMatch(database, /connection:\s*\{[\s\S]*statement_timeout/);
+  assert.match(database, /DATABASE_QUERY_TIMEOUT_MS = 15_000/);
+  assert.match(database, /if \(settled\) return/);
+  assert.match(database, /Promise\.resolve\(query\.cancel\(\)\)\.catch\(\(\) => undefined\)/);
+  assert.match(database, /finally \{[\s\S]*settled = true;[\s\S]*clearTimeout\(deadline\)/);
+  assert.equal(
+    [...database.matchAll(/executeWithDatabaseDeadline\(/g)].length,
+    3,
+    "the shared deadline must wrap direct and transactional postgres queries",
+  );
+  assert.match(database, /set_config\('statement_timeout', '15s', true\)/);
+  assert.match(database, /set_config\('lock_timeout', '5s', true\)/);
+  assert.match(
+    database,
+    /set_config\('idle_in_transaction_session_timeout', \$1, true\)/,
+  );
+  assert.equal(
+    [...database.matchAll(/applyTransactionDeadlines\(executeInTransaction, "30s"\)/g)]
+      .length,
+    1,
+    "ordinary batches must install transaction-local 30 second idle limits",
+  );
+  assert.equal(
+    [...database.matchAll(/applyTransactionDeadlines\(executeInTransaction, "60s"\)/g)]
+      .length,
+    1,
+    "advisory-lock operations must allow the bounded external request window",
+  );
+  assert.doesNotMatch(database, /SET LOCAL/);
+
+  for (const [table, column] of [
+    ["users", "status"],
+    ["users", "version"],
+    ["user_auth_sessions", "session_id"],
+    ["admin_audit_logs", "request_id"],
+    ["token_adjustments", "idempotency_key"],
+    ["user_profiles", "denomination"],
+    ["user_profiles", "theology"],
+    ["user_profiles", "phone"],
+    ["global_ai_settings", "api_key_encrypted"],
+    ["global_ai_settings", "max_output_tokens"],
+    ["sermon_drafts", "active_generation_id"],
+    ["sermon_drafts", "audience_situation"],
+    ["sermons", "audience_situation"],
+    ["sermon_resource_usage", "active_request_id"],
+  ]) {
+    assert.ok(
+      database.includes(`["${table}", "${column}"]`),
+      `schema readiness must include ${table}.${column}`,
+    );
+  }
+  for (const indexName of [
+    "idx_user_auth_sessions_user_session",
+    "idx_admin_audit_logs_request",
+    "idx_token_transactions_reference",
+    "idx_token_adjustments_idempotency",
+    "idx_token_adjustments_transaction",
+  ]) {
+    assert.ok(
+      database.includes(`"${indexName}"`),
+      `schema readiness must include unique index ${indexName}`,
+    );
+  }
+  assert.match(database, /protected_table\.relrowsecurity/);
+  assert.match(database, /index_metadata\.indisunique/);
+  assert.match(database, /index_metadata\.indisvalid/);
+  assert.match(database, /index_metadata\.indisready/);
+  assert.match(
+    database,
+    /Number\(row\?\.rls_table_count[\s\S]*protectedTableNames\.length/,
+  );
+  assert.match(
+    database,
+    /Number\(row\?\.unique_index_count[\s\S]*requiredUniqueIndexNames\.length/,
+  );
+  const initialization = database.slice(database.indexOf("export async function ensureDatabase"));
+  const readiness = initialization.indexOf("if (await hasCurrentDatabaseSchema(db))");
+  const ddlBootstrap = initialization.indexOf("await db.batch([");
+  assert.ok(readiness >= 0 && ddlBootstrap > readiness, "schema readiness must precede DDL bootstrap");
+  assert.match(
+    initialization.slice(readiness, ddlBootstrap),
+    /schemaReady = true;[\s\S]*return;/,
+  );
+});
