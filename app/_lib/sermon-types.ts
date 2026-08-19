@@ -74,6 +74,7 @@ export type ScriptureNormalization = {
   aiTier: AiEngineTier;
   clientUserScope: string | null;
   normalizedByAi: boolean;
+  confirmedByUserAt: string | null;
   grant: string | null;
   grantExpiresAt: string | null;
 };

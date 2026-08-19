@@ -182,6 +182,7 @@ export function SermonInput() {
           pendingScriptureConfirmation.canonical,
           draft.options.aiTier,
           clientUserScope ?? null,
+          false,
         )
           ? pendingScriptureConfirmation
           : null;
@@ -218,25 +219,37 @@ export function SermonInput() {
       const canonicalScripture = normalizationResponse.scripture;
       setNormalizingScripture(false);
       if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-      const scriptureNormalization = reusableNormalization ?? {
+      const normalizationCandidate = reusableNormalization ?? {
         input: scriptureInput,
         canonical: canonicalScripture,
         normalizedAt: new Date().toISOString(),
         aiTier: draft.options.aiTier,
         clientUserScope: clientUserScope ?? null,
         normalizedByAi: normalizationResponse.normalizedByAi,
+        confirmedByUserAt:
+          normalizationResponse.normalizedByAi && canonicalScripture === scriptureInput
+            ? new Date().toISOString()
+            : null,
         grant: normalizationResponse.grant,
         grantExpiresAt: normalizationResponse.grantExpiresAt,
       };
       if (
         !isGuest &&
-        scriptureNormalization.normalizedByAi &&
+        normalizationCandidate.normalizedByAi &&
         canonicalScripture !== scriptureInput &&
         !confirmedNormalization
       ) {
-        setPendingScriptureConfirmation(scriptureNormalization);
+        setPendingScriptureConfirmation(normalizationCandidate);
         return;
       }
+      const scriptureNormalization =
+        normalizationCandidate.normalizedByAi &&
+        !normalizationCandidate.confirmedByUserAt
+          ? {
+              ...normalizationCandidate,
+              confirmedByUserAt: new Date().toISOString(),
+            }
+          : normalizationCandidate;
       setPendingScriptureConfirmation(null);
       setScripture(canonicalScripture);
 

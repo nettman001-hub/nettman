@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AiEngineTier } from "./ai-engine-tiers.ts";
 
-const GRANT_VERSION = 1;
+const GRANT_VERSION = 2;
 const GRANT_TTL_MS = 24 * 60 * 60 * 1_000;
 const MAX_GRANT_CHARACTERS = 4_096;
 

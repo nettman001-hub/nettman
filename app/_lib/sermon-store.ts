@@ -107,9 +107,11 @@ export function hasActiveScriptureNormalizationGrant(
   scripture: string,
   aiTier: SermonDraft["options"]["aiTier"],
   clientUserScope: string | null,
+  requireUserConfirmation = true,
 ): boolean {
   if (
     !normalization?.normalizedByAi ||
+    (requireUserConfirmation && !normalization.confirmedByUserAt) ||
     normalization.canonical !== scripture ||
     normalization.aiTier !== aiTier ||
     normalization.clientUserScope !== clientUserScope ||
@@ -234,6 +236,8 @@ export function loadSermonDraft(id: string): SermonDraft | null {
         (parsed.scriptureNormalization.clientUserScope === null ||
           typeof parsed.scriptureNormalization.clientUserScope === "string") &&
         typeof parsed.scriptureNormalization.normalizedByAi === "boolean" &&
+        (parsed.scriptureNormalization.confirmedByUserAt === null ||
+          typeof parsed.scriptureNormalization.confirmedByUserAt === "string") &&
         (parsed.scriptureNormalization.grant === null ||
           typeof parsed.scriptureNormalization.grant === "string") &&
         (parsed.scriptureNormalization.grantExpiresAt === null ||

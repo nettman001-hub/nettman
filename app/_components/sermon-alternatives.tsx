@@ -174,6 +174,9 @@ export function SermonAlternatives() {
           aiTier: draft.options.aiTier,
           clientUserScope: clientUserScope ?? null,
           normalizedByAi: normalized.normalizedByAi,
+          confirmedByUserAt: normalized.normalizedByAi
+            ? new Date().toISOString()
+            : null,
           grant: normalized.grant,
           grantExpiresAt: normalized.grantExpiresAt,
         };

@@ -1597,6 +1597,7 @@ test("renews scripture grants before long generation runs and never reuses anoth
     aiTier: "advanced",
     clientUserScope: "scope-user-a",
     normalizedByAi: true,
+    confirmedByUserAt: new Date().toISOString(),
     grant: "signed-grant",
   };
   assert.equal(
@@ -1607,6 +1608,19 @@ test("renews scripture grants before long generation runs and never reuses anoth
       "scope-user-a",
     ),
     true,
+  );
+  assert.equal(
+    hasActiveScriptureNormalizationGrant(
+      {
+        ...base,
+        confirmedByUserAt: undefined,
+        grantExpiresAt: new Date(Date.now() + 31 * 60_000).toISOString(),
+      },
+      base.canonical,
+      "advanced",
+      "scope-user-a",
+    ),
+    false,
   );
   assert.equal(
     hasActiveScriptureNormalizationGrant(
@@ -2921,13 +2935,14 @@ test("generates exactly one provider response per sermon fragment call", async (
 });
 
 test("accepts natural scripture notation and normalizes it before creating a generation", async () => {
-  const [input, alternatives, client, normalizeRoute, generateRoute, provider, store] = await Promise.all([
+  const [input, alternatives, client, normalizeRoute, generateRoute, provider, providerGrant, store] = await Promise.all([
     readFile(new URL("../app/_components/sermon-input.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/_components/sermon-alternatives.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/sermon-client.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/sermons/normalize-scripture/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/openai-sermons.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_lib/scripture-normalization-grant.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/sermon-store.ts", import.meta.url), "utf8"),
   ]);
   assert.doesNotMatch(input, /SCRIPTURE_PATTERN/);
@@ -2946,10 +2961,13 @@ test("accepts natural scripture notation and normalizes it before creating a gen
   assert.match(input, /scriptureNormalization\?\.canonical === scriptureInput/);
   assert.match(
     input,
-    /canonicalScripture !== scriptureInput[\s\S]*setPendingScriptureConfirmation\(scriptureNormalization\)[\s\S]*return;/,
+    /canonicalScripture !== scriptureInput[\s\S]*setPendingScriptureConfirmation\(normalizationCandidate\)[\s\S]*return;/,
   );
   assert.match(input, /AI가 인식한 본문 범위를 확인해 주세요/);
   assert.match(input, /확인한 본문으로 생성/);
+  assert.match(input, /confirmedByUserAt/);
+  assert.match(store, /requireUserConfirmation && !normalization\.confirmedByUserAt/);
+  assert.match(providerGrant, /GRANT_VERSION = 2/);
   assert.match(client, /fetch\("\/api\/sermons\/normalize-scripture"/);
   assert.match(normalizeRoute, /normalizeAiScriptureReference/);
   assert.doesNotMatch(normalizeRoute, /chargeSermonTokens|generationId/);
