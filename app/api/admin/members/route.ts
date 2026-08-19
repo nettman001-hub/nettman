@@ -1,4 +1,5 @@
 import { adminJson, requireAdminRequest } from "@/app/_lib/admin-actions";
+import { isAdminEmail } from "@/app/_lib/auth-user";
 import { ensureDatabase, getD1 } from "@/db";
 
 export const runtime = "nodejs";
@@ -101,7 +102,7 @@ export async function GET(request: Request): Promise<Response> {
       ).bind(...bindings).first<{ count: number }>(),
       db.prepare(
         `SELECT
-          u.id, u.email, u.name, u.role, u.status, u.status_reason,
+          u.id, u.email, u.name, u.role, u.is_admin, u.status, u.status_reason,
           u.suspended_until, u.created_at, u.last_seen_at, u.version,
           COALESCE(p.display_name, u.name) AS display_name,
           COALESCE(p.ministry_role, '') AS ministry_role,
@@ -146,6 +147,7 @@ export async function GET(request: Request): Promise<Response> {
           email: text(row.email),
           displayName: text(row.display_name),
           role: row.role === "expert" ? "expert" : "preacher",
+          isAdmin: Boolean(row.is_admin) || isAdminEmail(text(row.email)),
           status: effectiveStatus,
           statusReason: text(row.status_reason),
           suspendedUntil: row.suspended_until ? text(row.suspended_until) : null,

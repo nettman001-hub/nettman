@@ -5,6 +5,7 @@ export const users = sqliteTable("users", {
   email: text("email").notNull(),
   name: text("name").notNull(),
   role: text("role", { enum: ["preacher", "expert"] }).notNull().default("preacher"),
+  isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
   status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
   statusReason: text("status_reason"),
   suspendedUntil: text("suspended_until"),

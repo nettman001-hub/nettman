@@ -256,6 +256,7 @@ export function MemberDetailClient({ memberId, returnTo }: MemberDetailClientPro
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [selectedRole, setSelectedRole] = useState<MemberRole>("preacher");
   const [roleReason, setRoleReason] = useState("");
+  const [adminGrantReason, setAdminGrantReason] = useState("");
   const [statusReason, setStatusReason] = useState("");
   const [suspendedUntil, setSuspendedUntil] = useState("");
   const [tokenAction, setTokenAction] = useState<"grant" | "revoke">("grant");
@@ -344,6 +345,38 @@ export function MemberDetailClient({ memberId, returnTo }: MemberDetailClientPro
             body: JSON.stringify({
               action: "role",
               role: selectedRole,
+              reason,
+              requestId: crypto.randomUUID(),
+              expectedVersion: member.version,
+            }),
+          }),
+        ),
+    });
+  }
+
+  function prepareAdminChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!member) return;
+    const grant = !(member.isAdmin && member.adminSource === "granted");
+    const reason = requireReason(
+      adminGrantReason,
+      "관리자 권한 변경 사유를 5자 이상 입력해 주세요.",
+    );
+    if (!reason) return;
+    setPendingAction({
+      title: grant ? "관리자 등급으로 승격할까요?" : "관리자 권한을 해제할까요?",
+      description: grant
+        ? "승격된 회원은 회원 관리와 AI 설정을 포함한 모든 관리자 화면과 작업을 사용할 수 있습니다. 사유와 변경 내용은 감사 기록에 남습니다."
+        : "해제하면 이 회원은 관리자 화면과 작업에 접근할 수 없습니다. 사유와 변경 내용은 감사 기록에 남습니다.",
+      confirmLabel: grant ? "관리자 승격" : "관리자 해제",
+      danger: !grant,
+      run: () =>
+        runMutation("admin", grant ? "회원을 관리자로 승격했습니다." : "관리자 권한을 해제했습니다.", () =>
+          requestJson(endpoint, {
+            method: "PATCH",
+            body: JSON.stringify({
+              action: "admin",
+              grant,
               reason,
               requestId: crypto.randomUUID(),
               expectedVersion: member.version,
@@ -542,6 +575,11 @@ export function MemberDetailClient({ memberId, returnTo }: MemberDetailClientPro
           description={`${member.email || "이메일 미등록"} · 서비스 등록 ${formatDateTime(member.createdAt)}`}
           action={
             <span className="flex flex-wrap items-center gap-2">
+              {member.isAdmin ? (
+                <span className="rounded-full bg-[#2a2438] px-3 py-1.5 text-xs font-extrabold text-[#e8ddff]">
+                  관리자{member.adminSource === "env" ? " · 환경 변수" : ""}
+                </span>
+              ) : null}
               <span className="rounded-full bg-[#e1ece4] px-3 py-1.5 text-xs font-extrabold text-[#315c47]">{roleLabel(member.role)}</span>
               <span className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${member.status === "suspended" ? "bg-[#f7e3dc] text-[#8f452f]" : "bg-[#edf5e9] text-[#3c693b]"}`}>
                 {statusLabel(member.status)}
@@ -792,6 +830,28 @@ export function MemberDetailClient({ memberId, returnTo }: MemberDetailClientPro
               <button type="submit" disabled={Boolean(busyAction) || selectedRole === member.role} className="mt-3 min-h-11 w-full rounded-xl bg-[#315746] px-4 text-sm font-extrabold text-white hover:bg-[#26483b] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] disabled:opacity-45">
                 {busyAction === "role" ? "변경 중…" : "역할 변경"}
               </button>
+            </form>
+
+            <form className="mt-5 border-t border-[#d6c9b8] pt-5" onSubmit={prepareAdminChange}>
+              <h3 className="text-sm font-extrabold text-[#34483f]">관리자 등급</h3>
+              <p className="mt-2 text-xs leading-5 text-[#526159]">
+                {member.adminSource === "env"
+                  ? "환경 변수(ADMIN_EMAILS)로 지정된 관리자입니다. 화면에서 해제할 수 없습니다."
+                  : member.isAdmin
+                    ? "화면에서 승격된 관리자입니다."
+                    : "승격하면 모든 관리자 화면과 작업을 사용할 수 있습니다."}
+              </p>
+              {member.adminSource !== "env" ? (
+                <>
+                  <label className="mt-3 block text-xs font-bold text-[#4f6158]">
+                    변경 사유
+                    <textarea value={adminGrantReason} onChange={(event) => setAdminGrantReason(event.target.value.slice(0, 500))} rows={3} minLength={5} maxLength={500} className={reasonClass} placeholder="관리자 권한 변경 근거를 5자 이상 입력하세요." />
+                  </label>
+                  <button type="submit" disabled={Boolean(busyAction)} className={`mt-3 min-h-11 w-full rounded-xl px-4 text-sm font-extrabold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] disabled:opacity-45 ${member.isAdmin ? "bg-[#9a4936] hover:bg-[#823b2c]" : "bg-[#2a2438] hover:bg-[#1d1828]"}`}>
+                    {busyAction === "admin" ? "처리 중…" : member.isAdmin ? "관리자 해제" : "관리자 승격"}
+                  </button>
+                </>
+              ) : null}
             </form>
 
             <form className="mt-5 border-t border-[#d6c9b8] pt-5" onSubmit={prepareStatusChange}>

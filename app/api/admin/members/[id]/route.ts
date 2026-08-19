@@ -146,7 +146,7 @@ export async function GET(
     await ensureDatabase(db);
     const member = await db.prepare(
       `SELECT
-        u.id, u.email, u.name, u.role, u.status, u.status_reason,
+        u.id, u.email, u.name, u.role, u.is_admin, u.status, u.status_reason,
         u.suspended_until, u.status_changed_at, u.status_changed_by,
         u.created_at, u.updated_at, u.last_seen_at, u.version,
         COALESCE(p.display_name, u.name) AS display_name,
@@ -271,6 +271,12 @@ export async function GET(
         name: text(member.name),
         displayName: text(member.display_name),
         role: member.role === "expert" ? "expert" : "preacher",
+        isAdmin: Boolean(member.is_admin) || isAdminEmail(text(member.email)),
+        adminSource: isAdminEmail(text(member.email))
+          ? "env"
+          : member.is_admin
+            ? "granted"
+            : null,
         status: suspended ? "suspended" : "active",
         statusReason: text(member.status_reason),
         suspendedUntil: nullableText(member.suspended_until),
@@ -432,12 +438,13 @@ export async function PATCH(
   try {
     await ensureDatabase(db);
     const current = await db.prepare(
-      `SELECT id, email, role, status, status_reason, suspended_until, version
+      `SELECT id, email, role, is_admin, status, status_reason, suspended_until, version
        FROM users WHERE id = ?`,
     ).bind(id).first<{
       id: string;
       email: string;
       role: string;
+      is_admin: number | boolean | null;
       status: string;
       status_reason: string;
       suspended_until: string | null;
@@ -567,6 +574,123 @@ export async function PATCH(
       return adminJson({
         updated: true,
         role: changed.role === "expert" ? "expert" : "preacher",
+        version: integer(changed.version),
+      });
+    }
+
+    if (action === "admin") {
+      const grant = parsed.value.grant;
+      if (typeof grant !== "boolean") {
+        return adminJson({ error: "관리자 권한 변경 값을 확인해 주세요." }, 400);
+      }
+      if (!grant && id === auth.user.id) {
+        return adminJson({ error: "자신의 관리자 권한은 해제할 수 없습니다." }, 409);
+      }
+      if (!grant && isAdminEmail(current.email)) {
+        return adminJson({ error: "환경 변수(ADMIN_EMAILS) 관리자는 화면에서 해제할 수 없습니다." }, 409);
+      }
+      const currentGranted = Boolean(current.is_admin);
+      const auditAction = "member.admin_changed";
+      const nextVersion = expectedVersion + 1;
+      const beforeJson = safeJson({ isAdmin: currentGranted, version: expectedVersion });
+      const afterJson = safeJson({ isAdmin: grant, version: nextVersion });
+      const prior = await db.prepare(
+        `SELECT actor_user_id, target_user_id, action, reason, after_json
+         FROM admin_audit_logs
+         WHERE request_id = ? LIMIT 1`,
+      ).bind(requestId).first<AuditReplayRow>();
+      if (prior) {
+        if (!auditReplayMatches(prior, {
+          actorUserId: auth.user.id,
+          targetUserId: id,
+          action: auditAction,
+          reason,
+          afterJson,
+        })) {
+          return adminJson({ error: "이미 다른 관리자 작업에 사용된 요청 번호입니다." }, 409);
+        }
+        return adminJson({
+          updated: false,
+          idempotent: true,
+          version: integer(current.version),
+          isAdmin: currentGranted || isAdminEmail(current.email),
+        });
+      }
+      if (integer(current.version) !== expectedVersion) {
+        return adminJson({ error: "다른 관리자가 먼저 변경했습니다. 새로고침 후 다시 시도해 주세요." }, 409);
+      }
+      if (currentGranted === grant) {
+        return adminJson({
+          updated: false,
+          version: expectedVersion,
+          isAdmin: currentGranted || isAdminEmail(current.email),
+        });
+      }
+      const results = await db.batch<{
+        version: number;
+        is_admin: number | boolean;
+        audit_count: number;
+      }>([
+        db.prepare("SELECT pg_advisory_xact_lock(?)").bind(
+          stableAdvisoryLockKey(requestId),
+        ),
+        db.prepare("SELECT pg_advisory_xact_lock(?)").bind(
+          stableAdvisoryLockKey(`member-role:${id}`),
+        ),
+        db.prepare(
+          `WITH changed AS (
+             UPDATE users
+             SET is_admin = ?, updated_at = ?, version = version + 1
+             WHERE id = ? AND version = ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM admin_audit_logs WHERE request_id = ?
+               )
+             RETURNING version, is_admin
+           ), audited AS (
+             INSERT INTO admin_audit_logs
+               (id, actor_user_id, target_user_id, action, entity_type, entity_id,
+                reason, before_json, after_json, request_id, created_at)
+             SELECT ?, ?, ?, 'member.admin_changed', 'user', ?, ?, ?, ?, ?, ?
+             FROM changed
+             RETURNING id
+           )
+           SELECT changed.version, changed.is_admin,
+                  (SELECT COUNT(*) FROM audited) AS audit_count
+           FROM changed`,
+        ).bind(
+          grant ? 1 : 0,
+          now,
+          id,
+          expectedVersion,
+          requestId,
+          crypto.randomUUID(), auth.user.id, id, id, reason, beforeJson,
+          afterJson, requestId, now,
+        ),
+      ]);
+      const changed = results[2]?.results[0];
+      if (!changed || integer(changed.audit_count) !== 1) {
+        const replay = await db.prepare(
+          `SELECT actor_user_id, target_user_id, action, reason, after_json
+           FROM admin_audit_logs
+           WHERE request_id = ? LIMIT 1`,
+        ).bind(requestId).first<AuditReplayRow>();
+        if (replay && auditReplayMatches(replay, {
+          actorUserId: auth.user.id,
+          targetUserId: id,
+          action: auditAction,
+          reason,
+          afterJson,
+        })) {
+          return adminJson({ updated: false, idempotent: true });
+        }
+        if (replay) {
+          return adminJson({ error: "이미 다른 관리자 작업에 사용된 요청 번호입니다." }, 409);
+        }
+        return adminJson({ error: "회원 정보가 변경되었습니다. 새로고침 후 다시 시도해 주세요." }, 409);
+      }
+      return adminJson({
+        updated: true,
+        isAdmin: Boolean(changed.is_admin) || isAdminEmail(current.email),
         version: integer(changed.version),
       });
     }

@@ -33,6 +33,8 @@ export type MemberListItem = {
   name: string;
   email: string;
   role: MemberRole;
+  isAdmin: boolean;
+  adminSource: "env" | "granted" | null;
   status: MemberStatus;
   statusReason: string;
   version: number;
@@ -270,6 +272,13 @@ export function parseMemberListItem(value: unknown): MemberListItem | null {
       "이름 미등록",
     email: stringFrom(item, "email"),
     role: memberRole(item.role),
+    isAdmin: item.isAdmin === true || item.is_admin === true,
+    adminSource:
+      item.adminSource === "env" || item.adminSource === "granted"
+        ? item.adminSource
+        : item.isAdmin === true || item.is_admin === true
+          ? "granted"
+          : null,
     status: memberStatus({ ...auth, ...item }),
     statusReason: stringFrom(item, "statusReason", "status_reason"),
     version: Math.max(0, Math.trunc(numberFrom(item, "version"))),

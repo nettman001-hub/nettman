@@ -179,7 +179,7 @@ npm run dev
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 브라우저용 공개 키; 이전 `ANON_KEY`도 폴백 지원 |
 | `NEXT_PUBLIC_SITE_URL` | `https://www.sermon-ai.shop` |
 | `POSTGRES_URL` 또는 `POSTGRES_URL_NON_POOLING` | PostgreSQL 연결 및 빌드 시 RLS 확인 |
-| `ADMIN_EMAILS` | 쉼표로 구분한 관리자 이메일 |
+| `ADMIN_EMAILS` | 쉼표로 구분한 관리자 이메일(부트스트랩 권한). 기존 관리자는 `/admin/members`에서 회원을 관리자로 승격·해제할 수 있고 두 출처 모두 인증 시 인정됩니다 |
 | `SUPABASE_SERVICE_ROLE_KEY` | 상세 Auth 조회·ban 동기화용 서버 전용 키; 브라우저 노출 금지 |
 | `AI_SETTINGS_ENCRYPTION_KEY` | 관리자 저장 API 키 암호화용 32자 이상 비밀값 |
 

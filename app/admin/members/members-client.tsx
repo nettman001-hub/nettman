@@ -91,6 +91,11 @@ function memberHref(memberId: string, returnParams: URLSearchParams): string {
 function MemberBadges({ member }: { member: MemberListItem }) {
   return (
     <span className="flex flex-wrap items-center gap-2">
+      {member.isAdmin ? (
+        <span className="rounded-full bg-[#2a2438] px-2.5 py-1 text-[10px] font-extrabold text-[#e8ddff]">
+          관리자
+        </span>
+      ) : null}
       <span
         className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${
           member.role === "expert"

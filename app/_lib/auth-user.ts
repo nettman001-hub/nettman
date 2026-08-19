@@ -270,7 +270,7 @@ async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResul
     stage = "load_record";
     const record = await db
       .prepare(
-        `SELECT u.role, COALESCE(p.display_name, u.name) AS display_name,
+        `SELECT u.role, u.is_admin, COALESCE(p.display_name, u.name) AS display_name,
                 u.status, u.suspended_until, s.revoked_at
          FROM users u
          LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -281,6 +281,7 @@ async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResul
       .bind(user.sessionId, user.id)
       .first<{
         role: string;
+        is_admin: number | boolean | null;
         display_name: string;
         status: string;
         suspended_until: string | null;
@@ -315,7 +316,9 @@ async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResul
       isDemo: user.isDemo,
       name: record?.display_name?.trim() || user.name,
       role: normalizeRole(record?.role),
-      isAdmin: isAdminEmail(user.email),
+      // ADMIN_EMAILS stays the bootstrap authority; administrators can also
+      // grant the flag per member, and both sources are recognized here.
+      isAdmin: isAdminEmail(user.email) || Boolean(record.is_admin),
     } };
   } catch (error) {
     logAuthAccessFailure("account_store", error, {

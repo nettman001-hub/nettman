@@ -376,12 +376,14 @@ const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'preacher',
+    is_admin INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active', status_reason TEXT,
     suspended_until TEXT, status_changed_at TEXT, status_changed_by TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '',
     last_seen_at TEXT, version INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS status_reason TEXT`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_until TEXT`,
@@ -608,6 +610,7 @@ const schemaStatements = [
 ];
 
 const requiredSchemaColumns = [
+  ["users", "is_admin"],
   ["users", "status"],
   ["users", "status_reason"],
   ["users", "suspended_until"],
