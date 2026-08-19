@@ -41,7 +41,7 @@ export async function GET(
       : "s.user_id = ?";
   const row = await db
     .prepare(
-      `SELECT s.id, s.title, s.scripture, s.sermon_type, s.audience, s.audience_situation,
+      `SELECT s.id, s.draft_id, s.title, s.scripture, s.sermon_type, s.audience, s.audience_situation,
           s.point_count, s.duration, s.emotion, s.body_json,
           s.created_at, s.updated_at
        FROM sermons s
@@ -51,7 +51,67 @@ export async function GET(
     .first<Record<string, string | number>>();
 
   if (!row) return Response.json({ error: "설교를 찾을 수 없습니다." }, { status: 404 });
+
+  // Owners also receive the five drafts generated alongside this sermon so the
+  // detail view can list the unchosen ones. Experts reviewing via consultations
+  // only see the saved manuscript, and the draft join re-checks ownership.
+  let alternatives: Array<{
+    id: string;
+    position: number;
+    title: string;
+    scripture: string;
+    selected: boolean;
+    sections: SermonSections;
+  }> = [];
+  if (user.role !== "expert" && row.draft_id) {
+    const draftRows = await db
+      .prepare(
+        `SELECT a.id, a.position, a.title, a.scripture, a.body_json,
+                d.selected_alternative_id
+         FROM sermon_alternatives a
+         INNER JOIN sermon_drafts d ON d.id = a.draft_id AND d.user_id = ?
+         WHERE a.draft_id = ?
+         ORDER BY a.position ASC`,
+      )
+      .bind(user.id, row.draft_id)
+      .all<{
+        id: string;
+        position: number;
+        title: string;
+        scripture: string;
+        body_json: string;
+        selected_alternative_id: string | null;
+      }>();
+    alternatives = draftRows.results.map((draft) => {
+      const sections = safeJson<{
+        introduction: string;
+        points: Array<{ heading: string; content: string }>;
+        conclusion: string;
+        application: string;
+      }>(String(draft.body_json), {
+        introduction: "",
+        points: [],
+        conclusion: "",
+        application: "",
+      });
+      return {
+        id: draft.id,
+        position: Number(draft.position),
+        title: draft.title,
+        scripture: draft.scripture,
+        selected: draft.selected_alternative_id === draft.id,
+        sections: {
+          introduction: sections.introduction,
+          body: Array.isArray(sections.points) ? sections.points : [],
+          conclusion: sections.conclusion,
+          application: sections.application,
+        },
+      };
+    });
+  }
+
   return Response.json({
+    alternatives,
     item: {
       id: row.id,
       title: row.title,
