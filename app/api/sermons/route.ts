@@ -1,6 +1,6 @@
 import { ensureDatabase, getD1 } from "../../../db";
 import { demoSermons, safeJson, type SermonRecord, type SermonSections } from "../../_lib/data";
-import { getRequestUser, unauthorizedResponse } from "../../_lib/auth-user";
+import { getRequestUserResponse, unauthorizedResponse } from "../../_lib/auth-user";
 import { isSermonAudienceSituationValue } from "../../_lib/sermon-types";
 
 type SermonRow = {
@@ -27,7 +27,9 @@ function fromRow(row: SermonRow): SermonRecord {
 }
 
 export async function GET(request: Request) {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const url = new URL(request.url);
   const query = (url.searchParams.get("q") ?? "").trim();
@@ -76,7 +78,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const payload = await request.json().catch(() => null) as Partial<SermonRecord> & { draftId?: string } | null;
   if (!payload?.title || !payload.scripture || !payload.sections || payload.title.trim().length < 2) {

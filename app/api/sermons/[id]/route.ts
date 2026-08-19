@@ -1,7 +1,7 @@
 import { ensureDatabase, getD1 } from "../../../../db";
 import { demoSermons, safeJson, type SermonSections } from "../../../_lib/data";
 import {
-  resolveRequestUser,
+  resolveRequestUserResponse,
   serviceUnavailableResponse,
   unauthorizedResponse,
 } from "../../../_lib/auth-user";
@@ -11,9 +11,11 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const expertDemo = new URL(request.url).searchParams.get("scope") === "expert";
-  const user = await resolveRequestUser(request, {
+  const auth = await resolveRequestUserResponse(request, {
     demoRole: expertDemo ? "expert" : "preacher",
   });
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const { id } = await context.params;
   const db = getD1();

@@ -2,13 +2,18 @@ import postgres from "postgres";
 
 const protectedTables = [
   "users",
+  "user_auth_sessions",
+  "admin_audit_logs",
   "user_profiles",
   "user_ai_preferences",
+  "global_ai_settings",
   "managed_ai_usage",
   "sermon_resource_usage",
   "token_wallets",
   "token_transactions",
+  "token_adjustments",
   "token_topups",
+  "payment_orders",
   "sermon_drafts",
   "sermon_alternatives",
   "sermon_generation_runs",

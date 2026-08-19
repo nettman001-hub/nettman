@@ -10,7 +10,7 @@ import {
   type SermonGenerationStep,
   UserAiProviderError,
 } from "@/app/_lib/openai-sermons";
-import { getRequestUser } from "@/app/_lib/auth-user";
+import { getRequestUserResponse } from "@/app/_lib/auth-user";
 import {
   chargeSermonTokens,
   InsufficientTokensError,
@@ -575,7 +575,9 @@ function generationResponse(args: {
 }
 
 export async function GET(request: Request): Promise<Response> {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) {
     return Response.json(
       { fragmented: false },
@@ -596,7 +598,9 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user && hasGuestPreviewCookie(request)) {
     return error("비회원 미리보기를 이미 사용했습니다. 로그인하면 계속 생성할 수 있습니다.", 429);
   }

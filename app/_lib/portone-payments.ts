@@ -24,15 +24,18 @@ export async function findPortOneOrder(
   paymentId: string,
   userId?: string,
 ): Promise<PortOneOrder | null> {
-  const row = await db
-    .prepare(
-      `SELECT id, user_id, payment_id, payment_method, amount_krw, token_amount, status
-       FROM payment_orders
-       WHERE payment_id = ? AND provider = 'portone'
-         AND (? IS NULL OR user_id = ?)`,
-    )
-    .bind(paymentId, userId ?? null, userId ?? null)
-    .first<{
+  const query = userId
+    ? db.prepare(
+        `SELECT id, user_id, payment_id, payment_method, amount_krw, token_amount, status
+         FROM payment_orders
+         WHERE payment_id = ? AND provider = 'portone' AND user_id = ?`,
+      ).bind(paymentId, userId)
+    : db.prepare(
+        `SELECT id, user_id, payment_id, payment_method, amount_krw, token_amount, status
+         FROM payment_orders
+         WHERE payment_id = ? AND provider = 'portone'`,
+      ).bind(paymentId);
+  const row = await query.first<{
       id: string;
       user_id: string;
       payment_id: string;
@@ -40,7 +43,7 @@ export async function findPortOneOrder(
       amount_krw: number;
       token_amount: number;
       status: PortOneOrder["status"];
-    }>();
+  }>();
   if (!row) return null;
   return {
     id: row.id,

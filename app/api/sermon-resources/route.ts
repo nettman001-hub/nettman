@@ -7,7 +7,7 @@ import {
   type SermonResourceReservation,
 } from "../../../db";
 import { isAiEngineTier, type AiEngineTier } from "../../_lib/ai-engine-tiers";
-import { getRequestUser, unauthorizedResponse } from "../../_lib/auth-user";
+import { getRequestUserResponse, unauthorizedResponse } from "../../_lib/auth-user";
 import { demoSermons, safeJson, type SermonSections } from "../../_lib/data";
 import { getManagedAiRequestConfig } from "../../_lib/managed-ai-engines";
 import { UserAiProviderError } from "../../_lib/openai-sermons";
@@ -133,7 +133,9 @@ function sourceFromRow(row: SermonRow): SermonResourceSource {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
 
   const payload = (await request.json().catch(() => null)) as ResourcePayload | null;

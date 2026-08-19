@@ -1,6 +1,6 @@
 import { aiUserScope } from "@/app/_lib/ai-config";
 import { isAiEngineTier } from "@/app/_lib/ai-engine-tiers";
-import { getRequestUser } from "@/app/_lib/auth-user";
+import { getRequestUserResponse } from "@/app/_lib/auth-user";
 import { getManagedAiRequestConfig } from "@/app/_lib/managed-ai-engines";
 import {
   normalizeAiScriptureReference,
@@ -56,7 +56,9 @@ export async function POST(request: Request): Promise<Response> {
     return error("성경 본문 확인 요청 형식을 확인해 주세요.");
   }
 
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   const clientUserScope =
     typeof input.clientUserScope === "string" ? input.clientUserScope : undefined;
   if (

@@ -1,10 +1,12 @@
 import { ensureDatabase, getD1 } from "../../../db";
-import { getRequestUser, unauthorizedResponse } from "../../_lib/auth-user";
+import { getRequestUserResponse, unauthorizedResponse } from "../../_lib/auth-user";
 
 const defaults = { emailEnabled: true, pushEnabled: false, completionEnabled: true };
 
 export async function GET(request: Request) {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const db = getD1();
   if (!db) return Response.json({ ...defaults, demo: true });
@@ -16,7 +18,9 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const payload = await request.json().catch(() => null) as Partial<typeof defaults> | null;
   if (!payload) return Response.json({ error: "설정 값을 확인해 주세요." }, { status: 400 });

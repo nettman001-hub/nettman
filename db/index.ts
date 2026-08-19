@@ -226,10 +226,53 @@ class PostgresD1Database implements D1Database {
     });
     return results as D1Result<T>[];
   }
+
+  async withAdvisoryLock<T>(
+    lockKey: number,
+    operation: (lockedDb: D1Database) => Promise<T>,
+  ): Promise<T> {
+    const result = await this.client.begin(async (transaction) => {
+      const executeInTransaction: ExecuteQuery = async (query, values) =>
+        (await transaction.unsafe(query, [...values] as never[])) as unknown as PostgresRows;
+      const lockedDb = new PostgresTransactionDatabase(executeInTransaction);
+      await lockedDb
+        .prepare("SELECT pg_advisory_xact_lock(?)")
+        .bind(lockKey)
+        .run();
+      return operation(lockedDb);
+    });
+    return result as unknown as T;
+  }
+}
+
+class PostgresTransactionDatabase implements D1Database {
+  private readonly databaseToken = Symbol("postgres-transaction-d1-database");
+
+  constructor(private readonly executeQuery: ExecuteQuery) {}
+
+  prepare(query: string): PostgresPreparedStatement {
+    return new PostgresPreparedStatement(this.databaseToken, query, this.executeQuery);
+  }
+
+  async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    const results: D1Result<T>[] = [];
+    for (const statement of statements) {
+      if (
+        !(statement instanceof PostgresPreparedStatement) ||
+        statement.databaseToken !== this.databaseToken
+      ) {
+        throw new Error("PostgreSQL batches only accept statements prepared by the same database");
+      }
+      results.push(await statement.executeWith<T>(this.executeQuery));
+    }
+    return results;
+  }
 }
 
 const protectedTableNames = [
   "users",
+  "user_auth_sessions",
+  "admin_audit_logs",
   "user_profiles",
   "user_ai_preferences",
   "global_ai_settings",
@@ -237,6 +280,7 @@ const protectedTableNames = [
   "sermon_resource_usage",
   "token_wallets",
   "token_transactions",
+  "token_adjustments",
   "token_topups",
   "payment_orders",
   "sermon_drafts",
@@ -256,9 +300,46 @@ const protectedTableNames = [
 const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'preacher', created_at TEXT NOT NULL
+    role TEXT NOT NULL DEFAULT 'preacher',
+    status TEXT NOT NULL DEFAULT 'active', status_reason TEXT,
+    suspended_until TEXT, status_changed_at TEXT, status_changed_by TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT, version INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS status_reason TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_until TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS status_changed_at TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS status_changed_by TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0`,
+  `CREATE INDEX IF NOT EXISTS idx_users_created ON users(created_at, id)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_status_created ON users(status, created_at, id)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_role_created ON users(role, created_at, id)`,
+  `CREATE TABLE IF NOT EXISTS user_auth_sessions (
+    user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+    revoked_at TEXT, revoked_by TEXT
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_user_auth_sessions_user_session
+    ON user_auth_sessions(user_id, session_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_user_auth_sessions_user_revoked
+    ON user_auth_sessions(user_id, revoked_at)`,
+  `CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id TEXT PRIMARY KEY, actor_user_id TEXT NOT NULL, target_user_id TEXT,
+    action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT,
+    reason TEXT NOT NULL, before_json TEXT NOT NULL DEFAULT '{}',
+    after_json TEXT NOT NULL DEFAULT '{}', request_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_target_created
+    ON admin_audit_logs(target_user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_actor_created
+    ON admin_audit_logs(actor_user_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_audit_logs_request
+    ON admin_audit_logs(request_id)`,
   `CREATE TABLE IF NOT EXISTS user_profiles (
     user_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
     ministry_role TEXT NOT NULL DEFAULT '담임목사',
@@ -310,6 +391,18 @@ const schemaStatements = [
     ON token_transactions(reference_id)`,
   `CREATE INDEX IF NOT EXISTS idx_token_transactions_user_created
     ON token_transactions(user_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS token_adjustments (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount INTEGER NOT NULL,
+    reason TEXT NOT NULL, actor_user_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL, transaction_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_token_adjustments_idempotency
+    ON token_adjustments(idempotency_key)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_token_adjustments_transaction
+    ON token_adjustments(transaction_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_token_adjustments_user_created
+    ON token_adjustments(user_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS token_topups (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, usd_cents INTEGER NOT NULL CHECK (usd_cents >= 100),
     token_amount INTEGER NOT NULL CHECK (token_amount >= 200), status TEXT NOT NULL DEFAULT 'pending',
@@ -452,6 +545,21 @@ export function getD1(): D1Database | null {
     schemaInitialization = null;
   }
   return database;
+}
+
+/**
+ * Holds a PostgreSQL transaction-scoped advisory lock while an external side
+ * effect is reconciled with database state. Unsupported adapters fail closed.
+ */
+export async function withDatabaseAdvisoryLock<T>(
+  db: D1Database,
+  lockKey: number,
+  operation: (lockedDb: D1Database) => Promise<T>,
+): Promise<T> {
+  if (!(db instanceof PostgresD1Database)) {
+    throw new Error("Database advisory locks are unavailable");
+  }
+  return db.withAdvisoryLock(lockKey, operation);
 }
 
 export async function ensureDatabase(db: D1Database): Promise<void> {

@@ -242,6 +242,80 @@ test("enforces bounded, token-free fair use for study and ministry resources", a
   }
 });
 
+test("keeps the administrator member directory responsive and server-backed", async () => {
+  const [shell, listPage, listClient, detailPage, detailClient, memberTypes] =
+    await Promise.all([
+      readFile(new URL("../app/_components/app-shell.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/admin/members/page.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL("../app/admin/members/members-client.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL("../app/admin/members/[id]/page.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../app/admin/members/[id]/member-detail-client.tsx",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL("../app/admin/members/member-types.ts", import.meta.url),
+        "utf8",
+      ),
+    ]);
+
+  assert.match(shell, /ADMINISTRATION/);
+  assert.match(shell, /href: "\/admin\/members"/);
+  assert.match(shell, /href: "\/admin\/ai"/);
+  assert.match(listPage, /requirePageUser\("\/admin\/members"\)/);
+  assert.match(listPage, /if \(!user\.isAdmin\) redirect\("\/home"\)/);
+  assert.match(detailPage, /if \(!user\.isAdmin\) redirect\("\/home"\)/);
+
+  assert.match(listClient, /\/api\/admin\/members\?\$\{params\}/);
+  assert.match(listClient, /이름, 이메일 또는 교회/);
+  assert.match(listClient, /모든 역할/);
+  assert.match(listClient, /모든 상태/);
+  assert.match(listClient, /모든 교단/);
+  assert.match(listClient, /모든 프로필/);
+  assert.match(listClient, /최근 등록순/);
+  assert.match(listClient, /params\.set\("profile"/);
+  assert.match(listClient, /params\.set\("sort"/);
+  assert.match(listClient, /<table/);
+  assert.match(listClient, /lg:hidden/);
+  assert.match(listClient, /aria-label="회원 목록 페이지 이동"/);
+
+  assert.match(detailClient, /action: "role"/);
+  assert.match(detailClient, /action: "status"/);
+  assert.match(detailClient, /expectedVersion: member\.version/);
+  assert.match(detailClient, /requestId: crypto\.randomUUID\(\)/);
+  assert.match(detailClient, /tokenAction === "grant" \? amount : -amount/);
+  assert.match(detailClient, /reset_password/);
+  assert.match(detailClient, /resend_verification/);
+  assert.match(detailClient, /sign_out_all/);
+  assert.match(detailClient, /member\.auth\.mailAvailable/);
+  assert.match(detailClient, /member\.auth\.privilegedAvailable/);
+  assert.match(detailClient, /알려진 세션/);
+  assert.match(detailClient, /결제 재검증 사유/);
+  assert.match(detailClient, /title="최근 설교"/);
+  assert.match(detailClient, /설교 본문은 노출하지 않습니다/);
+  assert.match(detailClient, /role="dialog"/);
+  assert.match(detailClient, /aria-modal="true"/);
+
+  assert.match(memberTypes, /"serviceRegisteredAt"/);
+  assert.match(memberTypes, /"pageSize"/);
+  assert.match(memberTypes, /"tokenHistory"/);
+  assert.match(memberTypes, /"auditLog"/);
+  assert.match(memberTypes, /mailAvailable:/);
+  assert.match(memberTypes, /privilegedAvailable:/);
+  assert.match(memberTypes, /sermons: arrayFrom\(payload, "sermons"/);
+  assert.match(memberTypes, /"sermonType"/);
+  assert.match(memberTypes, /paymentId:/);
+});
+
 test("keeps AI controls admin-only and encrypts provider keys at rest", async () => {
   const { validateAiApiKey, validateAiPreferences, validateAiRequestConfig } = await import(
     new URL("../app/_lib/ai-config.ts", import.meta.url)

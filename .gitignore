@@ -42,5 +42,3 @@ yarn-error.log*
 /.vite/
 dev.*.log
 *.tsbuildinfo
-
-.env*

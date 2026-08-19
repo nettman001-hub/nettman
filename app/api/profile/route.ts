@@ -3,7 +3,7 @@ import {
   isMinistryRole,
   isValidTheologySelection,
 } from "../../_lib/profile-options";
-import { getRequestUser, unauthorizedResponse } from "../../_lib/auth-user";
+import { getRequestUserResponse, unauthorizedResponse } from "../../_lib/auth-user";
 
 type ProfilePayload = {
   displayName?: unknown;
@@ -49,7 +49,9 @@ function profileResponse(
 }
 
 export async function GET(request: Request) {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const db = getD1();
   if (!db) return Response.json({ ...profileResponse(user), demo: true });
@@ -66,7 +68,9 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const rawPayload = await request.json().catch(() => null);
   const payload =

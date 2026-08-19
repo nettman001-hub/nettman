@@ -13,6 +13,7 @@
 - `/study`: 저장한 설교의 원문·배경·구조 스터디 생성
 - `/ministry`: 소그룹 질문지, 주보 요약문, 숏폼 문구 생성
 - `/my`, `/notifications`: 신학·개인 프로필과 알림 설정
+- `/admin/members`, `/admin/members/[id]`: 관리자 회원 검색·상세·역할·이용 상태·무료 토큰·인증 지원
 - `/login`, `/signup`, `/forgot-password`, `/verify-email`, `/reset-password`: Supabase 이메일/비밀번호 및 Google OAuth 인증
 
 ## 실행
@@ -45,7 +46,7 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 NEXT_PUBLIC_SITE_URL=https://www.sermon-ai.shop
 ```
 
-Supabase Auth의 Site URL과 Redirect URL에는 프로덕션 `/auth/callback` 및 필요한 로컬/미리보기 주소를 허용해야 합니다. 운영 이메일 인증·재설정은 Supabase 기본 발송 제한에 의존하지 않도록 별도 SMTP 연결을 권장합니다.
+Supabase Auth의 Site URL과 Redirect URL에는 프로덕션 `/auth/callback` 및 필요한 로컬/미리보기 주소를 허용해야 합니다. 운영 이메일 인증·재설정은 Supabase 기본 발송 제한에 의존하지 않도록 별도 SMTP 연결을 권장합니다. 회원관리의 상세 Auth 정보 조회와 계정 정지 동기화를 사용하려면 서버 전용 `SUPABASE_SERVICE_ROLE_KEY`도 설정해야 하며 `NEXT_PUBLIC_` 접두사를 붙이면 안 됩니다. 재설정·인증 메일 요청은 공개 Supabase 설정만으로도 동작합니다.
 
 ## Vercel 배포
 
@@ -56,6 +57,12 @@ npx vercel --prod
 ```
 
 AI 엔진은 사용자별 설정이 아니라 관리자 전역 설정입니다. 관리자 이메일은 서버 환경 변수 `ADMIN_EMAILS`에 쉼표로 구분해 등록합니다. 공급자 API 키는 관리자 화면에서 입력해 암호화 저장하거나 서버 비밀 환경 변수로 제공할 수 있으며, 브라우저에는 저장하지 않습니다.
+
+## 회원관리
+
+관리자는 `/admin/members`에서 회원을 검색·필터링하고 프로필, 서비스 활동, 토큰 원장, 결제·설교 피드백 메타데이터와 감사 기록을 확인할 수 있습니다. 상세 화면에서는 설교자·전문가 역할 변경, 이용 정지·복구, 비밀번호 재설정·이메일 인증 재발송, 알려진 세션 전체 로그아웃과 포트원 결제 재검증을 수행합니다. 진행 중인 설교 피드백이 배정된 전문가는 설교자로 바로 강등할 수 없습니다.
+
+관리자 무료 토큰 지급·회수는 유료 결제 충전과 분리됩니다. 잔액과 `admin_adjustment` 원장은 한 트랜잭션에서 변경되고, 요청 번호로 중복 처리를 막으며, 수량·사유·관리자·변경 전후 잔액을 감사 기록에 남깁니다. 무료 지급은 누적 구매량을 늘리지 않고 회수 후 잔액이 음수가 되는 작업은 거절합니다. 관리자 이메일, 회원 이메일과 결제 상태를 화면에서 직접 편집하거나 회원을 영구 삭제하는 기능은 제공하지 않습니다.
 
 ## AI 생성
 

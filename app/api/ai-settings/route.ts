@@ -10,7 +10,7 @@ import {
 } from "@/app/_lib/ai-config";
 import {
   forbiddenResponse,
-  resolveRequestUser,
+  resolveRequestUserResponse,
   unauthorizedResponse,
 } from "@/app/_lib/auth-user";
 import { ensureDatabase, getD1 } from "@/db";
@@ -25,7 +25,9 @@ function json(body: unknown, status = 200): Response {
 }
 
 async function requireAdmin(request: Request) {
-  const user = await resolveRequestUser(request);
+  const auth = await resolveRequestUserResponse(request);
+  if ("response" in auth) return auth;
+  const { user } = auth;
   if (!user) return { response: unauthorizedResponse() };
   if (!user.isAdmin) {
     return {
@@ -37,7 +39,7 @@ async function requireAdmin(request: Request) {
 
 export async function GET(request: Request): Promise<Response> {
   const auth = await requireAdmin(request);
-  if ("response" in auth && auth.response) return auth.response;
+  if ("response" in auth) return auth.response;
   const db = getD1();
   try {
     if (db) await ensureDatabase(db);
@@ -55,7 +57,7 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function PUT(request: Request): Promise<Response> {
   const auth = await requireAdmin(request);
-  if ("response" in auth && auth.response) return auth.response;
+  if ("response" in auth) return auth.response;
 
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > 16_384) {

@@ -3,7 +3,7 @@ import {
   reviseAiSermon,
   UserAiProviderError,
 } from "@/app/_lib/openai-sermons";
-import { getRequestUser, unauthorizedResponse } from "@/app/_lib/auth-user";
+import { getRequestUserResponse, unauthorizedResponse } from "@/app/_lib/auth-user";
 import { aiUserScope } from "@/app/_lib/ai-config";
 import { getManagedAiRequestConfig } from "@/app/_lib/managed-ai-engines";
 import { isAiEngineTier } from "@/app/_lib/ai-engine-tiers";
@@ -40,7 +40,9 @@ function error(message: string, status = 400): Response {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > 1_500_000) {

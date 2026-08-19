@@ -11,7 +11,7 @@ import {
   fetchAiModelCatalog,
 } from "@/app/_lib/ai-model-catalog";
 import {
-  resolveRequestUser,
+  resolveRequestUserResponse,
 } from "@/app/_lib/auth-user";
 
 export const runtime = "nodejs";
@@ -69,7 +69,9 @@ async function readLimitedJson(request: Request): Promise<unknown> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const user = await resolveRequestUser(request);
+  const auth = await resolveRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return json({ error: "로그인이 필요합니다." }, 401);
   if (!user.isAdmin) {
     return json({ error: "AI 모델 조회는 관리자만 사용할 수 있습니다." }, 403);

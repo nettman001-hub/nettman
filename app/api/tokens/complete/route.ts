@@ -1,4 +1,4 @@
-import { resolveRequestUser, unauthorizedResponse } from "@/app/_lib/auth-user";
+import { resolveRequestUserResponse, unauthorizedResponse } from "@/app/_lib/auth-user";
 import {
   confirmPortOneOrder,
   findPortOneOrder,
@@ -13,7 +13,9 @@ function error(message: string, status = 400): Response {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const user = await resolveRequestUser(request);
+  const auth = await resolveRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const db = getD1();
   if (!db) return error("토큰 지갑 저장소에 연결할 수 없습니다.", 503);

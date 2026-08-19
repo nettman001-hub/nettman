@@ -2,7 +2,7 @@ import { ensureDatabase, getD1 } from "../../../db";
 import { demoConsultations, type ConsultationRecord } from "../../_lib/data";
 import {
   forbiddenResponse,
-  resolveRequestUser,
+  resolveRequestUserResponse,
   serviceUnavailableResponse,
   unauthorizedResponse,
 } from "../../_lib/auth-user";
@@ -41,9 +41,11 @@ function wantsExpertDemo(request: Request): boolean {
 }
 
 export async function GET(request: Request) {
-  const user = await resolveRequestUser(request, {
+  const auth = await resolveRequestUserResponse(request, {
     demoRole: wantsExpertDemo(request) ? "expert" : "preacher",
   });
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
 
   const db = getD1();
@@ -88,7 +90,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const user = await resolveRequestUser(request);
+  const auth = await resolveRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   if (user.role !== "preacher") {
     return forbiddenResponse("설교 피드백 요청은 설교자 계정에서 만들 수 있습니다.");

@@ -22,7 +22,7 @@ import {
 } from "@/app/_lib/ai-config";
 import {
   forbiddenResponse,
-  resolveRequestUser,
+  resolveRequestUserResponse,
   unauthorizedResponse,
 } from "@/app/_lib/auth-user";
 import { ensureDatabase, getD1 } from "@/db";
@@ -44,7 +44,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 async function requireAdmin(request: Request) {
-  const user = await resolveRequestUser(request);
+  const auth = await resolveRequestUserResponse(request);
+  if ("response" in auth) return auth;
+  const { user } = auth;
   if (!user) return { response: unauthorizedResponse() };
   if (!user.isAdmin) {
     return {
@@ -75,7 +77,7 @@ async function responseSettings(
 
 export async function GET(request: Request): Promise<Response> {
   const auth = await requireAdmin(request);
-  if ("response" in auth && auth.response) return auth.response;
+  if ("response" in auth) return auth.response;
   const db = getD1();
   if (!db) {
     return json({ error: "AI 엔진 설정 저장소에 연결할 수 없습니다." }, 503);
@@ -137,7 +139,7 @@ function parseSettings(body: Record<string, unknown>):
 
 export async function PUT(request: Request): Promise<Response> {
   const auth = await requireAdmin(request);
-  if ("response" in auth && auth.response) return auth.response;
+  if ("response" in auth) return auth.response;
 
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > 65_536) {

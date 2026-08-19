@@ -18,6 +18,7 @@ export type AppSection =
   | "tokens"
   | "my"
   | "notifications"
+  | "admin-members"
   | "admin-ai";
 
 type AppShellUser = {
@@ -64,6 +65,11 @@ const SETTINGS_NAV: NavItem[] = [
     href: "/notifications",
     marker: "알",
   },
+];
+
+const ADMIN_NAV: NavItem[] = [
+  { id: "admin-members", label: "회원 관리", href: "/admin/members", marker: "회" },
+  { id: "admin-ai", label: "AI 엔진 관리", href: "/admin/ai", marker: "관" },
 ];
 
 function initials(name: string): string {
@@ -308,12 +314,7 @@ function Sidebar({
   tokenWallet: TokenSummary | null;
   onNavigate?: () => void;
 }) {
-  const settingsNav = user?.isAdmin
-    ? [
-        ...SETTINGS_NAV,
-        { id: "admin-ai" as const, label: "AI 엔진 관리", href: "/admin/ai", marker: "관" },
-      ]
-    : SETTINGS_NAV;
+  const adminNav = user?.isAdmin ? ADMIN_NAV : [];
   return (
     <div className="flex h-full flex-col overflow-y-auto px-4 py-5 sm:px-5 sm:py-6">
       <div className="px-2">
@@ -342,8 +343,17 @@ function Sidebar({
         <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white">
           PREFERENCES
         </p>
-        <NavList active={active} items={settingsNav} onNavigate={onNavigate} />
+        <NavList active={active} items={SETTINGS_NAV} onNavigate={onNavigate} />
       </nav>
+
+      {adminNav.length ? (
+        <nav className="mt-7" aria-label="관리 메뉴">
+          <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white">
+            ADMINISTRATION
+          </p>
+          <NavList active={active} items={adminNav} onNavigate={onNavigate} />
+        </nav>
+      ) : null}
 
       <div className="mt-auto pt-6">
         {user ? <TokenSummaryLink summary={tokenWallet} /> : null}

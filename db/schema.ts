@@ -5,8 +5,51 @@ export const users = sqliteTable("users", {
   email: text("email").notNull(),
   name: text("name").notNull(),
   role: text("role", { enum: ["preacher", "expert"] }).notNull().default("preacher"),
+  status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
+  statusReason: text("status_reason"),
+  suspendedUntil: text("suspended_until"),
+  statusChangedAt: text("status_changed_at"),
+  statusChangedBy: text("status_changed_by"),
   createdAt: text("created_at").notNull(),
-}, (table) => [uniqueIndex("idx_users_email").on(table.email)]);
+  updatedAt: text("updated_at").notNull().default(""),
+  lastSeenAt: text("last_seen_at"),
+  version: integer("version").notNull().default(0),
+}, (table) => [
+  uniqueIndex("idx_users_email").on(table.email),
+  index("idx_users_created").on(table.createdAt, table.id),
+  index("idx_users_status_created").on(table.status, table.createdAt, table.id),
+  index("idx_users_role_created").on(table.role, table.createdAt, table.id),
+]);
+
+export const userAuthSessions = sqliteTable("user_auth_sessions", {
+  userId: text("user_id").notNull(),
+  sessionId: text("session_id").notNull(),
+  firstSeenAt: text("first_seen_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
+  revokedAt: text("revoked_at"),
+  revokedBy: text("revoked_by"),
+}, (table) => [
+  uniqueIndex("idx_user_auth_sessions_user_session").on(table.userId, table.sessionId),
+  index("idx_user_auth_sessions_user_revoked").on(table.userId, table.revokedAt),
+]);
+
+export const adminAuditLogs = sqliteTable("admin_audit_logs", {
+  id: text("id").primaryKey(),
+  actorUserId: text("actor_user_id").notNull(),
+  targetUserId: text("target_user_id"),
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id"),
+  reason: text("reason").notNull(),
+  beforeJson: text("before_json").notNull().default("{}"),
+  afterJson: text("after_json").notNull().default("{}"),
+  requestId: text("request_id").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("idx_admin_audit_logs_target_created").on(table.targetUserId, table.createdAt),
+  index("idx_admin_audit_logs_actor_created").on(table.actorUserId, table.createdAt),
+  uniqueIndex("idx_admin_audit_logs_request").on(table.requestId),
+]);
 
 export const userProfiles = sqliteTable("user_profiles", {
   userId: text("user_id").primaryKey(),
@@ -79,7 +122,7 @@ export const tokenTransactions = sqliteTable("token_transactions", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
   kind: text("kind", {
-    enum: ["welcome", "topup", "generation", "refund"],
+    enum: ["welcome", "topup", "generation", "refund", "admin_adjustment"],
   }).notNull(),
   amount: integer("amount").notNull(),
   balanceAfter: integer("balance_after").notNull(),
@@ -90,6 +133,21 @@ export const tokenTransactions = sqliteTable("token_transactions", {
 }, (table) => [
   uniqueIndex("idx_token_transactions_reference").on(table.referenceId),
   index("idx_token_transactions_user_created").on(table.userId, table.createdAt),
+]);
+
+export const tokenAdjustments = sqliteTable("token_adjustments", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  amount: integer("amount").notNull(),
+  reason: text("reason").notNull(),
+  actorUserId: text("actor_user_id").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  transactionId: text("transaction_id").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("idx_token_adjustments_idempotency").on(table.idempotencyKey),
+  uniqueIndex("idx_token_adjustments_transaction").on(table.transactionId),
+  index("idx_token_adjustments_user_created").on(table.userId, table.createdAt),
 ]);
 
 export const tokenTopups = sqliteTable("token_topups", {

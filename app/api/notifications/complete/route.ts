@@ -1,8 +1,10 @@
 import { ensureDatabase, getD1 } from "../../../../db";
-import { getRequestUser, unauthorizedResponse } from "../../../_lib/auth-user";
+import { getRequestUserResponse, unauthorizedResponse } from "../../../_lib/auth-user";
 
 export async function POST(request: Request) {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const payload = await request.json().catch(() => null) as { sermonId?: string; title?: string } | null;
   if (!payload?.sermonId || !payload.title) return Response.json({ error: "알림 대상을 확인해 주세요." }, { status: 400 });

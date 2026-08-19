@@ -1,4 +1,4 @@
-import { resolveRequestUser, unauthorizedResponse } from "@/app/_lib/auth-user";
+import { resolveRequestUserResponse, unauthorizedResponse } from "@/app/_lib/auth-user";
 import {
   ensureTokenWallet,
   TOKENS_PER_1000_KRW,
@@ -13,7 +13,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<Response> {
-  const user = await resolveRequestUser(request);
+  const auth = await resolveRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const db = getD1();
   if (!db && user.isDemo) {

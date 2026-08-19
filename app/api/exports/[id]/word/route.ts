@@ -1,10 +1,12 @@
 import { ensureDatabase, getD1 } from "../../../../../db";
 import { createSermonDocx } from "../../../../_lib/docx";
 import { demoSermons, safeJson, type SermonRecord, type SermonSections } from "../../../../_lib/data";
-import { getRequestUser, unauthorizedResponse } from "../../../../_lib/auth-user";
+import { getRequestUserResponse, unauthorizedResponse } from "../../../../_lib/auth-user";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const user = await getRequestUser(request);
+  const auth = await getRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const { id } = await context.params;
   const db = getD1();

@@ -1,8 +1,9 @@
 import { ensureDatabase, getD1 } from "../../../../db";
+import { stableAdvisoryLockKey } from "../../../_lib/admin-actions";
 import { demoConsultations, type ConsultationRecord } from "../../../_lib/data";
 import {
   forbiddenResponse,
-  resolveRequestUser,
+  resolveRequestUserResponse,
   serviceUnavailableResponse,
   unauthorizedResponse,
 } from "../../../_lib/auth-user";
@@ -96,9 +97,11 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const user = await resolveRequestUser(request, {
+  const auth = await resolveRequestUserResponse(request, {
     demoRole: wantsExpertDemo(request) ? "expert" : "preacher",
   });
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const { id } = await context.params;
   const db = getD1();
@@ -149,9 +152,11 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   const expertDemo = wantsExpertDemo(request);
-  const user = await resolveRequestUser(request, {
+  const auth = await resolveRequestUserResponse(request, {
     demoRole: expertDemo ? "expert" : "preacher",
   });
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const { id } = await context.params;
   const payload = (await request.json().catch(() => null)) as {
@@ -179,13 +184,24 @@ export async function POST(
     }
 
     await ensureDatabase(db);
-    const result = await db
-      .prepare(
+    const assignment = await db.batch([
+      db.prepare("SELECT pg_advisory_xact_lock(?)").bind(
+        stableAdvisoryLockKey(`member-role:${user.id}`),
+      ),
+      db.prepare(
         `UPDATE consultations SET expert_id = ?, status = 'assigned', updated_at = ?
-         WHERE id = ? AND status = 'waiting' AND expert_id IS NULL`,
-      )
-      .bind(user.id, now, id)
-      .run();
+         WHERE id = ? AND status = 'waiting' AND expert_id IS NULL
+           AND EXISTS (
+             SELECT 1 FROM users
+             WHERE users.id = ? AND users.role = 'expert'
+               AND NOT (
+                 users.status = 'suspended' AND
+                 (users.suspended_until IS NULL OR users.suspended_until > ?)
+               )
+           )`,
+      ).bind(user.id, now, id, user.id, now),
+    ]);
+    const result = assignment[1];
     if (Number(result.meta.changes ?? 0) < 1) {
       const own = await db
         .prepare("SELECT status FROM consultations WHERE id = ? AND expert_id = ?")

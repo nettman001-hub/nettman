@@ -16,21 +16,63 @@ export type AppUser = {
   isAdmin: boolean;
 };
 
+export type AuthUserAccessFailureReason =
+  | "account_suspended"
+  | "session_revoked"
+  | "session_invalid"
+  | "identity_unavailable"
+  | "account_store_unavailable";
+
+export class AuthUserAccessError extends Error {
+  readonly reason: AuthUserAccessFailureReason;
+  readonly status: 403 | 503;
+
+  constructor(reason: AuthUserAccessFailureReason) {
+    const unavailable =
+      reason === "identity_unavailable" || reason === "account_store_unavailable";
+    super(
+      unavailable
+        ? "인증된 계정 상태를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."
+        : "현재 계정으로는 서비스를 이용할 수 없습니다.",
+    );
+    this.name = "AuthUserAccessError";
+    this.reason = reason;
+    this.status = unavailable ? 503 : 403;
+  }
+}
+
 type UserResolutionOptions = {
   demoRole?: AppUserRole;
 };
 
-type BaseUser = Omit<AppUser, "role" | "isAdmin">;
+type BaseUser = Omit<AppUser, "role" | "isAdmin"> & {
+  /** Supabase session identifiers are kept server-side and never returned in AppUser. */
+  sessionId: string | null;
+};
 type AppDatabase = NonNullable<ReturnType<typeof getD1>>;
+
+type VerifiedIdentityResult =
+  | { kind: "authenticated"; user: BaseUser }
+  | { kind: "anonymous" }
+  | { kind: "unavailable" };
+
+type PersistedUserResult =
+  | { kind: "allowed"; user: AppUser }
+  | { kind: "denied"; reason: AuthUserAccessFailureReason };
 
 const USER_OWNER_COLUMNS = [
   ["user_profiles", "user_id"],
   ["user_ai_preferences", "user_id"],
+  ["global_ai_settings", "updated_by"],
   ["managed_ai_usage", "user_id"],
   ["sermon_resource_usage", "user_id"],
+  ["user_auth_sessions", "user_id"],
+  ["user_auth_sessions", "revoked_by"],
   ["token_wallets", "user_id"],
   ["token_transactions", "user_id"],
   ["token_topups", "user_id"],
+  ["token_adjustments", "user_id"],
+  ["token_adjustments", "actor_user_id"],
   ["payment_orders", "user_id"],
   ["sermon_drafts", "user_id"],
   ["sermon_generation_runs", "user_id"],
@@ -83,24 +125,52 @@ function displayNameFromClaims(
   return email.split("@", 1)[0] || "설교자";
 }
 
-async function verifiedSupabaseIdentity(): Promise<BaseUser | null> {
+function authErrorRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function isAnonymousAuthError(value: unknown): boolean {
+  const error = authErrorRecord(value);
+  const code = typeof error.code === "string" ? error.code : "";
+  const status = typeof error.status === "number" ? error.status : 0;
+  return (
+    code === "session_not_found" ||
+    code === "refresh_token_not_found" ||
+    code === "refresh_token_already_used" ||
+    status === 401
+  );
+}
+
+async function verifiedSupabaseIdentity(): Promise<VerifiedIdentityResult> {
   const supabase = await createSupabaseServerClient();
-  if (!supabase) return null;
+  if (!supabase) return { kind: "anonymous" };
   try {
     const { data, error } = await supabase.auth.getClaims();
-    if (error || !data?.claims) return null;
+    if (error) {
+      return isAnonymousAuthError(error)
+        ? { kind: "anonymous" }
+        : { kind: "unavailable" };
+    }
+    if (!data?.claims) return { kind: "anonymous" };
     const claims = data.claims as Record<string, unknown>;
     const id = typeof claims.sub === "string" ? claims.sub : "";
     const email = typeof claims.email === "string" ? claims.email.trim() : "";
-    if (!id || !email) return null;
+    const rawSessionId =
+      typeof claims.session_id === "string" ? claims.session_id.trim() : "";
+    if (!id || !email) return { kind: "unavailable" };
     return {
-      id,
-      email,
-      name: displayNameFromClaims(claims, email),
-      isDemo: false,
+      kind: "authenticated",
+      user: {
+        id,
+        email,
+        name: displayNameFromClaims(claims, email),
+        isDemo: false,
+        sessionId:
+          rawSessionId && rawSessionId.length <= 128 ? rawSessionId : null,
+      },
     };
   } catch {
-    return null;
+    return { kind: "unavailable" };
   }
 }
 
@@ -120,41 +190,110 @@ async function migrateVerifiedEmailOwner(db: AppDatabase, user: BaseUser) {
   ]);
 }
 
-async function persistAndResolveUser(user: BaseUser): Promise<AppUser> {
+function developmentFallbackUser(user: BaseUser): AppUser {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    isDemo: user.isDemo,
+    role: "preacher",
+    isAdmin: isAdminEmail(user.email),
+  };
+}
+
+function activeSuspension(status: string, suspendedUntil: string | null): boolean {
+  if (status !== "suspended") return false;
+  if (!suspendedUntil?.trim()) return true;
+  const expiresAt = Date.parse(suspendedUntil);
+  return !Number.isFinite(expiresAt) || expiresAt > Date.now();
+}
+
+async function persistAndResolveUser(user: BaseUser): Promise<PersistedUserResult> {
+  if (!user.sessionId) return { kind: "denied", reason: "session_invalid" };
   const db = getD1();
-  if (!db) return { ...user, role: "preacher", isAdmin: isAdminEmail(user.email) };
+  if (!db) {
+    return process.env.NODE_ENV === "production"
+      ? { kind: "denied", reason: "account_store_unavailable" }
+      : { kind: "allowed", user: developmentFallbackUser(user) };
+  }
 
   try {
     await ensureDatabase(db);
     await migrateVerifiedEmailOwner(db, user);
     const now = new Date().toISOString();
-    await db
-      .prepare(
-        `INSERT INTO users (id, email, name, role, created_at)
-         VALUES (?, ?, ?, 'preacher', ?)
-         ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name`,
+    await db.batch([
+      db.prepare(
+        `INSERT INTO users
+           (id, email, name, role, created_at, updated_at, last_seen_at)
+         VALUES (?, ?, ?, 'preacher', ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           email = excluded.email,
+           name = excluded.name,
+           updated_at = excluded.updated_at,
+           last_seen_at = excluded.last_seen_at`,
       )
-      .bind(user.id, user.email, user.name, now)
-      .run();
-    await ensureTokenWallet(db, user.id);
+        .bind(user.id, user.email, user.name, now, now, now),
+      db.prepare(
+        `INSERT INTO user_auth_sessions
+           (user_id, session_id, first_seen_at, last_seen_at, revoked_at, revoked_by)
+         VALUES (?, ?, ?, ?, NULL, NULL)
+         ON CONFLICT(user_id, session_id) DO UPDATE SET
+           last_seen_at = excluded.last_seen_at`,
+      ).bind(user.id, user.sessionId, now, now),
+    ]);
     const record = await db
       .prepare(
-        `SELECT u.role, COALESCE(p.display_name, u.name) AS display_name
+        `SELECT u.role, COALESCE(p.display_name, u.name) AS display_name,
+                u.status, u.suspended_until, s.revoked_at
          FROM users u
          LEFT JOIN user_profiles p ON p.user_id = u.id
+         LEFT JOIN user_auth_sessions s
+           ON s.user_id = u.id AND s.session_id = ?
          WHERE u.id = ?`,
       )
-      .bind(user.id)
-      .first<{ role: string; display_name: string }>();
-    return {
-      ...user,
+      .bind(user.sessionId, user.id)
+      .first<{
+        role: string;
+        display_name: string;
+        status: string;
+        suspended_until: string | null;
+        revoked_at: string | null;
+      }>();
+    if (!record) return { kind: "denied", reason: "account_store_unavailable" };
+    if (record.revoked_at) return { kind: "denied", reason: "session_revoked" };
+    if (record.status !== "active" && record.status !== "suspended") {
+      return { kind: "denied", reason: "account_store_unavailable" };
+    }
+    if (activeSuspension(record.status, record.suspended_until)) {
+      return { kind: "denied", reason: "account_suspended" };
+    }
+    if (record.status === "suspended") {
+      await db
+        .prepare(
+          `UPDATE users
+           SET status = 'active', suspended_until = NULL, status_reason = NULL,
+               status_changed_at = ?, status_changed_by = NULL,
+               updated_at = ?, version = version + 1
+           WHERE id = ? AND status = 'suspended' AND suspended_until = ?`,
+        )
+        .bind(now, now, user.id, record.suspended_until)
+        .run();
+    }
+    await ensureTokenWallet(db, user.id);
+    return { kind: "allowed", user: {
+      id: user.id,
+      email: user.email,
+      isDemo: user.isDemo,
       name: record?.display_name?.trim() || user.name,
       role: normalizeRole(record?.role),
       isAdmin: isAdminEmail(user.email),
-    };
+    } };
   } catch {
-    // A database outage must never grant elevated privileges.
-    return { ...user, role: "preacher", isAdmin: isAdminEmail(user.email) };
+    // Production account controls are fail-closed. Local development retains a
+    // minimal fallback so a database outage cannot grant expert privileges.
+    return process.env.NODE_ENV === "production"
+      ? { kind: "denied", reason: "account_store_unavailable" }
+      : { kind: "allowed", user: developmentFallbackUser(user) };
   }
 }
 
@@ -173,20 +312,31 @@ export async function getPageUser(
   options: UserResolutionOptions = {},
 ): Promise<AppUser | null> {
   const identity = await verifiedSupabaseIdentity();
-  if (identity) return persistAndResolveUser(identity);
+  if (identity.kind === "authenticated") {
+    const resolved = await persistAndResolveUser(identity.user);
+    return resolved.kind === "allowed" ? resolved.user : null;
+  }
+  if (identity.kind === "unavailable") return null;
   const requestHeaders = await headers();
   return localDemoIfAllowed(requestHeaders.get("host"), options.demoRole);
 }
 
-/** Role-sensitive handlers must use resolveRequestUser so the persisted role is authoritative. */
+function userOrThrow(result: PersistedUserResult): AppUser {
+  if (result.kind === "allowed") return result.user;
+  throw new AuthUserAccessError(result.reason);
+}
+
+/**
+ * All authenticated handlers resolve persistent account and session state.
+ * A blocked identity throws instead of becoming a guest, preventing guest-path bypasses.
+ */
 export async function getRequestUser(request: Request): Promise<AppUser | null> {
   const identity = await verifiedSupabaseIdentity();
-  if (identity) {
-    return {
-      ...identity,
-      role: "preacher",
-      isAdmin: isAdminEmail(identity.email),
-    };
+  if (identity.kind === "authenticated") {
+    return userOrThrow(await persistAndResolveUser(identity.user));
+  }
+  if (identity.kind === "unavailable") {
+    throw new AuthUserAccessError("identity_unavailable");
   }
   return localDemoIfAllowed(new URL(request.url).host);
 }
@@ -196,8 +346,46 @@ export async function resolveRequestUser(
   options: UserResolutionOptions = {},
 ): Promise<AppUser | null> {
   const identity = await verifiedSupabaseIdentity();
-  if (identity) return persistAndResolveUser(identity);
+  if (identity.kind === "authenticated") {
+    return userOrThrow(await persistAndResolveUser(identity.user));
+  }
+  if (identity.kind === "unavailable") {
+    throw new AuthUserAccessError("identity_unavailable");
+  }
   return localDemoIfAllowed(new URL(request.url).host, options.demoRole);
+}
+
+export type RequestUserResponseResult =
+  | { user: AppUser | null }
+  | { response: Response };
+
+/** Route-handler adapter that turns only central account-access failures into HTTP responses. */
+export async function getRequestUserResponse(
+  request: Request,
+): Promise<RequestUserResponseResult> {
+  try {
+    return { user: await getRequestUser(request) };
+  } catch (error) {
+    if (error instanceof AuthUserAccessError) {
+      return { response: authUserAccessErrorResponse(error) };
+    }
+    throw error;
+  }
+}
+
+/** Role-aware variant of getRequestUserResponse. */
+export async function resolveRequestUserResponse(
+  request: Request,
+  options: UserResolutionOptions = {},
+): Promise<RequestUserResponseResult> {
+  try {
+    return { user: await resolveRequestUser(request, options) };
+  } catch (error) {
+    if (error instanceof AuthUserAccessError) {
+      return { response: authUserAccessErrorResponse(error) };
+    }
+    throw error;
+  }
 }
 
 export async function requirePageUser(
@@ -221,6 +409,13 @@ export function serviceUnavailableResponse(): Response {
   return Response.json(
     { error: "데이터 저장소에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요." },
     { status: 503 },
+  );
+}
+
+export function authUserAccessErrorResponse(error: AuthUserAccessError): Response {
+  return Response.json(
+    { error: error.message, code: error.reason },
+    { status: error.status, headers: { "Cache-Control": "no-store" } },
   );
 }
 

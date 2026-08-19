@@ -1,4 +1,4 @@
-import { resolveRequestUser, unauthorizedResponse } from "@/app/_lib/auth-user";
+import { resolveRequestUserResponse, unauthorizedResponse } from "@/app/_lib/auth-user";
 import {
   getPortOnePublicConfig,
   portOneCheckoutConfigured,
@@ -42,7 +42,9 @@ function paymentOrigin(request: Request): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const user = await resolveRequestUser(request);
+  const auth = await resolveRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
   if (!user) return unauthorizedResponse();
   const config = getPortOnePublicConfig();
   if (!config || !portOneCheckoutConfigured()) {
