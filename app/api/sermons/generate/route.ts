@@ -32,6 +32,7 @@ import {
 } from "@/app/_lib/managed-ai-engines";
 import { isAiEngineTier } from "@/app/_lib/ai-engine-tiers";
 import { verifyScriptureNormalizationGrant } from "@/app/_lib/scripture-normalization-grant";
+import { loadSermonPreacherContext } from "@/app/_lib/sermon-preacher-context";
 import { ensureDatabase, getD1 } from "@/db";
 import {
   SERMON_AUDIENCES,
@@ -40,6 +41,8 @@ import {
   SERMON_TYPES,
   durationToTargetCharacters,
   isSermonAlternative,
+  isSermonAudienceSituationValue,
+  isSermonTitleValue,
   isSermonToneValue,
   normalizeSermonAiTiers,
   type GenerateSermonsRequest,
@@ -48,6 +51,7 @@ import {
   type SermonDuration,
   type SermonGenerationPart,
   type SermonPointCount,
+  type SermonPreacherContext,
   type SermonType,
 } from "@/app/_lib/sermon-types";
 
@@ -144,6 +148,7 @@ async function generationSignature(
       tone: request.options.tone,
       sermonType: request.options.sermonType,
       audience: request.options.audience,
+      audienceSituation: request.options.audienceSituation,
       pointCount: request.options.pointCount,
       referenceMode: request.options.referenceMode,
     },
@@ -159,6 +164,7 @@ async function generationSignature(
           }
         : null,
     },
+    preacherContext: request.preacherContext ?? null,
   });
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -491,7 +497,7 @@ async function finalizeGeneration(args: {
       .prepare(
         `UPDATE sermon_drafts
          SET topic = ?, scripture = ?, sermon_type = ?, audience = ?,
-             point_count = ?, duration = ?, emotion = ?, reference_mode = ?,
+             audience_situation = ?, point_count = ?, duration = ?, emotion = ?, reference_mode = ?,
              status = 'alternatives_ready', active_generation_id = NULL,
              selected_alternative_id = NULL, revision_count = 0, updated_at = ?
          WHERE id = ? AND user_id = ? AND active_generation_id = ?`,
@@ -501,6 +507,7 @@ async function finalizeGeneration(args: {
         args.request.scripture,
         args.request.options.sermonType,
         args.request.options.audience,
+        args.request.options.audienceSituation,
         args.request.options.pointCount,
         args.request.options.duration,
         args.request.options.tone,
@@ -657,8 +664,8 @@ export async function POST(request: Request): Promise<Response> {
   if (!input.draftId || typeof input.draftId !== "string") {
     return error("설교 작업 식별자가 없습니다.");
   }
-  if (!options || options.topic.trim().length < 2 || options.topic.length > 100) {
-    return error("설교 주제를 2자 이상 100자 이하로 입력해 주세요.");
+  if (!options || !isSermonTitleValue(options.topic)) {
+    return error("설교 제목을 2자 이상 100자 이하로 입력해 주세요.");
   }
   const suppliedAiTiers = (options as { aiTiers?: unknown }).aiTiers;
   if (
@@ -688,8 +695,16 @@ export async function POST(request: Request): Promise<Response> {
   if (!isOneOf(options.audience, SERMON_AUDIENCES)) {
     return error("설교 대상을 다시 선택해 주세요.");
   }
+  if (!isSermonAudienceSituationValue(options.audienceSituation)) {
+    return error(
+      "청중 상황은 2자 이상 40자 이하로 선택하거나 입력해 주세요.",
+    );
+  }
   if (!isOneOf(options.pointCount, SERMON_POINT_COUNTS)) {
     return error("대지 수는 1개부터 4개까지 선택할 수 있습니다.");
+  }
+  if (options.referenceMode !== "auto" && options.referenceMode !== "manual") {
+    return error("참고 자료 사용 방식을 다시 선택해 주세요.");
   }
   if (!validScriptureInput(scripture)) {
     return error("책 이름과 장·절을 120자 이하로 입력해 주세요.");
@@ -771,6 +786,22 @@ export async function POST(request: Request): Promise<Response> {
         .filter(Boolean)
         .slice(0, 4)
     : [];
+  let preacherContext: SermonPreacherContext | undefined;
+  if (db && user && !user.isDemo) {
+    try {
+      await ensureDatabase(db);
+      preacherContext = await loadSermonPreacherContext(
+        db,
+        user.id,
+        user.isDemo,
+      );
+    } catch {
+      return error(
+        "저장된 신학 설정을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        503,
+      );
+    }
+  }
   const duration = options.duration as SermonDuration;
   const pointCount = options.pointCount as SermonPointCount;
   const normalized: GenerateSermonsRequest = {
@@ -779,8 +810,8 @@ export async function POST(request: Request): Promise<Response> {
     ...(position ? { alternativePosition: position } : {}),
     existingTitles,
     scripture,
+    ...(preacherContext ? { preacherContext } : {}),
     options: {
-      ...options,
       topic: options.topic.trim(),
       aiTier: aiTiers[0],
       aiTiers,
@@ -789,7 +820,9 @@ export async function POST(request: Request): Promise<Response> {
       tone: options.tone.trim(),
       sermonType: options.sermonType as SermonType,
       audience: options.audience as SermonAudience,
+      audienceSituation: options.audienceSituation.trim(),
       pointCount,
+      referenceMode: options.referenceMode,
     },
     reference: {
       url: reference.url?.trim().slice(0, 2048) ?? "",
@@ -885,10 +918,10 @@ export async function POST(request: Request): Promise<Response> {
             db
               .prepare(
                 `INSERT INTO sermon_drafts
-                  (id, user_id, topic, scripture, sermon_type, audience, point_count,
+                  (id, user_id, topic, scripture, sermon_type, audience, audience_situation, point_count,
                    duration, emotion, reference_mode, status, active_generation_id,
                    selected_alternative_id, revision_count, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'generating', ?, NULL, 0, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'generating', ?, NULL, 0, ?, ?)
                  ON CONFLICT(id) DO NOTHING`,
               )
               .bind(
@@ -898,6 +931,7 @@ export async function POST(request: Request): Promise<Response> {
                 normalized.scripture,
                 normalized.options.sermonType,
                 normalized.options.audience,
+                normalized.options.audienceSituation,
                 normalized.options.pointCount,
                 normalized.options.duration,
                 normalized.options.tone,
@@ -1668,13 +1702,14 @@ export async function POST(request: Request): Promise<Response> {
           db
             .prepare(
               `INSERT INTO sermon_drafts
-                (id, user_id, topic, scripture, sermon_type, audience, point_count,
+                (id, user_id, topic, scripture, sermon_type, audience, audience_situation, point_count,
                  duration, emotion, reference_mode, status, selected_alternative_id,
                  revision_count, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alternatives_ready', NULL, 0, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alternatives_ready', NULL, 0, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  topic=excluded.topic, scripture=excluded.scripture,
                  sermon_type=excluded.sermon_type, audience=excluded.audience,
+                 audience_situation=excluded.audience_situation,
                  point_count=excluded.point_count, duration=excluded.duration,
                  emotion=excluded.emotion, reference_mode=excluded.reference_mode,
                  status='alternatives_ready', selected_alternative_id=NULL,
@@ -1687,6 +1722,7 @@ export async function POST(request: Request): Promise<Response> {
               normalized.scripture,
               normalized.options.sermonType,
               normalized.options.audience,
+              normalized.options.audienceSituation,
               normalized.options.pointCount,
               normalized.options.duration,
               normalized.options.tone,

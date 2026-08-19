@@ -112,6 +112,7 @@ export function SermonComplete() {
           scripture: sermon.scripture,
           sermonType: draft.options.sermonType,
           audience: draft.options.audience,
+          audienceSituation: draft.options.audienceSituation,
           pointCount: sermon.sections.points.length,
           duration: draft.options.duration,
           emotion: draft.options.tone,
@@ -243,6 +244,43 @@ export function SermonComplete() {
         <div className="sermon-inline-alert is-success" role="status" aria-live="polite">
           <strong>{downloadNotice}</strong>
         </div>
+      ) : null}
+
+      {draft.saveMode === "server" && draft.savedSermonId ? (
+        <section
+          className="mt-6 rounded-[1.6rem] border border-[#d7d0c5] bg-[#f7f2e9] p-5 shadow-[0_14px_36px_rgba(39,50,44,.06)] sm:p-7"
+          aria-labelledby="follow-up-tools-title"
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="sermon-eyebrow">Continue your preparation</p>
+              <h3 id="follow-up-tools-title" className="mt-1 font-serif text-2xl font-bold text-[#294238]">
+                완성한 설교를 더 깊고 넓게 활용하세요
+              </h3>
+            </div>
+            <p className="max-w-xl text-sm leading-6 text-[#68756e]">
+              저장된 원고를 다시 선택할 필요 없이 본문 연구와 사역 자료 제작으로 이어갈 수 있습니다.
+            </p>
+          </div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <Link
+              href={`/study?sermonId=${encodeURIComponent(draft.savedSermonId)}`}
+              className="group rounded-2xl border border-[#cfd8d1] bg-white p-5 transition hover:-translate-y-0.5 hover:border-[#8da497] hover:shadow-[0_12px_26px_rgba(39,50,44,.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
+            >
+              <span className="text-[10px] font-extrabold tracking-[0.14em] text-[#8b5a31] uppercase">04 · Study</span>
+              <strong className="mt-2 block font-serif text-lg text-[#294238]">스터디로 이어가기</strong>
+              <small className="mt-1 block text-xs leading-5 text-[#748079]">원문, 배경과 구조를 더 깊이 살펴봅니다.</small>
+            </Link>
+            <Link
+              href={`/ministry?sermonId=${encodeURIComponent(draft.savedSermonId)}`}
+              className="group rounded-2xl border border-[#d9cdbd] bg-white p-5 transition hover:-translate-y-0.5 hover:border-[#b69368] hover:shadow-[0_12px_26px_rgba(39,50,44,.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
+            >
+              <span className="text-[10px] font-extrabold tracking-[0.14em] text-[#8b5a31] uppercase">05 · Ministry</span>
+              <strong className="mt-2 block font-serif text-lg text-[#294238]">사역 활용으로 이어가기</strong>
+              <small className="mt-1 block text-xs leading-5 text-[#748079]">질문지, 주보 요약과 숏폼 문구를 만듭니다.</small>
+            </Link>
+          </div>
+        </section>
       ) : null}
 
       <article className="sermon-manuscript sermon-final-manuscript">

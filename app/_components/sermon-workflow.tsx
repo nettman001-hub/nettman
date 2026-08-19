@@ -183,7 +183,7 @@ export function SermonWorkflowShell({ children }: { children: ReactNode }) {
     <div className="sermon-workspace">
       <header className="sermon-workspace-header">
         <div>
-          <p className="sermon-eyebrow">Sermon studio</p>
+          <p className="sermon-eyebrow">LOGOS AI</p>
           <h1>새 설교 준비</h1>
         </div>
         <p className="sermon-workspace-note">
@@ -309,9 +309,15 @@ export function OptionBadges({ draft }: { draft: SermonDraft }) {
     { key: "engine", label: `AI ${AI_ENGINE_TIER_META[selectedTier].label}` },
     { key: "type", label: draft.options.sermonType },
     { key: "audience", label: draft.options.audience },
+    { key: "audience-situation", label: draft.options.audienceSituation },
     {
       key: "points",
-      label: draft.options.pointCount ? `${draft.options.pointCount}대지` : "",
+      label:
+        draft.options.pointCount === 1
+          ? "1포인트"
+          : draft.options.pointCount
+            ? `${draft.options.pointCount}대지`
+            : "",
     },
     {
       key: "duration",

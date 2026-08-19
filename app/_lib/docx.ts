@@ -32,7 +32,7 @@ function createDocumentXml(sermon: SermonRecord): string {
   <w:body>
     ${paragraph(sermon.scripture, { color: "B95038", size: 22, bold: true, after: 120 })}
     ${paragraph(sermon.title, { size: 42, bold: true, after: 160 })}
-    ${paragraph(`${sermon.sermonType} · ${sermon.audience} · ${sermon.duration}분`, { color: "68756F", size: 19, after: 360 })}
+    ${paragraph(`${sermon.sermonType} · ${sermon.audience} · ${sermon.audienceSituation || "일반"} · ${sermon.duration}분`, { color: "68756F", size: 19, after: 360 })}
     ${heading("도입", 28)}${paragraphs(sermon.sections.introduction)}
     ${body}
     ${heading("결론", 28)}${paragraphs(sermon.sections.conclusion)}

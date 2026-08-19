@@ -8,7 +8,7 @@ import { AdminAiEngineSettingsForm } from "./admin-ai-engine-settings-form";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "AI 엔진 관리 | 설교가이드",
+  title: "AI 엔진 관리 | 로고스AI",
   description: "관리자가 서비스 등급별 AI 엔진, 모델과 API 키를 설정합니다.",
 };
 

@@ -130,7 +130,21 @@ export function loadSermonDraft(id: string): SermonDraft | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SermonDraft>;
     if (parsed.id !== id || !parsed.options || !parsed.reference) return null;
-    const options = { ...EMPTY_SERMON_OPTIONS, ...parsed.options };
+    const storedAudienceSituation = (
+      parsed.options as { audienceSituation?: unknown }
+    ).audienceSituation;
+    const options = {
+      ...EMPTY_SERMON_OPTIONS,
+      ...parsed.options,
+      // Drafts saved before audience situations were introduced remain usable
+      // with the neutral default instead of being silently discarded.
+      audienceSituation:
+        typeof storedAudienceSituation === "string"
+          ? storedAudienceSituation.trim()
+          : storedAudienceSituation === undefined
+            ? "일반"
+            : "",
+    };
     const aiTiers = normalizeSermonAiTiers(options);
     const storedScripture =
       typeof parsed.scripture === "string" ? parsed.scripture.trim() : "";
@@ -339,6 +353,7 @@ export function completedDraftToRecord(draft: SermonDraft): SermonRecord | null 
         : selected.scripture,
     sermonType: draft.options.sermonType || "강해",
     audience: draft.options.audience || "청장년",
+    audienceSituation: draft.options.audienceSituation || "일반",
     pointCount: selected.sections.points.length,
     duration: draft.options.duration || 20,
     emotion: draft.options.tone || "위로",

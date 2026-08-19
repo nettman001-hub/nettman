@@ -14,16 +14,22 @@ import {
 } from "@/app/_lib/sermon-token-pricing";
 import {
   EMPTY_SERMON_OPTIONS,
+  MAX_SERMON_AUDIENCE_SITUATION_LENGTH,
+  MAX_SERMON_TITLE_LENGTH,
   MAX_SERMON_TONE_LENGTH,
+  SERMON_AUDIENCE_SITUATIONS,
   SERMON_AUDIENCES,
   SERMON_DURATIONS,
   SERMON_POINT_COUNTS,
   SERMON_TONES,
   SERMON_TYPES,
   durationToTargetCharacters,
+  isSermonAudienceSituationValue,
   isSermonOptionsComplete,
+  isSermonTitleValue,
   isSermonToneValue,
   normalizeSermonAiTiers,
+  type SermonAudienceSituation,
   type SermonOptions as SermonOptionsValue,
   type SermonTone,
 } from "@/app/_lib/sermon-types";
@@ -84,6 +90,7 @@ function normalizedOptions(value: SermonOptionsValue): SermonOptionsValue {
   return {
     ...value,
     topic: value.topic.trim(),
+    audienceSituation: value.audienceSituation.trim(),
     tone: value.tone.trim(),
     aiTier: aiTiers[0],
     aiTiers,
@@ -103,6 +110,8 @@ export function SermonOptions() {
   const [submitted, setSubmitted] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [savedMessage, setSavedMessage] = useState("");
+  const [customAudienceSituationSelected, setCustomAudienceSituationSelected] =
+    useState(false);
   const [customToneSelected, setCustomToneSelected] = useState(false);
   const createdRef = useRef(false);
 
@@ -118,6 +127,12 @@ export function SermonOptions() {
     if (!draft || dirty) return;
     const aiTiers = normalizeSermonAiTiers(draft.options);
     setForm({ ...draft.options, aiTier: aiTiers[0], aiTiers });
+    setCustomAudienceSituationSelected(
+      Boolean(draft.options.audienceSituation) &&
+        !SERMON_AUDIENCE_SITUATIONS.some(
+          (situation) => situation === draft.options.audienceSituation,
+        ),
+    );
     setCustomToneSelected(
       Boolean(draft.options.tone) &&
         !SERMON_TONES.some((tone) => tone === draft.options.tone),
@@ -136,19 +151,37 @@ export function SermonOptions() {
   const errors = useMemo(
     () => ({
       topic:
-        form.topic.trim().length >= 2 ? "" : "주제를 2자 이상 입력해 주세요.",
-      duration: form.duration ? "" : "설교 분량을 선택해 주세요.",
+        isSermonTitleValue(form.topic)
+          ? ""
+          : "설교 제목을 2자 이상 100자 이하로 입력해 주세요.",
+      duration: SERMON_DURATIONS.some((duration) => duration === form.duration)
+        ? ""
+        : "설교 분량을 선택해 주세요.",
       tone: isSermonToneValue(form.tone)
         ? ""
         : "감정선을 선택하거나 2자 이상 40자 이하로 직접 입력해 주세요.",
-      sermonType: form.sermonType ? "" : "설교 유형을 선택해 주세요.",
-      audience: form.audience ? "" : "설교 대상을 선택해 주세요.",
-      pointCount: form.pointCount ? "" : "대지 수를 선택해 주세요.",
+      sermonType: SERMON_TYPES.some((sermonType) => sermonType === form.sermonType)
+        ? ""
+        : "설교 유형을 선택해 주세요.",
+      audience: SERMON_AUDIENCES.some((audience) => audience === form.audience)
+        ? ""
+        : "설교 대상을 선택해 주세요.",
+      audienceSituation: isSermonAudienceSituationValue(form.audienceSituation)
+        ? ""
+        : "청중 상황을 선택하거나 2자 이상 40자 이하로 직접 입력해 주세요.",
+      pointCount: SERMON_POINT_COUNTS.some(
+        (pointCount) => pointCount === form.pointCount,
+      )
+        ? ""
+        : "설교 구성을 선택해 주세요.",
     }),
     [form],
   );
   const valid = isSermonOptionsComplete(form);
   const showToneError = submitted || (customToneSelected && form.tone.length > 0);
+  const showAudienceSituationError =
+    submitted ||
+    (customAudienceSituationSelected && form.audienceSituation.length > 0);
   const estimatedTokenCost =
     form.duration && form.pointCount
       ? sermonGenerationTokenCost(form.aiTier, form.duration, form.pointCount)
@@ -184,6 +217,26 @@ export function SermonOptions() {
     }
     setCustomToneSelected(false);
     change("tone", tone);
+  };
+
+  const selectAudienceSituation = (
+    situation: SermonAudienceSituation | "기타",
+  ) => {
+    if (situation === "기타") {
+      setCustomAudienceSituationSelected(true);
+      setDirty(true);
+      setSavedMessage("");
+      if (
+        SERMON_AUDIENCE_SITUATIONS.some(
+          (preset) => preset === form.audienceSituation,
+        )
+      ) {
+        change("audienceSituation", "");
+      }
+      return;
+    }
+    setCustomAudienceSituationSelected(false);
+    change("audienceSituation", situation);
   };
 
   const save = (moveNext: boolean) => {
@@ -244,26 +297,26 @@ export function SermonOptions() {
             <span>01</span>
             <div>
               <h3 id="basic-options-title">기본 옵션</h3>
-              <p>무엇을, 어떤 유형과 호흡으로 전할지 정합니다.</p>
+              <p>제목, 유형, 분량과 본론의 구성을 정합니다.</p>
             </div>
           </div>
 
           <div className="sermon-field">
             <label htmlFor="sermon-topic">
-              설교 주제 <span aria-hidden="true">*</span>
+              설교 제목 <span aria-hidden="true">*</span>
             </label>
             <input
               id="sermon-topic"
               value={form.topic}
-              maxLength={100}
+              maxLength={MAX_SERMON_TITLE_LENGTH}
               onChange={(event) => change("topic", event.target.value)}
-              placeholder="예: 하나님의 사랑, 성령의 열매"
+              placeholder="예: 하나님의 사랑으로 다시 걷는 길"
               aria-invalid={submitted && Boolean(errors.topic)}
               aria-describedby={submitted && errors.topic ? "topic-error" : "topic-hint"}
             />
             <div className="sermon-field-meta">
-              <span id="topic-hint">핵심 메시지가 드러나는 짧은 문장을 권합니다.</span>
-              <span>{form.topic.length}/100</span>
+              <span id="topic-hint">핵심 메시지가 드러나는 짧은 제목을 권합니다.</span>
+              <span>{form.topic.length}/{MAX_SERMON_TITLE_LENGTH}</span>
             </div>
             {submitted && errors.topic ? (
               <p id="topic-error" className="sermon-field-error" role="alert">
@@ -279,7 +332,7 @@ export function SermonOptions() {
             options={SERMON_DURATIONS}
             onChange={(value) => change("duration", value)}
             format={(value) => `${value}분`}
-            hint="내부적으로 1,600~8,000자의 목표 분량으로 변환됩니다."
+            hint="내부적으로 3,000~8,000자의 목표 분량으로 변환됩니다."
             error={submitted ? errors.duration : ""}
           />
           <ChoiceGroup
@@ -290,6 +343,16 @@ export function SermonOptions() {
             onChange={(value) => change("sermonType", value)}
             error={submitted ? errors.sermonType : ""}
           />
+          <ChoiceGroup
+            legend="설교 구성"
+            name="point-count"
+            value={form.pointCount}
+            options={SERMON_POINT_COUNTS}
+            onChange={(value) => change("pointCount", value)}
+            format={(value) => (value === 1 ? "1포인트" : `${value}대지`)}
+            hint="선택한 수만큼 본론 소제목이 만들어집니다."
+            error={submitted ? errors.pointCount : ""}
+          />
         </section>
 
         <section className="sermon-form-card" aria-labelledby="structure-options-title">
@@ -297,7 +360,7 @@ export function SermonOptions() {
             <span>02</span>
             <div>
               <h3 id="structure-options-title">구성 옵션</h3>
-              <p>회중, 본론의 뼈대와 메시지의 감정선을 선택합니다.</p>
+              <p>회중과 현장의 상황, 메시지의 감정선을 선택합니다.</p>
             </div>
           </div>
           <ChoiceGroup
@@ -308,16 +371,96 @@ export function SermonOptions() {
             onChange={(value) => change("audience", value)}
             error={submitted ? errors.audience : ""}
           />
-          <ChoiceGroup
-            legend="대지 수"
-            name="point-count"
-            value={form.pointCount}
-            options={SERMON_POINT_COUNTS}
-            onChange={(value) => change("pointCount", value)}
-            format={(value) => `${value}대지`}
-            hint="선택한 수만큼 본론 소제목이 만들어집니다."
-            error={submitted ? errors.pointCount : ""}
-          />
+          <fieldset
+            className="sermon-fieldset"
+            aria-describedby={
+              showAudienceSituationError && errors.audienceSituation
+                ? "audience-situation-error"
+                : undefined
+            }
+          >
+            <legend>
+              청중 상황 <span aria-hidden="true">*</span>
+            </legend>
+            <p className="sermon-field-hint">현장에 맞는 상황을 고르거나 직접 적어 주세요.</p>
+            <div className="sermon-choice-grid">
+              {SERMON_AUDIENCE_SITUATIONS.map((situation) => (
+                <label
+                  key={situation}
+                  className={
+                    !customAudienceSituationSelected &&
+                    form.audienceSituation === situation
+                      ? "is-selected"
+                      : ""
+                  }
+                >
+                  <input
+                    type="radio"
+                    name="audience-situation-mode"
+                    value={situation}
+                    checked={
+                      !customAudienceSituationSelected &&
+                      form.audienceSituation === situation
+                    }
+                    onChange={() => selectAudienceSituation(situation)}
+                  />
+                  <span>{situation}</span>
+                </label>
+              ))}
+              <label className={customAudienceSituationSelected ? "is-selected" : ""}>
+                <input
+                  type="radio"
+                  name="audience-situation-mode"
+                  value="기타"
+                  checked={customAudienceSituationSelected}
+                  onChange={() => selectAudienceSituation("기타")}
+                />
+                <span>기타</span>
+              </label>
+            </div>
+            {customAudienceSituationSelected ? (
+              <div className="sermon-field sermon-custom-tone-input">
+                <label htmlFor="custom-audience-situation">청중 상황 직접 입력</label>
+                <input
+                  id="custom-audience-situation"
+                  value={form.audienceSituation}
+                  maxLength={MAX_SERMON_AUDIENCE_SITUATION_LENGTH}
+                  onChange={(event) =>
+                    change("audienceSituation", event.target.value)
+                  }
+                  placeholder="예: 은퇴를 앞둔 성도들"
+                  aria-invalid={
+                    showAudienceSituationError &&
+                    Boolean(errors.audienceSituation)
+                  }
+                  aria-describedby={
+                    showAudienceSituationError && errors.audienceSituation
+                      ? "audience-situation-error"
+                      : "custom-audience-situation-hint"
+                  }
+                />
+                <div
+                  className="sermon-field-meta"
+                  id="custom-audience-situation-hint"
+                >
+                  <span>2~40자의 짧고 구체적인 상황을 권합니다.</span>
+                  <span>
+                    {form.audienceSituation.length}/
+                    {MAX_SERMON_AUDIENCE_SITUATION_LENGTH}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+            {showAudienceSituationError && errors.audienceSituation ? (
+              <p
+                className="sermon-field-error"
+                id="audience-situation-error"
+                role="alert"
+              >
+                {errors.audienceSituation}
+              </p>
+            ) : null}
+          </fieldset>
           <fieldset
             className="sermon-fieldset"
             aria-describedby={showToneError && errors.tone ? "tone-error" : undefined}

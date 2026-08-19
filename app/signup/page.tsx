@@ -8,8 +8,8 @@ import { SignupForm } from "./signup-form";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "회원가입 | 설교가이드",
-  description: "이메일 인증 또는 Google 계정으로 설교가이드 계정을 만듭니다.",
+  title: "회원가입 | 로고스AI",
+  description: "이메일 인증 또는 Google 계정으로 로고스AI 계정을 만듭니다.",
 };
 
 export default async function SignupPage() {

@@ -5,6 +5,7 @@ const protectedTables = [
   "user_profiles",
   "user_ai_preferences",
   "managed_ai_usage",
+  "sermon_resource_usage",
   "token_wallets",
   "token_transactions",
   "token_topups",

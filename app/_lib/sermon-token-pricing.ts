@@ -1,6 +1,6 @@
 import type { AiEngineTier } from "./ai-engine-tiers.ts";
 
-export const SERMON_PRICING_DURATIONS = [5, 10, 20, 30] as const;
+export const SERMON_PRICING_DURATIONS = [10, 15, 20, 25, 30] as const;
 export const SERMON_PRICING_POINT_COUNTS = [1, 2, 3, 4] as const;
 
 export type SermonPricingDuration = (typeof SERMON_PRICING_DURATIONS)[number];
@@ -14,14 +14,14 @@ export const SERMON_TOKEN_ENGINE_MULTIPLIERS: Record<AiEngineTier, number> = {
 };
 
 export const SERMON_TOKEN_MINIMUM_COSTS: Record<AiEngineTier, number> = {
-  basic: 10,
-  advanced: 20,
-  reasoning: 40,
+  basic: 15,
+  advanced: 30,
+  reasoning: 60,
 };
 
 /**
  * One token quote covers one complete generation run, including all five drafts.
- * The minimum is a 5-minute, 1-point sermon. Each extra main point adds two base
+ * The minimum is a 10-minute, 1-point sermon. Each extra main point adds two base
  * units before the selected engine multiplier is applied.
  */
 export function sermonGenerationTokenCost(
@@ -30,5 +30,8 @@ export function sermonGenerationTokenCost(
   pointCount: SermonPricingPointCount,
 ): number {
   const baseUnits = duration + 5 + 2 * (pointCount - 1);
-  return Math.max(10, SERMON_TOKEN_ENGINE_MULTIPLIERS[tier] * baseUnits);
+  return Math.max(
+    SERMON_TOKEN_MINIMUM_COSTS[tier],
+    SERMON_TOKEN_ENGINE_MULTIPLIERS[tier] * baseUnits,
+  );
 }

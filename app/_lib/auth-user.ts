@@ -27,6 +27,7 @@ const USER_OWNER_COLUMNS = [
   ["user_profiles", "user_id"],
   ["user_ai_preferences", "user_id"],
   ["managed_ai_usage", "user_id"],
+  ["sermon_resource_usage", "user_id"],
   ["token_wallets", "user_id"],
   ["token_transactions", "user_id"],
   ["token_topups", "user_id"],

@@ -4,11 +4,25 @@ import {
   type AiEngineTier,
 } from "./ai-engine-tiers.ts";
 
-export const SERMON_DURATIONS = [5, 10, 20, 30] as const;
-export const SERMON_TONES = ["위로", "도전", "감동", "경고"] as const;
+export const SERMON_DURATIONS = [10, 15, 20, 25, 30] as const;
+export const MAX_SERMON_TITLE_LENGTH = 100;
+export const SERMON_TONES = ["위로", "도전", "권면"] as const;
 export const MAX_SERMON_TONE_LENGTH = 40;
 export const SERMON_TYPES = ["강해", "주제", "내러티브"] as const;
-export const SERMON_AUDIENCES = ["청장년", "대학부", "청소년", "초등부"] as const;
+export const SERMON_AUDIENCES = ["청소년", "청년", "청장년", "장년"] as const;
+export const SERMON_AUDIENCE_SITUATIONS = [
+  "일반",
+  "장례",
+  "개업",
+  "취업",
+  "이사",
+  "결혼",
+  "출산",
+  "자녀",
+  "학업",
+  "진로",
+] as const;
+export const MAX_SERMON_AUDIENCE_SITUATION_LENGTH = 40;
 export const SERMON_POINT_COUNTS = [1, 2, 3, 4] as const;
 export const SERMON_ALTERNATIVE_POSITIONS = [1, 2, 3, 4, 5] as const;
 
@@ -16,6 +30,8 @@ export type SermonDuration = (typeof SERMON_DURATIONS)[number];
 export type SermonTone = (typeof SERMON_TONES)[number];
 export type SermonType = (typeof SERMON_TYPES)[number];
 export type SermonAudience = (typeof SERMON_AUDIENCES)[number];
+export type SermonAudienceSituation =
+  (typeof SERMON_AUDIENCE_SITUATIONS)[number];
 export type SermonPointCount = (typeof SERMON_POINT_COUNTS)[number];
 export type SermonAlternativePosition =
   (typeof SERMON_ALTERNATIVE_POSITIONS)[number];
@@ -57,6 +73,8 @@ export type SermonOptions = {
   tone: string;
   sermonType: SermonType | "";
   audience: SermonAudience | "";
+  /** 기본 청중 상황 또는 사용자가 '기타'에 입력한 짧은 상황입니다. */
+  audienceSituation: string;
   pointCount: SermonPointCount | null;
   referenceMode: ReferenceMode;
 };
@@ -163,6 +181,17 @@ export type SermonDraft = {
   saveMode: "server" | "local" | null;
 };
 
+/**
+ * Authentication-bound pastoral settings that only a server route may attach
+ * to an AI request. Contact details deliberately do not belong to this type.
+ */
+export type SermonPreacherContext = {
+  denomination?: string;
+  theology?: string;
+  ministryRole?: string;
+  church?: string;
+};
+
 export type GenerateSermonsRequest = {
   draftId: string;
   clientUserScope?: string;
@@ -175,6 +204,8 @@ export type GenerateSermonsRequest = {
   scripture: string;
   scriptureNormalizationGrant?: string;
   reference: SermonReference;
+  /** Server-derived only. Routes must ignore a client-supplied value. */
+  preacherContext?: SermonPreacherContext;
   ai?: AiRequestConfig;
 };
 
@@ -201,6 +232,8 @@ export type ReviseSermonRequest = {
   instruction: string;
   toneAdjustment: string;
   revisionCount: number;
+  /** Server-derived only. Routes must ignore a client-supplied value. */
+  preacherContext?: SermonPreacherContext;
   ai?: AiRequestConfig;
 };
 
@@ -221,6 +254,7 @@ export const EMPTY_SERMON_OPTIONS: SermonOptions = {
   tone: "",
   sermonType: "",
   audience: "",
+  audienceSituation: "",
   pointCount: null,
   referenceMode: "auto",
 };
@@ -232,7 +266,9 @@ export const EMPTY_SERMON_REFERENCE: SermonReference = {
 };
 
 export function durationToTargetCharacters(duration: SermonDuration): number {
-  return ({ 5: 1600, 10: 3000, 20: 5000, 30: 8000 } as const)[duration];
+  return ({ 10: 3000, 15: 4000, 20: 5000, 25: 6500, 30: 8000 } as const)[
+    duration
+  ];
 }
 
 export function normalizeSermonAiTiers(value: {
@@ -250,11 +286,25 @@ export function normalizeSermonAiTiers(value: {
 }
 
 export function isSermonToneValue(value: unknown): value is string {
+  return isShortSafeOption(value, MAX_SERMON_TONE_LENGTH);
+}
+
+export function isSermonTitleValue(value: unknown): value is string {
+  return isShortSafeOption(value, MAX_SERMON_TITLE_LENGTH);
+}
+
+export function isSermonAudienceSituationValue(
+  value: unknown,
+): value is string {
+  return isShortSafeOption(value, MAX_SERMON_AUDIENCE_SITUATION_LENGTH);
+}
+
+function isShortSafeOption(value: unknown, maximumLength: number): value is string {
   if (typeof value !== "string") return false;
   const normalized = value.trim();
   return (
     normalized.length >= 2 &&
-    normalized.length <= MAX_SERMON_TONE_LENGTH &&
+    normalized.length <= maximumLength &&
     ![...normalized].some((character) => {
       const code = character.charCodeAt(0);
       return code <= 31 || code === 127;
@@ -271,14 +321,15 @@ export function sermonAiTierForPosition(
 
 export function isSermonOptionsComplete(options: SermonOptions): boolean {
   return (
-    options.topic.trim().length >= 2 &&
+    isSermonTitleValue(options.topic) &&
     isAiEngineTier(options.aiTier) &&
     normalizeSermonAiTiers(options).every(isAiEngineTier) &&
-    options.duration !== null &&
+    SERMON_DURATIONS.includes(options.duration as SermonDuration) &&
     isSermonToneValue(options.tone) &&
-    options.sermonType !== "" &&
-    options.audience !== "" &&
-    options.pointCount !== null
+    SERMON_TYPES.includes(options.sermonType as SermonType) &&
+    SERMON_AUDIENCES.includes(options.audience as SermonAudience) &&
+    isSermonAudienceSituationValue(options.audienceSituation) &&
+    SERMON_POINT_COUNTS.includes(options.pointCount as SermonPointCount)
   );
 }
 

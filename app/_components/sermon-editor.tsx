@@ -192,6 +192,7 @@ export function SermonEditor() {
           scripture: selected.scripture,
           sermonType: draft.options.sermonType,
           audience: draft.options.audience,
+          audienceSituation: draft.options.audienceSituation,
           pointCount: selected.sections.points.length,
           duration: draft.options.duration,
           emotion: draft.options.tone,
@@ -252,7 +253,7 @@ export function SermonEditor() {
           keepalive: true,
         });
         if ("Notification" in window && window.Notification.permission === "granted") {
-          new window.Notification("설교가이드", {
+          new window.Notification("로고스AI", {
             body: `설교 ‘${selected.title}’이 완성되어 저장되었습니다.`,
             icon: "/favicon.svg",
             tag: `sermon-complete-${savedSermonId}`,

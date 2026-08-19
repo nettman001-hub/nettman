@@ -36,14 +36,14 @@ export function ExpertDashboard() {
         error?: string;
       } | null;
       if (!response.ok || !Array.isArray(payload?.items)) {
-        throw new Error(payload?.error ?? "상담 목록을 불러오지 못했습니다.");
+        throw new Error(payload?.error ?? "피드백 목록을 불러오지 못했습니다.");
       }
       setItems(payload.items);
       setState("ready");
       setError("");
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
-      setError(caught instanceof Error ? caught.message : "상담 목록을 불러오지 못했습니다.");
+      setError(caught instanceof Error ? caught.message : "피드백 목록을 불러오지 못했습니다.");
       setState("error");
     }
   }, []);
@@ -77,7 +77,7 @@ export function ExpertDashboard() {
     }
     setItems((current) =>
       current.map((item) =>
-        item.id === id ? { ...item, status: "assigned", expertName: "내 상담" } : item,
+        item.id === id ? { ...item, status: "assigned", expertName: "내 피드백" } : item,
       ),
     );
     setAssigningId(null);
@@ -93,8 +93,8 @@ export function ExpertDashboard() {
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-8 lg:px-12 lg:py-11">
       <AppPageHeading
         eyebrow="Expert workspace"
-        title="목회 코치 상담실"
-        description="대기 중인 상담을 맡고, 내게 배정된 설교에 근거 있는 피드백을 전합니다."
+        title="설교 피드백실"
+        description="대기 중인 요청을 맡고, 내게 배정된 설교에 근거 있는 피드백을 전합니다."
         action={
           <span className="inline-flex rounded-full border border-[#b8cebf] bg-[#e4eee7] px-4 py-2 text-xs font-extrabold text-[#315746]">
             전문가 계정
@@ -102,10 +102,10 @@ export function ExpertDashboard() {
         }
       />
 
-      <section className="mt-6 grid gap-4 sm:grid-cols-3" aria-label="전문가 상담 현황">
+      <section className="mt-6 grid gap-4 sm:grid-cols-3" aria-label="설교 피드백 현황">
         {[
           ["배정 대기", waiting],
-          ["내 상담 진행", ongoing],
+          ["내 피드백 진행", ongoing],
           ["완료", completed],
         ].map(([label, value], index) => (
           <div
@@ -128,7 +128,7 @@ export function ExpertDashboard() {
             <p className="text-[10px] font-extrabold tracking-[0.17em] text-[#a56732] uppercase">
               Review queue
             </p>
-            <h2 className="mt-1.5 font-serif text-2xl font-bold text-[#254238]">상담 목록</h2>
+            <h2 className="mt-1.5 font-serif text-2xl font-bold text-[#254238]">피드백 목록</h2>
           </div>
           <div className="inline-flex self-start rounded-xl bg-[#efede7] p-1" role="tablist">
             {(["active", "completed"] as const).map((value) => (
@@ -165,7 +165,7 @@ export function ExpertDashboard() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="mt-5 rounded-2xl border border-dashed border-[#ccc5b9] bg-[#faf8f3] px-5 py-10 text-center text-sm font-bold text-[#34463e]">
-            표시할 상담이 없습니다.
+            표시할 피드백이 없습니다.
           </div>
         ) : (
           <ul className="mt-5 divide-y divide-[#e5e0d7]">
@@ -195,7 +195,7 @@ export function ExpertDashboard() {
                     onClick={() => void assign(item.id)}
                     className="min-h-11 rounded-xl bg-[#315746] px-4 text-xs font-extrabold text-white hover:bg-[#25483a] disabled:cursor-wait disabled:opacity-60"
                   >
-                    {assigningId === item.id ? "배정 중…" : "이 상담 맡기"}
+                    {assigningId === item.id ? "배정 중…" : "이 피드백 맡기"}
                   </button>
                 ) : (
                   <a href={`/expert/${encodeURIComponent(item.id)}`} className="px-3 text-xs font-extrabold text-[#8a592f]">

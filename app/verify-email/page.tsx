@@ -5,7 +5,7 @@ import { hasSupabasePublicConfig } from "@/app/_lib/supabase/config";
 import { VerifyEmailForm } from "./verify-email-form";
 
 export const metadata: Metadata = {
-  title: "이메일 인증 | 설교가이드",
+  title: "이메일 인증 | 로고스AI",
   description: "회원가입 이메일을 확인하고 계정을 활성화합니다.",
 };
 

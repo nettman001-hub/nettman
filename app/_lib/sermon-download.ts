@@ -77,7 +77,7 @@ h3 { font-size:13pt; margin:22px 0 8px; page-break-after:avoid; } p { margin:0 0
 </style></head><body>
 <div class="print-help">인쇄 창에서 대상을 <strong>PDF로 저장</strong>으로 선택해 주세요.</div>
 <h1>${escapeHtml(sermon.title)}</h1>
-<div class="meta">본문 ${escapeHtml(sermon.scripture)} · ${escapeHtml(options.sermonType)} · ${escapeHtml(options.audience)} · ${options.duration ?? "-"}분</div>
+<div class="meta">본문 ${escapeHtml(sermon.scripture)} · ${escapeHtml(options.sermonType)} · ${escapeHtml(options.audience)} · ${escapeHtml(options.audienceSituation || "일반")} · ${options.duration ?? "-"}분</div>
 <h2>도입</h2>${paragraphs(sermon.sections.introduction)}
 <h2>본론</h2>${points}
 <h2>결론</h2>${paragraphs(sermon.sections.conclusion)}
@@ -218,7 +218,7 @@ export function downloadSermonDocx(
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
 ${wordParagraph(sermon.title, "Title")}
-${wordParagraph(`본문 ${sermon.scripture} · ${options.sermonType} · ${options.audience} · ${options.duration ?? "-"}분`, "Subtitle")}
+${wordParagraph(`본문 ${sermon.scripture} · ${options.sermonType} · ${options.audience} · ${options.audienceSituation || "일반"} · ${options.duration ?? "-"}분`, "Subtitle")}
 ${wordParagraph("도입", "Heading1")}${textToWordParagraphs(sermon.sections.introduction)}
 ${wordParagraph("본론", "Heading1")}${points}
 ${wordParagraph("결론", "Heading1")}${textToWordParagraphs(sermon.sections.conclusion)}

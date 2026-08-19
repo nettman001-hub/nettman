@@ -1,6 +1,6 @@
-# 설교가이드
+# 로고스AI
 
-목회자가 본문과 설교 조건을 입력하면 다섯 가지 설교 방향을 비교하고, 선택한 원고를 다듬어 저장·상담·내보내기까지 이어갈 수 있는 웹 애플리케이션입니다. 구현 범위는 `설계.json`의 `informationArchitecture`를 라우트로, `requirements[].features[].specifications`를 작업 단위로 삼았습니다.
+목회자가 본문과 설교 조건을 입력하면 다섯 가지 설교 방향을 비교하고, 선택한 원고를 다듬어 저장·피드백·내보내기까지 이어갈 수 있는 웹 애플리케이션입니다. 구현 범위는 `설계.json`의 `informationArchitecture`를 라우트로, `requirements[].features[].specifications`를 작업 단위로 삼았습니다.
 
 개발·운영을 이어받는 담당자는 먼저 [`HANDOFF.md`](./HANDOFF.md)를 확인하세요. 현재 배포 현황, 환경 변수, 검증 절차, Git 주의사항과 알려진 제약을 정리했습니다.
 
@@ -8,9 +8,11 @@
 
 - `/sermon` → `/sermon/options` → `/sermon/input` → `/sermon/alternatives` → `/sermon/edit` → `/sermon/complete`: 설교 생성, 비교, 수정, 저장
 - `/history`, `/history/[id]`: 저장한 설교 검색, 열람, PDF·Word 내보내기
-- `/consult`, `/consult/[id]`: 전문가 상담 신청과 메시지
-- `/expert`, `/expert/[id]`: 전문가 배정, 검토, 답변, 상담 완료
-- `/my`, `/notifications`: 프로필과 알림 설정
+- `/consult`, `/consult/[id]`: 설교 피드백 신청과 메시지
+- `/expert`, `/expert/[id]`: 전문가 배정, 검토, 답변, 피드백 완료
+- `/study`: 저장한 설교의 원문·배경·구조 스터디 생성
+- `/ministry`: 소그룹 질문지, 주보 요약문, 숏폼 문구 생성
+- `/my`, `/notifications`: 신학·개인 프로필과 알림 설정
 - `/login`, `/signup`, `/forgot-password`, `/verify-email`, `/reset-password`: Supabase 이메일/비밀번호 및 Google OAuth 인증
 
 ## 실행
@@ -28,7 +30,7 @@ npm test
 
 ## 데이터와 인증
 
-- Vercel 배포본은 Vercel Marketplace로 연결한 Supabase PostgreSQL에 설교, 설정, 상담 데이터를 저장합니다.
+- Vercel 배포본은 Vercel Marketplace로 연결한 Supabase PostgreSQL에 설교, 설정, 피드백 데이터를 저장합니다.
 - Supabase Auth의 이메일/비밀번호 가입·이메일 인증·비밀번호 재설정과 Google OAuth 로그인을 사용합니다. 같은 검증 이메일의 Google 로그인은 동일 사용자에 자동 연결됩니다.
 - 서버는 SSR 쿠키의 JWT 서명을 검증한 Supabase 사용자 UUID만 신뢰하며, 앱 데이터 테이블에는 RLS를 켜서 브라우저의 Data API 직접 접근을 차단합니다.
 - 로그인 유지를 선택하면 최대 7일, 선택하지 않으면 현재 브라우저 세션 동안 유지됩니다.
@@ -78,6 +80,10 @@ AI 엔진은 사용자별 설정이 아니라 관리자 전역 설정입니다. 
 공급자별 구조화 출력 형식과 인증 헤더는 서버 어댑터가 변환합니다. Gemini 요청은 저장을 끄고, OpenRouter 요청은 구조화 출력 파라미터를 지원하는 공급자만 사용하도록 강제합니다. 모델별 기능과 비용은 공급자 정책에 따라 달라질 수 있습니다.
 
 사용자는 설교 옵션에서 AI 등급을 한 번만 선택하며 다섯 초안에 같은 엔진이 적용됩니다. 호스팅 엔진은 초안 한 편을 한 요청으로 만들고, OpenAI 호환 `custom` 엔진만 짧은 조각으로 나눠 저장·재개합니다. 생성 중에는 중지 버튼으로 현재 요청을 취소할 수 있고 이미 완성한 초안은 유지됩니다.
+
+설교 옵션은 제목, 10·15·20·25·30분 분량, 강해·주제·내러티브 유형, 1포인트·2~4대지 구성, 대상, 청중 상황과 감정선을 받습니다. 교단·신학·사역 역할·교회 설정은 인증된 사용자 프로필에서 서버가 직접 읽어 설교 생성과 수정의 참고 문맥으로만 사용하며, 이메일과 연락처는 AI 요청에 포함하지 않습니다.
+
+저장한 완성 설교는 `/study`와 `/ministry`에서 후속 자료로 확장할 수 있습니다. 이 후속 생성은 설교 토큰을 차감하지 않는 공정 이용 기능으로, 계정당 하루 20회·동시 1건으로 제한됩니다.
 
 ```text
 ADMIN_EMAILS=admin@example.com

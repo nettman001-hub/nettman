@@ -1,10 +1,11 @@
 import { ensureDatabase, getD1 } from "../../../db";
 import { demoSermons, safeJson, type SermonRecord, type SermonSections } from "../../_lib/data";
 import { getRequestUser, unauthorizedResponse } from "../../_lib/auth-user";
+import { isSermonAudienceSituationValue } from "../../_lib/sermon-types";
 
 type SermonRow = {
   id: string; title: string; scripture: string; sermon_type: string;
-  audience: string; point_count: number; duration: number; emotion: string;
+  audience: string; audience_situation: string; point_count: number; duration: number; emotion: string;
   body_json: string; created_at: string; updated_at: string;
 };
 
@@ -15,6 +16,7 @@ function fromRow(row: SermonRow): SermonRecord {
     scripture: row.scripture,
     sermonType: row.sermon_type,
     audience: row.audience,
+    audienceSituation: row.audience_situation || "일반",
     pointCount: row.point_count,
     duration: row.duration,
     emotion: row.emotion,
@@ -55,8 +57,8 @@ export async function GET(request: Request) {
   const pattern = `%${query}%`;
   const where = query ? "AND (title LIKE ? OR scripture LIKE ? OR created_at LIKE ?)" : "";
   const listStatement = query
-    ? db.prepare(`SELECT id, title, scripture, sermon_type, audience, point_count, duration, emotion, body_json, created_at, updated_at FROM sermons WHERE user_id = ? AND deleted_at IS NULL ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(user.id, pattern, pattern, pattern, limit, offset)
-    : db.prepare("SELECT id, title, scripture, sermon_type, audience, point_count, duration, emotion, body_json, created_at, updated_at FROM sermons WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?").bind(user.id, limit, offset);
+    ? db.prepare(`SELECT id, title, scripture, sermon_type, audience, audience_situation, point_count, duration, emotion, body_json, created_at, updated_at FROM sermons WHERE user_id = ? AND deleted_at IS NULL ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(user.id, pattern, pattern, pattern, limit, offset)
+    : db.prepare("SELECT id, title, scripture, sermon_type, audience, audience_situation, point_count, duration, emotion, body_json, created_at, updated_at FROM sermons WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?").bind(user.id, limit, offset);
   const countStatement = query
     ? db.prepare(`SELECT COUNT(*) AS count FROM sermons WHERE user_id = ? AND deleted_at IS NULL ${where}`).bind(user.id, pattern, pattern, pattern)
     : db.prepare("SELECT COUNT(*) AS count FROM sermons WHERE user_id = ? AND deleted_at IS NULL").bind(user.id);
@@ -80,6 +82,12 @@ export async function POST(request: Request) {
   if (!payload?.title || !payload.scripture || !payload.sections || payload.title.trim().length < 2) {
     return Response.json({ error: "제목, 본문, 설교 내용을 확인해 주세요." }, { status: 400 });
   }
+  const audienceSituation = typeof payload.audienceSituation === "string"
+    ? payload.audienceSituation.trim()
+    : "일반";
+  if (!isSermonAudienceSituationValue(audienceSituation)) {
+    return Response.json({ error: "청중 상황을 확인해 주세요." }, { status: 400 });
+  }
   const now = new Date().toISOString();
   const id = payload.id || crypto.randomUUID();
   const sermon: SermonRecord = {
@@ -88,6 +96,7 @@ export async function POST(request: Request) {
     scripture: payload.scripture.trim(),
     sermonType: payload.sermonType || "강해",
     audience: payload.audience || "청장년",
+    audienceSituation,
     pointCount: Math.min(4, Math.max(1, payload.pointCount || 3)),
     duration: Math.min(40, Math.max(5, payload.duration || 20)),
     emotion: payload.emotion || "따뜻함",
@@ -107,11 +116,11 @@ export async function POST(request: Request) {
   }
   await db.batch([
     db.prepare("INSERT INTO users (id, email, name, role, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name").bind(user.id, user.email, user.name, user.role, now),
-    db.prepare(`INSERT INTO sermons (id, user_id, draft_id, title, scripture, sermon_type, audience, point_count, duration, emotion, body_json, created_at, updated_at, deleted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-      ON CONFLICT(draft_id) DO UPDATE SET title=excluded.title, scripture=excluded.scripture, sermon_type=excluded.sermon_type, audience=excluded.audience, point_count=excluded.point_count, duration=excluded.duration, emotion=excluded.emotion, body_json=excluded.body_json, updated_at=excluded.updated_at`).bind(
+    db.prepare(`INSERT INTO sermons (id, user_id, draft_id, title, scripture, sermon_type, audience, audience_situation, point_count, duration, emotion, body_json, created_at, updated_at, deleted_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      ON CONFLICT(draft_id) DO UPDATE SET title=excluded.title, scripture=excluded.scripture, sermon_type=excluded.sermon_type, audience=excluded.audience, audience_situation=excluded.audience_situation, point_count=excluded.point_count, duration=excluded.duration, emotion=excluded.emotion, body_json=excluded.body_json, updated_at=excluded.updated_at`).bind(
         id, user.id, payload.draftId ?? null, sermon.title, sermon.scripture, sermon.sermonType,
-        sermon.audience, sermon.pointCount, sermon.duration, sermon.emotion,
+        sermon.audience, sermon.audienceSituation, sermon.pointCount, sermon.duration, sermon.emotion,
         JSON.stringify(sermon.sections), sermon.createdAt, sermon.updatedAt,
       ),
   ]);

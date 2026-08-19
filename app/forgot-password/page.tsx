@@ -5,7 +5,7 @@ import { hasSupabasePublicConfig } from "@/app/_lib/supabase/config";
 import { ForgotPasswordForm } from "./forgot-password-form";
 
 export const metadata: Metadata = {
-  title: "비밀번호 찾기 | 설교가이드",
+  title: "비밀번호 찾기 | 로고스AI",
   description: "가입한 이메일로 안전한 비밀번호 재설정 링크를 보냅니다.",
 };
 

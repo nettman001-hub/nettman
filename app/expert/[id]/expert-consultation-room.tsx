@@ -113,13 +113,13 @@ export function ExpertConsultationRoom({ id }: { id: string }) {
   }
 
   if (state === "loading") {
-    return <div className="mx-auto max-w-6xl px-4 py-12 text-sm text-[#69756f]" aria-busy="true">상담을 불러오는 중입니다…</div>;
+    return <div className="mx-auto max-w-6xl px-4 py-12 text-sm text-[#69756f]" aria-busy="true">피드백을 불러오는 중입니다…</div>;
   }
   if (state === "error" || !consultation) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-16">
         <div className="rounded-2xl border border-[#e2b8ae] bg-[#fff1ee] p-6 text-sm text-[#7b352b]" role="alert">
-          <p className="font-extrabold">상담을 열 수 없습니다</p>
+          <p className="font-extrabold">피드백을 열 수 없습니다</p>
           <p className="mt-2">{error}</p>
           <button type="button" onClick={() => void load()} className="mt-4 font-extrabold underline">다시 시도</button>
         </div>
@@ -134,20 +134,20 @@ export function ExpertConsultationRoom({ id }: { id: string }) {
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-8 lg:px-12">
       <div className="flex flex-col gap-5 rounded-[1.7rem] bg-[#1e3f33] p-6 text-white sm:flex-row sm:items-end sm:justify-between sm:p-8">
         <div>
-          <a href="/expert" className="text-xs font-bold text-white">← 상담 목록</a>
+          <a href="/expert" className="text-xs font-bold text-white">← 피드백 목록</a>
           <p className="mt-5 text-[10px] font-extrabold tracking-[0.16em] text-white uppercase">Consultation review</p>
           <h1 className="mt-2 font-serif text-3xl font-bold">{consultation.sermonTitle}</h1>
           <p className="mt-2 text-sm text-white">요청자 {consultation.requesterName ?? "설교자"}</p>
         </div>
         {waiting ? (
           <button type="button" disabled={busy !== null} onClick={() => void assign()} className="min-h-11 rounded-xl bg-[#e7bb80] px-5 text-sm font-extrabold text-[#20392f] disabled:opacity-60">
-            {busy === "assign" ? "배정 중…" : "이 상담 맡기"}
+            {busy === "assign" ? "배정 중…" : "이 피드백 맡기"}
           </button>
         ) : completed ? (
-          <span className="rounded-full bg-white/10 px-4 py-2 text-xs font-extrabold">완료된 상담</span>
+          <span className="rounded-full bg-white/10 px-4 py-2 text-xs font-extrabold">완료된 피드백</span>
         ) : (
           <button type="button" disabled={busy !== null} onClick={() => void complete()} className="min-h-11 rounded-xl border border-white/20 px-5 text-sm font-extrabold hover:bg-white/10 disabled:opacity-60">
-            {busy === "complete" ? "완료 처리 중…" : "상담 완료"}
+            {busy === "complete" ? "완료 처리 중…" : "피드백 완료"}
           </button>
         )}
       </div>
@@ -156,12 +156,12 @@ export function ExpertConsultationRoom({ id }: { id: string }) {
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(20rem,.8fr)]">
         <section className="rounded-[1.6rem] border border-[#ddd7cd] bg-white p-6 sm:p-8">
-          <p className="text-xs font-extrabold text-[#8a592f]">상담 요청</p>
+          <p className="text-xs font-extrabold text-[#8a592f]">피드백 요청</p>
           <p className="mt-3 text-sm leading-7 text-[#5f6c65]">{consultation.reason}</p>
 
           {waiting ? (
             <div className="mt-7 rounded-2xl border border-[#dfc89e] bg-[#fff8e8] p-5 text-sm leading-6 text-[#68491e]">
-              상담을 맡으면 원고 전체와 대화 입력란이 열립니다. 맡기 전에는 요청 요약만 확인할 수 있습니다.
+              피드백을 맡으면 원고 전체와 대화 입력란이 열립니다. 맡기 전에는 요청 요약만 확인할 수 있습니다.
             </div>
           ) : sermon ? (
             <article className="mt-8 border-t border-[#e6e0d7] pt-7 text-[#34463e]">
@@ -183,7 +183,7 @@ export function ExpertConsultationRoom({ id }: { id: string }) {
         </section>
 
         <section className="flex min-h-[34rem] flex-col rounded-[1.6rem] border border-[#ddd7cd] bg-white p-5 sm:p-6">
-          <h2 className="font-serif text-xl font-bold text-[#294238]">상담 대화</h2>
+          <h2 className="font-serif text-xl font-bold text-[#294238]">피드백 대화</h2>
           <div className="mt-5 flex-1 space-y-3" aria-live="polite">
             {messages.length === 0 ? <p className="rounded-xl bg-[#f5f3ee] p-4 text-xs leading-5 text-[#737d77]">아직 오간 메시지가 없습니다.</p> : messages.map((message) => (
               <div key={message.id} className={`rounded-2xl p-4 text-sm leading-6 ${message.senderRole === "expert" ? "ml-7 bg-[#315746] text-white" : "mr-7 bg-[#f0ede6] text-[#394a42]"}`}>
@@ -204,7 +204,7 @@ export function ExpertConsultationRoom({ id }: { id: string }) {
               <button type="submit" disabled={busy !== null || !body.trim()} className="mt-3 min-h-11 w-full rounded-xl bg-[#315746] px-4 text-sm font-extrabold text-white disabled:opacity-50">{busy === "send" ? "전송 중…" : "피드백 보내기"}</button>
             </form>
           ) : completed ? (
-            <p className="mt-5 rounded-xl bg-[#f5f3ee] p-4 text-xs leading-5 text-[#68736d]">완료된 상담은 기록으로만 볼 수 있으며 새 메시지를 보낼 수 없습니다.</p>
+            <p className="mt-5 rounded-xl bg-[#f5f3ee] p-4 text-xs leading-5 text-[#68736d]">완료된 피드백은 기록으로만 볼 수 있으며 새 메시지를 보낼 수 없습니다.</p>
           ) : null}
         </section>
       </div>

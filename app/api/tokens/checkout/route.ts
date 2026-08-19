@@ -97,7 +97,7 @@ export async function POST(request: Request): Promise<Response> {
         storeId: config.storeId,
         channelKey: config.channelKey,
         paymentId,
-        orderName: `설교가이드 ${tokenAmount.toLocaleString("ko-KR")}토큰`,
+        orderName: `로고스AI ${tokenAmount.toLocaleString("ko-KR")}토큰`,
         totalAmount: amountKrw,
         currency: "KRW",
         payMethod: paymentMethod === "card" ? "CARD" : "EASY_PAY",

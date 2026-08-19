@@ -234,6 +234,7 @@ const protectedTableNames = [
   "user_ai_preferences",
   "global_ai_settings",
   "managed_ai_usage",
+  "sermon_resource_usage",
   "token_wallets",
   "token_transactions",
   "token_topups",
@@ -260,9 +261,14 @@ const schemaStatements = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
   `CREATE TABLE IF NOT EXISTS user_profiles (
     user_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
-    ministry_role TEXT NOT NULL DEFAULT '담임목사', church TEXT NOT NULL DEFAULT '',
+    ministry_role TEXT NOT NULL DEFAULT '담임목사',
+    denomination TEXT NOT NULL DEFAULT '', theology TEXT NOT NULL DEFAULT '',
+    church TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
   )`,
+  `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS denomination TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS theology TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT ''`,
   `CREATE TABLE IF NOT EXISTS user_ai_preferences (
     user_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0,
     engine TEXT NOT NULL DEFAULT 'openai', endpoint TEXT NOT NULL, model TEXT NOT NULL,
@@ -282,6 +288,13 @@ const schemaStatements = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_managed_ai_usage_user_date
     ON managed_ai_usage(user_id, usage_date)`,
+  `CREATE TABLE IF NOT EXISTS sermon_resource_usage (
+    user_id TEXT NOT NULL, usage_date TEXT NOT NULL,
+    request_count INTEGER NOT NULL DEFAULT 0,
+    active_request_id TEXT, active_started_at TEXT, updated_at TEXT NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_sermon_resource_usage_user_date
+    ON sermon_resource_usage(user_id, usage_date)`,
   `CREATE TABLE IF NOT EXISTS token_wallets (
     user_id TEXT PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 200 CHECK (balance >= 0),
     lifetime_purchased INTEGER NOT NULL DEFAULT 0, lifetime_spent INTEGER NOT NULL DEFAULT 0,
@@ -324,12 +337,14 @@ const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS sermon_drafts (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, topic TEXT NOT NULL,
     scripture TEXT NOT NULL DEFAULT '', sermon_type TEXT NOT NULL,
-    audience TEXT NOT NULL, point_count INTEGER NOT NULL, duration INTEGER NOT NULL,
+    audience TEXT NOT NULL, audience_situation TEXT NOT NULL DEFAULT '일반',
+    point_count INTEGER NOT NULL, duration INTEGER NOT NULL,
     emotion TEXT NOT NULL, reference_mode TEXT NOT NULL DEFAULT 'auto',
     status TEXT NOT NULL DEFAULT 'options_valid', active_generation_id TEXT,
     selected_alternative_id TEXT,
     revision_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
   )`,
+  `ALTER TABLE sermon_drafts ADD COLUMN IF NOT EXISTS audience_situation TEXT NOT NULL DEFAULT '일반'`,
   `CREATE INDEX IF NOT EXISTS idx_sermon_drafts_user_updated ON sermon_drafts(user_id, updated_at)`,
   `CREATE INDEX IF NOT EXISTS idx_sermon_drafts_status ON sermon_drafts(status)`,
   `CREATE TABLE IF NOT EXISTS sermon_alternatives (
@@ -374,9 +389,11 @@ const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS sermons (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, draft_id TEXT, title TEXT NOT NULL,
     scripture TEXT NOT NULL, sermon_type TEXT NOT NULL, audience TEXT NOT NULL,
+    audience_situation TEXT NOT NULL DEFAULT '일반',
     point_count INTEGER NOT NULL, duration INTEGER NOT NULL, emotion TEXT NOT NULL,
     body_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
   )`,
+  `ALTER TABLE sermons ADD COLUMN IF NOT EXISTS audience_situation TEXT NOT NULL DEFAULT '일반'`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_sermons_draft ON sermons(draft_id)`,
   `CREATE INDEX IF NOT EXISTS idx_sermons_user_created ON sermons(user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_sermons_user_title ON sermons(user_id, title)`,
@@ -539,4 +556,137 @@ export async function claimManagedAiQuota(
     .bind(userId, usageDate, now.toISOString(), dailyLimit)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+export const SERMON_RESOURCE_DAILY_LIMIT = 20;
+const SERMON_RESOURCE_RESERVATION_LEASE_MS = 3 * 60 * 1_000;
+
+export type SermonResourceReservation =
+  | {
+      ok: true;
+      userId: string;
+      requestId: string;
+      usageDate: string;
+      dailyLimit: number;
+      remainingToday: number;
+    }
+  | {
+      ok: false;
+      reason: "daily_limit" | "concurrent";
+      usageDate: string;
+      dailyLimit: number;
+      remainingToday: number;
+    };
+
+type SermonResourceUsageRow = {
+  request_count: number;
+  active_request_id: string | null;
+  active_started_at: string | null;
+};
+
+function seoulUsageDate(now: Date): string {
+  return new Date(now.getTime() + 9 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Reserves one fair-use request and the user's single concurrent slot atomically.
+ * A stale slot is treated as a failed request, so replacing it does not consume
+ * another daily use.
+ */
+export async function reserveSermonResourceUsage(
+  db: D1Database,
+  userId: string,
+  dailyLimit = SERMON_RESOURCE_DAILY_LIMIT,
+): Promise<SermonResourceReservation> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const usageDate = seoulUsageDate(now);
+  const requestId = crypto.randomUUID();
+  const staleBefore = new Date(
+    now.getTime() - SERMON_RESOURCE_RESERVATION_LEASE_MS,
+  ).toISOString();
+  const result = await db
+    .prepare(
+      `INSERT INTO sermon_resource_usage (
+         user_id, usage_date, request_count, active_request_id, active_started_at, updated_at
+       ) VALUES (?, ?, 1, ?, ?, ?)
+       ON CONFLICT(user_id, usage_date) DO UPDATE SET
+         request_count = CASE
+           WHEN sermon_resource_usage.active_request_id IS NOT NULL
+             AND sermon_resource_usage.active_started_at < ?
+           THEN sermon_resource_usage.request_count
+           ELSE sermon_resource_usage.request_count + 1
+         END,
+         active_request_id = excluded.active_request_id,
+         active_started_at = excluded.active_started_at,
+         updated_at = excluded.updated_at
+       WHERE (
+         sermon_resource_usage.active_request_id IS NULL
+         AND sermon_resource_usage.request_count < ?
+       ) OR (
+         sermon_resource_usage.active_request_id IS NOT NULL
+         AND sermon_resource_usage.active_started_at < ?
+       )`,
+    )
+    .bind(
+      userId,
+      usageDate,
+      requestId,
+      nowIso,
+      nowIso,
+      staleBefore,
+      dailyLimit,
+      staleBefore,
+    )
+    .run();
+
+  const row = await db
+    .prepare(
+      `SELECT request_count, active_request_id, active_started_at
+       FROM sermon_resource_usage WHERE user_id = ? AND usage_date = ?`,
+    )
+    .bind(userId, usageDate)
+    .first<SermonResourceUsageRow>();
+  const requestCount = Math.max(0, Number(row?.request_count ?? 0));
+  const remainingToday = Math.max(0, dailyLimit - requestCount);
+
+  if ((result.meta.changes ?? 0) > 0 && row?.active_request_id === requestId) {
+    return { ok: true, userId, requestId, usageDate, dailyLimit, remainingToday };
+  }
+  return {
+    ok: false,
+    reason: requestCount >= dailyLimit ? "daily_limit" : "concurrent",
+    usageDate,
+    dailyLimit,
+    remainingToday,
+  };
+}
+
+/** Clears the concurrent slot and refunds the daily use when generation failed. */
+export async function finishSermonResourceUsage(
+  db: D1Database,
+  reservation: Extract<SermonResourceReservation, { ok: true }>,
+  failed: boolean,
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(
+      `UPDATE sermon_resource_usage SET
+         request_count = CASE
+           WHEN ? = 1 AND request_count > 0 THEN request_count - 1
+           ELSE request_count
+         END,
+         active_request_id = NULL,
+         active_started_at = NULL,
+         updated_at = ?
+       WHERE user_id = ? AND usage_date = ? AND active_request_id = ?`,
+    )
+    .bind(
+      failed ? 1 : 0,
+      nowIso,
+      reservation.userId,
+      reservation.usageDate,
+      reservation.requestId,
+    )
+    .run();
 }

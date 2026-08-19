@@ -254,7 +254,7 @@ export function NotificationPreferencesForm({
       });
       return;
     }
-    new window.Notification("설교가이드", {
+    new window.Notification("로고스AI", {
       body: "설교 ‘은혜로 걷는 길’이 완성되었습니다.",
       icon: "/favicon.svg",
       tag: "sermon-guide-test",

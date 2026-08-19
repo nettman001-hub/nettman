@@ -20,12 +20,9 @@ function PublicHeader() {
   return (
     <header className="border-b border-[#18312b]/10 bg-[#f7f4ed]/95 backdrop-blur">
       <div className="container flex min-h-20 items-center justify-between gap-4 sm:min-h-[5.75rem]">
-        <Link className="brand" href="/" aria-label="설교 가이드 홈">
-          <span className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-          </span>
-          <span>설교 가이드</span>
+        <Link className="brand" href="/" aria-label="로고스AI 홈">
+          <span className="brand-mark" aria-hidden="true">로</span>
+          <span>로고스AI</span>
         </Link>
         <nav className="flex items-center gap-2 sm:gap-5" aria-label="공개 페이지 메뉴">
           <Link
@@ -47,11 +44,8 @@ function PublicFooter({ currentPath }: Pick<LegalDocumentProps, "currentPath">) 
   return (
     <footer className="landing-footer container">
       <Link className="brand" href="/">
-        <span className="brand-mark" aria-hidden="true">
-          <span />
-          <span />
-        </span>
-        <span>설교 가이드</span>
+        <span className="brand-mark" aria-hidden="true">로</span>
+        <span>로고스AI</span>
       </Link>
       <p>말씀의 본질을 지키는 설교 준비 파트너</p>
       <nav aria-label="하단 메뉴">
@@ -63,7 +57,7 @@ function PublicFooter({ currentPath }: Pick<LegalDocumentProps, "currentPath">) 
         </Link>
         <a href="mailto:hello@sermonguide.kr">문의하기</a>
       </nav>
-      <small>© 2026 Sermon Guide. All rights reserved.</small>
+      <small>© 2026 LOGOS AI. All rights reserved.</small>
     </footer>
   );
 }
@@ -131,7 +125,7 @@ export function LegalDocument({
 
         <article className="rounded-[2rem] border border-[#18312b]/10 bg-[#fffdf8] px-5 py-8 shadow-[0_22px_60px_rgba(24,49,43,.07)] sm:px-9 sm:py-11 lg:px-14 lg:py-14">
           <div className="rounded-2xl border border-[#b9cbb1] bg-[#eef3e9] px-5 py-4 text-sm leading-7 text-[#29453e]">
-            이 문서는 현재 제공되는 설교가이드의 기능과 데이터 흐름을 기준으로 작성했습니다.
+            이 문서는 현재 제공되는 로고스AI의 기능과 데이터 흐름을 기준으로 작성했습니다.
             서비스에 입력하기 전, 공개되면 곤란한 개인정보나 제3자의 비밀정보가 포함되지 않았는지 확인해 주세요.
           </div>
 

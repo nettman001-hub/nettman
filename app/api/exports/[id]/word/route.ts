@@ -13,11 +13,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     sermon = demoSermons.find((item) => item.id === id) ?? demoSermons[0];
   } else {
     await ensureDatabase(db);
-    const row = await db.prepare(`SELECT id, title, scripture, sermon_type, audience, point_count, duration, emotion, body_json, created_at, updated_at
+    const row = await db.prepare(`SELECT id, title, scripture, sermon_type, audience, audience_situation, point_count, duration, emotion, body_json, created_at, updated_at
       FROM sermons WHERE id = ? AND user_id = ? AND deleted_at IS NULL`).bind(id, user.id).first<Record<string, string | number>>();
     if (row) sermon = {
       id: String(row.id), title: String(row.title), scripture: String(row.scripture), sermonType: String(row.sermon_type),
-      audience: String(row.audience), pointCount: Number(row.point_count), duration: Number(row.duration), emotion: String(row.emotion),
+      audience: String(row.audience), audienceSituation: String(row.audience_situation || "일반"), pointCount: Number(row.point_count), duration: Number(row.duration), emotion: String(row.emotion),
       sections: safeJson<SermonSections>(String(row.body_json), { introduction: "", body: [], conclusion: "", application: "" }),
       createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     };

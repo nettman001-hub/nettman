@@ -74,7 +74,7 @@ export function AuthAssurance() {
         ✓
       </span>
       <p className="text-xs leading-5">
-        비밀번호는 Supabase Auth가 암호화해 처리합니다. 설교가이드의 앱
+        비밀번호는 Supabase Auth가 암호화해 처리합니다. 로고스AI의 앱
         데이터베이스에는 원문 비밀번호를 저장하지 않습니다.
       </p>
     </div>

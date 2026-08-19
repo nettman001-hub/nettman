@@ -436,7 +436,7 @@ export function TokenWalletPanel({ email }: { email: string }) {
             </div>
           </div>
           <p className="mt-3 text-xs leading-5 text-[#7b837f]">
-            포트원과 NHN KCP의 안전한 결제창을 사용합니다. 카드 번호와 간편결제 인증정보는 설교가이드가 저장하지 않습니다.
+            포트원과 NHN KCP의 안전한 결제창을 사용합니다. 카드 번호와 간편결제 인증정보는 로고스AI가 저장하지 않습니다.
           </p>
 
           <button
@@ -482,7 +482,7 @@ export function TokenWalletPanel({ email }: { email: string }) {
             <div className="flex items-center justify-between"><dt className="font-bold text-[#43564d]">고급추론엔진</dt><dd className="font-black text-[#7b4f86]">{data.pricing.sermonCosts.reasoning}토큰부터</dd></div>
           </dl>
           <div className="mt-5 rounded-xl bg-[#f5f1e9] p-3 text-xs leading-5 text-[#6d655a]">
-            <strong>5분·1대지</strong>는 기본/고급/고급추론 순으로 10 · 20 · 40토큰,
+            <strong>10분·1포인트</strong>는 기본/고급/고급추론 순으로 15 · 30 · 60토큰,
             {" "}<strong>30분·4대지</strong>는 {sermonGenerationTokenCost("basic", 30, 4)} · {sermonGenerationTokenCost("advanced", 30, 4)} · {sermonGenerationTokenCost("reasoning", 30, 4)}토큰입니다.
           </div>
         </section>

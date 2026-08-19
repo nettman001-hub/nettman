@@ -25,7 +25,7 @@ function toConsultation(row: ConsultationRow) {
   return {
     id: String(row.id),
     sermonId: String(row.sermon_id),
-    sermonTitle: String(row.sermon_title ?? "설교 상담"),
+    sermonTitle: String(row.sermon_title ?? "설교 피드백"),
     reason: String(row.reason),
     status: String(row.status),
     expertName: row.expert_name ? String(row.expert_name) : null,
@@ -59,11 +59,14 @@ export async function GET(request: Request) {
   await ensureDatabase(db);
   const select = `SELECT c.id, c.sermon_id, s.title AS sermon_title, c.reason,
       c.status, c.queue_position, c.created_at, c.updated_at,
-      expert.name AS expert_name, requester.name AS requester_name
+      COALESCE(expert_profile.display_name, expert.name) AS expert_name,
+      COALESCE(requester_profile.display_name, requester.name) AS requester_name
     FROM consultations c
     INNER JOIN sermons s ON s.id = c.sermon_id AND s.deleted_at IS NULL
     LEFT JOIN users expert ON expert.id = c.expert_id
-    LEFT JOIN users requester ON requester.id = c.user_id`;
+    LEFT JOIN user_profiles expert_profile ON expert_profile.user_id = expert.id
+    LEFT JOIN users requester ON requester.id = c.user_id
+    LEFT JOIN user_profiles requester_profile ON requester_profile.user_id = requester.id`;
 
   const rows =
     user.role === "expert"
@@ -88,7 +91,7 @@ export async function POST(request: Request) {
   const user = await resolveRequestUser(request);
   if (!user) return unauthorizedResponse();
   if (user.role !== "preacher") {
-    return forbiddenResponse("설교 상담 요청은 설교자 계정에서 만들 수 있습니다.");
+    return forbiddenResponse("설교 피드백 요청은 설교자 계정에서 만들 수 있습니다.");
   }
 
   const payload = (await request.json().catch(() => null)) as {
@@ -99,7 +102,7 @@ export async function POST(request: Request) {
   const reason = payload?.reason?.trim();
   if (!sermonId || !reason || reason.length < 10 || reason.length > 2000) {
     return Response.json(
-      { error: "상담할 설교와 10~2,000자의 요청 사유를 입력해 주세요." },
+      { error: "피드백받을 설교와 10~2,000자의 요청 사유를 입력해 주세요." },
       { status: 400 },
     );
   }
@@ -131,7 +134,7 @@ export async function POST(request: Request) {
     .bind(sermonId, user.id)
     .first<{ id: string; title: string }>();
   if (!sermon) {
-    return Response.json({ error: "상담할 설교를 찾을 수 없습니다." }, { status: 404 });
+    return Response.json({ error: "피드백받을 설교를 찾을 수 없습니다." }, { status: 404 });
   }
 
   const existing = await db
@@ -140,7 +143,7 @@ export async function POST(request: Request) {
     .first<{ id: string }>();
   if (existing) {
     return Response.json(
-      { error: "이 설교에는 이미 상담 요청이 있습니다.", consultationId: existing.id },
+      { error: "이 설교에는 이미 피드백 요청이 있습니다.", consultationId: existing.id },
       { status: 409 },
     );
   }

@@ -101,7 +101,7 @@ export function HistoryClient() {
                     <h2 className="font-serif text-xl font-bold leading-snug tracking-[-.02em] text-[#203b30] group-hover:text-[#a35d2f]">{sermon.title}</h2>
                     <p className="mt-2 line-clamp-2 text-sm text-[#6c7872]">{sermon.sections.introduction}</p>
                   </div>
-                  <div className="flex items-center gap-5 text-xs text-[#78837e]"><span>{sermon.audience} · {sermon.duration}분</span><time dateTime={sermon.createdAt}>{formatter.format(new Date(sermon.createdAt))}</time><span className="text-lg text-[#aa6e38]" aria-hidden="true">→</span></div>
+                  <div className="flex items-center gap-5 text-xs text-[#78837e]"><span>{sermon.audience} · {sermon.audienceSituation || "일반"} · {sermon.duration}분</span><time dateTime={sermon.createdAt}>{formatter.format(new Date(sermon.createdAt))}</time><span className="text-lg text-[#aa6e38]" aria-hidden="true">→</span></div>
                 </a>
               </li>
             ))}

@@ -116,7 +116,7 @@ export function SermonInput() {
     return (
       <SermonStateCard
         title="옵션 설정이 먼저 필요합니다"
-        description="주제, 분량, 유형, 대상, 대지 수와 감정선을 모두 정해 주세요."
+        description="제목, 분량, 유형, 구성, 대상, 청중 상황과 감정선을 모두 정해 주세요."
         href={sermonDraftUrl("/sermon/options", draft.id)}
       />
     );

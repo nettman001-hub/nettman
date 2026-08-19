@@ -95,6 +95,9 @@ export function buildAiProviderRequest(
   const nativeStructuredOutput = options.nativeStructuredOutput !== false;
 
   if (config.engine === "anthropic") {
+    const promptOnlyInstructions = nativeStructuredOutput
+      ? input.instructions
+      : structuredJsonInstructions(input.instructions, schema);
     return {
       endpoint,
       headers: {
@@ -106,22 +109,29 @@ export function buildAiProviderRequest(
       body: {
         model: config.model,
         max_tokens: input.maxOutputTokens,
-        system: input.instructions,
+        system: promptOnlyInstructions,
         messages: [{ role: "user", content: input.input }],
         output_config: {
           ...(config.reasoningEffort === "default"
             ? {}
             : { effort: config.reasoningEffort }),
-          format: {
-            type: "json_schema",
-            schema,
-          },
+          ...(nativeStructuredOutput
+            ? {
+                format: {
+                  type: "json_schema",
+                  schema,
+                },
+              }
+            : {}),
         },
       },
     };
   }
 
   if (config.engine === "gemini") {
+    const promptOnlyInstructions = nativeStructuredOutput
+      ? input.instructions
+      : structuredJsonInstructions(input.instructions, schema);
     return {
       endpoint,
       headers: {
@@ -132,12 +142,16 @@ export function buildAiProviderRequest(
       body: {
         model: config.model,
         input: input.input,
-        system_instruction: input.instructions,
-        response_format: {
-          type: "text",
-          mime_type: "application/json",
-          schema,
-        },
+        system_instruction: promptOnlyInstructions,
+        ...(nativeStructuredOutput
+          ? {
+              response_format: {
+                type: "text",
+                mime_type: "application/json",
+                schema,
+              },
+            }
+          : {}),
         generation_config: {
           max_output_tokens: input.maxOutputTokens,
           thinking_summaries: "none",
@@ -183,6 +197,9 @@ export function buildAiProviderRequest(
   }
 
   if (config.engine === "openrouter") {
+    const promptOnlyInstructions = nativeStructuredOutput
+      ? input.instructions
+      : structuredJsonInstructions(input.instructions, schema);
     return {
       endpoint,
       headers: {
@@ -193,18 +210,22 @@ export function buildAiProviderRequest(
       body: {
         model: config.model,
         messages: [
-          { role: "system", content: input.instructions },
+          { role: "system", content: promptOnlyInstructions },
           { role: "user", content: input.input },
         ],
         max_tokens: input.maxOutputTokens,
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: input.name,
-            strict: true,
-            schema,
-          },
-        },
+        ...(nativeStructuredOutput
+          ? {
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: input.name,
+                  strict: true,
+                  schema,
+                },
+              },
+            }
+          : {}),
         provider: { require_parameters: true },
         ...(config.reasoningEffort === "default"
           ? {}
@@ -249,7 +270,7 @@ export function buildAiProviderRequest(
     };
   }
 
-  const customPromptOnly = config.engine === "custom" && !nativeStructuredOutput;
+  const promptOnly = !nativeStructuredOutput;
   return {
     endpoint,
     headers: {
@@ -263,7 +284,7 @@ export function buildAiProviderRequest(
     },
     body: {
       model: config.model,
-      instructions: customPromptOnly
+      instructions: promptOnly
         ? structuredJsonInstructions(input.instructions, schema)
         : input.instructions,
       input: input.input,

@@ -7,7 +7,7 @@ import { HomeRecentSermons } from "./home-recent-sermons";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "홈 | 설교가이드",
+  title: "홈 | 로고스AI",
   description: "최근 설교를 확인하고 새로운 설교 준비를 시작합니다.",
 };
 
@@ -15,7 +15,7 @@ const QUICK_LINKS = [
   {
     number: "01",
     title: "본문에서 시작",
-    description: "주제와 본문을 정하고 5가지 설교 방향을 받아보세요.",
+    description: "제목과 본문을 정하고 5가지 설교 방향을 받아보세요.",
     href: "/sermon/options",
     cta: "새 설교 만들기",
   },
@@ -28,10 +28,24 @@ const QUICK_LINKS = [
   },
   {
     number: "03",
-    title: "한 걸음 더 다듬기",
+    title: "설교 피드백",
     description: "전문가와 설교의 흐름, 적용, 표현을 함께 점검하세요.",
     href: "/consult",
-    cta: "상담 살펴보기",
+    cta: "피드백 살펴보기",
+  },
+  {
+    number: "04",
+    title: "스터디",
+    description: "원문, 배경과 구조를 살피며 완성한 설교의 본문 이해를 넓혀보세요.",
+    href: "/study",
+    cta: "본문 연구하기",
+  },
+  {
+    number: "05",
+    title: "사역 활용",
+    description: "완성한 설교로 소그룹 질문지, 주보 요약과 숏폼 문구를 만들어보세요.",
+    href: "/ministry",
+    cta: "사역 자료 만들기",
   },
 ];
 
@@ -126,7 +140,7 @@ export default async function HomePage() {
             <span className="inline-flex rounded-full bg-white/70 px-3 py-1 text-[10px] font-extrabold tracking-[0.15em] text-[#8c5c32] uppercase">Preparation guide</span>
             <h2 id="guide-title" className="mt-5 font-serif text-2xl font-bold tracking-tight text-[#294238]">한 편의 설교가 완성되는 길</h2>
             <ol className="mt-5 space-y-3">
-              {["주제와 청중 정하기", "본문과 구조 살피기", "5가지 대안 비교하기", "수정하고 최종 완성하기"].map((step, index) => (
+              {["제목과 청중 정하기", "본문과 구조 살피기", "5가지 대안 비교하기", "수정하고 최종 완성하기"].map((step, index) => (
                 <li key={step} className="flex items-center gap-3 text-sm font-semibold text-[#52635b]">
                   <span className="grid size-7 shrink-0 place-items-center rounded-full border border-[#b9ac9a] bg-white/50 text-[10px] font-black text-[#6f5236]">{index + 1}</span>
                   {step}
@@ -143,7 +157,7 @@ export default async function HomePage() {
               <h2 id="quick-title" className="mt-1.5 font-serif text-2xl font-bold tracking-tight text-[#254238]">바로가기</h2>
             </div>
           </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {QUICK_LINKS.map((item) => (
               <a
                 key={item.number}

@@ -23,7 +23,7 @@ const features = [
 ];
 
 const steps = [
-  ["01", "설교의 방향을 정합니다", "주제·대상·분량·감정선과 대지 수를 선택하세요."],
+  ["01", "설교의 방향을 정합니다", "제목·대상·청중 상황·분량·감정선과 구성을 선택하세요."],
   ["02", "성경 본문을 입력합니다", "본문 중심의 해석과 목회적 적용을 함께 구성합니다."],
   ["03", "다섯 초안 중 하나를 고릅니다", "각 설교의 도입과 핵심 흐름을 비교할 수 있습니다."],
   ["04", "내 목소리에 맞게 다듬습니다", "구체적인 수정 지시를 주고 이전 버전과 비교하세요."],
@@ -35,12 +35,9 @@ export default function LandingPage() {
     <main className="landing-page">
       <AiSessionBoundary />
       <header className="landing-header container">
-        <Link className="brand" href="/" aria-label="설교 가이드 홈">
-          <span className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-          </span>
-          <span>설교 가이드</span>
+        <Link className="brand" href="/" aria-label="로고스AI 홈">
+          <span className="brand-mark" aria-hidden="true">로</span>
+          <span>로고스AI</span>
         </Link>
         <nav className="landing-nav" aria-label="주요 메뉴">
           <a href="#how-it-works">사용 방법</a>
@@ -64,7 +61,7 @@ export default function LandingPage() {
             <em>준비의 부담은 덜어드립니다.</em>
           </h1>
           <p className="hero-lead">
-            설교 가이드는 성경 본문과 목회 상황을 바탕으로 설교 초안 생성,
+            로고스AI는 성경 본문과 목회 상황을 바탕으로 설교 초안 생성,
             원고 수정과 보관을 돕는 AI 설교 작성 서비스입니다. 본문과 현장을
             입력하면 설교의 뼈대부터 적용까지 함께 정리합니다.
           </p>
@@ -136,7 +133,7 @@ export default function LandingPage() {
       <section className="section container" id="features">
         <div className="section-heading split-heading">
           <div>
-            <span className="section-kicker">WHY SERMON GUIDE</span>
+            <span className="section-kicker">WHY LOGOS AI</span>
             <h2>설교 준비의 막막한 순간마다<br />다음 한 걸음을 제안합니다.</h2>
           </div>
           <p>
@@ -209,10 +206,10 @@ export default function LandingPage() {
       </section>
 
       <footer className="landing-footer container">
-        <Link className="brand" href="/"><span className="brand-mark" aria-hidden="true"><span /><span /></span><span>설교 가이드</span></Link>
+        <Link className="brand" href="/"><span className="brand-mark" aria-hidden="true">로</span><span>로고스AI</span></Link>
         <p>말씀의 본질을 지키는 설교 준비 파트너</p>
         <nav aria-label="하단 메뉴"><a href="#features">서비스 소개</a><Link href="/privacy">개인정보처리방침</Link><Link href="/terms">이용약관</Link><a href="mailto:hello@sermonguide.kr">문의하기</a></nav>
-        <small>© 2026 Sermon Guide. All rights reserved.</small>
+        <small>© 2026 LOGOS AI. All rights reserved.</small>
       </footer>
     </main>
   );

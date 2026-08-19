@@ -84,15 +84,33 @@ function id(prefix: string, index?: number): string {
 
 function audienceExample(audience: string): string {
   switch (audience) {
-    case "대학부":
+    case "청년":
       return "진로와 관계의 답을 서둘러 정해야 한다는 압박 속에서도";
     case "청소년":
       return "성적과 친구 관계로 마음이 흔들리는 순간에도";
-    case "초등부":
-      return "학교와 가정에서 작은 선택을 해야 하는 순간에도";
+    case "장년":
+      return "건강과 가족, 이후의 삶을 함께 헤아리는 순간에도";
     default:
       return "가정과 일터의 책임이 무겁게 느껴지는 순간에도";
   }
+}
+
+function audienceSituationContext(situation: string | undefined): string {
+  const normalized = situation?.trim() || "일반";
+  return (
+    {
+      일반: "일상의 예배와 삶에서",
+      장례: "장례와 애도의 자리에서",
+      개업: "새로운 사업을 시작하는 자리에서",
+      취업: "취업을 감사하고 새 책임을 맞는 자리에서",
+      이사: "새로운 거처와 삶의 터전을 맞는 자리에서",
+      결혼: "결혼으로 한 가정을 이루는 자리에서",
+      출산: "새 생명을 맞이하는 감사의 자리에서",
+      자녀: "자녀를 위해 기도하고 돌보는 자리에서",
+      학업: "배움과 시험을 감당하는 자리에서",
+      진로: "앞날의 길을 분별하는 자리에서",
+    } as Record<string, string>
+  )[normalized] ?? `‘${normalized}’의 구체적인 삶의 자리에서`;
 }
 
 function buildPoint(
@@ -103,6 +121,7 @@ function buildPoint(
   const { options, scripture } = request;
   const heading = POINT_TITLES[pointIndex] ?? `${pointIndex + 1}대지`;
   const example = audienceExample(options.audience);
+  const situationContext = audienceSituationContext(options.audienceSituation);
   const referenceText = (
     request.reference.notes || request.reference.file?.text || ""
   )
@@ -112,7 +131,7 @@ function buildPoint(
   const developments = [
     `${scripture} 말씀은 우리에게 익숙한 종교적 문장을 더하라고 요구하지 않습니다. 오히려 ${angle.lens}을 선명하게 보라고 초대합니다. 믿음은 내가 하나님께 도달하는 사다리가 아니라, 하나님이 그리스도 안에서 우리에게 내려오신 은혜를 붙드는 손입니다.`,
     `우리가 마주하는 문제는 환경만이 아닙니다. 두려움 때문에 말씀보다 계산을 앞세우고, 상처 때문에 사랑보다 방어를 선택하는 마음이 더 깊은 문제입니다. 그러나 복음은 실패를 숨기라고 하지 않습니다. 십자가 앞에 정직하게 서면 성령께서 굳은 마음을 새롭게 하십니다.`,
-    `${example} 주님은 멀리 계시지 않습니다. 오늘 할 수 있는 순종 하나를 보여 주십니다. 한 사람에게 진심으로 사과하고, 미뤄 둔 기도를 다시 시작하고, 도움이 필요한 이에게 시간을 내어 주는 선택이 하나님 나라의 씨앗이 됩니다.`,
+    `${example} ${situationContext} 주님은 멀리 계시지 않습니다. 오늘 할 수 있는 순종 하나를 보여 주십니다. 한 사람에게 진심으로 사과하고, 미뤄 둔 기도를 다시 시작하고, 도움이 필요한 이에게 시간을 내어 주는 선택이 하나님 나라의 씨앗이 됩니다.`,
     `혼자서는 쉽게 지치지만 하나님은 우리를 공동체로 부르셨습니다. 서로의 짐을 나누고 말씀으로 격려할 때 개인의 결심은 공동체의 습관이 됩니다. 그 작은 충성이 쌓여 ${angle.movement}을 세상에 보여 줍니다.`,
   ];
 
@@ -150,7 +169,7 @@ function expandToTarget(
     const response = GOSPEL_RESPONSES[Math.floor(cursor / PASTORAL_TENSIONS.length) % GOSPEL_RESPONSES.length];
     const paragraph = [
       `${point.heading}이라는 고백을 삶에 비추어 보면, 우리는 ${tension}. 그러나 ${response}.`,
-      `${angle.lens}이라는 본문의 중심은 생각을 아름답게 정리하는 데서 멈추지 않습니다. ${request.options.audience} 공동체가 가정과 학교와 일터에서 마주하는 실제 선택 속에서, 두려움 대신 신뢰를 선택하도록 우리를 부릅니다.`,
+      `${angle.lens}이라는 본문의 중심은 생각을 아름답게 정리하는 데서 멈추지 않습니다. ${request.options.audience} 공동체가 ${audienceSituationContext(request.options.audienceSituation)} 마주하는 실제 선택 속에서, 두려움 대신 신뢰를 선택하도록 우리를 부릅니다.`,
       `이번 주에 반복해서 마주칠 한 장면을 떠올려 보십시오. 그 자리에서 ${angle.movement}을 위해 말 한마디와 시간 한 조각을 내어 드릴 수 있습니다. 순종의 크기보다 누구를 의지해 내딛는지가 중요하며, 주님은 작은 응답을 통해 우리의 습관과 관계를 천천히 새롭게 하십니다.`,
     ].join(" ");
     point.content = `${point.content}\n\n${paragraph}`;
@@ -171,7 +190,7 @@ export function generateLocalSermons(
     const title = `${angle.titleLead} ${options.topic}`;
 
     const sections: SermonAlternative["sections"] = {
-      introduction: `사랑하는 성도 여러분, ${angle.image}을 떠올려 보십시오. 우리의 삶에도 멈춘 것 같고 답이 보이지 않는 때가 있습니다. ${audienceExample(options.audience)} 우리는 “하나님이 정말 여기에도 계시는가”라고 묻게 됩니다.\n\n오늘 ${scripture} 말씀은 그 질문을 외면하지 않습니다. 하나님은 ${options.topic}을(를) 막연한 이상으로 남겨 두지 않으시고, 지금 우리의 자리에서 살아 낼 복음의 길로 보여 주십니다. 이 시간 말씀을 통해 ${angle.lens}을 발견하기 원합니다.`,
+      introduction: `사랑하는 성도 여러분, ${angle.image}을 떠올려 보십시오. 우리의 삶에도 멈춘 것 같고 답이 보이지 않는 때가 있습니다. ${audienceExample(options.audience)} 특히 ${audienceSituationContext(options.audienceSituation)} 우리는 “하나님이 정말 여기에도 계시는가”라고 묻게 됩니다.\n\n오늘 ${scripture} 말씀은 그 질문을 외면하지 않습니다. 하나님은 ${options.topic}을(를) 막연한 이상으로 남겨 두지 않으시고, 지금 우리의 자리에서 살아 낼 복음의 길로 보여 주십니다. 이 시간 말씀을 통해 ${angle.lens}을 발견하기 원합니다.`,
       points,
       conclusion: `사랑하는 성도 여러분, ${options.topic}은(는) 우리의 의지로 완성해야 할 무거운 숙제가 아닙니다. 예수 그리스도께서 십자가와 부활로 이미 새 길을 여셨고, 성령께서 오늘도 그 길을 걷도록 붙드십니다. 실패가 마지막 말이 아니며 현재의 형편이 하나님의 약속을 취소하지 못합니다.\n\n이제 두려움보다 약속을, 익숙함보다 순종을 선택합시다. 주님이 시작하신 선한 일을 주님이 이루실 것입니다.`,
       application: `이번 주에는 세 가지를 실천해 보십시오. 첫째, 매일 ${scripture} 말씀을 천천히 읽고 마음에 남는 한 문장을 기록하십시오. 둘째, ${angle.movement}을 실천할 한 사람과 한 행동을 정하십시오. 셋째, 잠들기 전 오늘의 순종과 망설임을 주님께 솔직히 말씀드리십시오.\n\n${angle.blessing}이 여러분의 가정과 일터와 공동체 위에 충만하기를 바랍니다. 말씀을 듣는 데서 멈추지 않고 삶으로 응답하는 우리 모두가 되기를 주님의 이름으로 축원합니다.`,
@@ -180,7 +199,7 @@ export function generateLocalSermons(
     return {
       id: id("alternative", index + 1),
       title,
-      summary: `${angle.lens}의 관점에서 ${options.topic}을(를) 풀어내고, ${angle.movement}으로 초대하는 ${options.tone}의 설교입니다.`,
+      summary: `${angle.lens}의 관점에서 ${options.topic}을(를) 풀어내고, ${options.audienceSituation} 상황의 ${options.audience}을 ${angle.movement}으로 초대하는 ${options.tone}의 설교입니다.`,
       scripture,
       sections: expandToTarget(sections, request, angle),
     };

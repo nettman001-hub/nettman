@@ -3,7 +3,7 @@ import { AppShell } from "../../_components/app-shell";
 import { requirePageUser } from "../../_lib/auth-user";
 import { ConsultationRoom } from "./consultation-room";
 
-export const metadata: Metadata = { title: "상담 대화" };
+export const metadata: Metadata = { title: "피드백 대화" };
 export const dynamic = "force-dynamic";
 
 export default async function ConsultationPage({

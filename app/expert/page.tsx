@@ -4,8 +4,8 @@ import { requirePageUser } from "../_lib/auth-user";
 import { ExpertDashboard } from "./expert-dashboard";
 
 export const metadata: Metadata = {
-  title: "전문가 상담실",
-  description: "대기 중이거나 내게 배정된 설교 상담을 검토합니다.",
+  title: "설교 피드백실",
+  description: "대기 중이거나 내게 배정된 설교 피드백을 검토합니다.",
 };
 export const dynamic = "force-dynamic";
 
@@ -36,14 +36,14 @@ function ExpertAccessDenied() {
           전문가 전용 공간입니다
         </h1>
         <p className="mt-4 text-sm leading-7 text-[#69756f]">
-          이 계정에는 전문가 권한이 없습니다. 설교 상담을 요청하려면 상담 메뉴를 이용해
+          이 계정에는 전문가 권한이 없습니다. 설교 피드백을 요청하려면 피드백 메뉴를 이용해
           주세요. 전문가 등록이 필요한 경우 운영자에게 계정 권한을 요청해 주세요.
         </p>
         <a
           href="/consult"
           className="mt-7 inline-flex min-h-11 items-center justify-center rounded-xl bg-[#315746] px-5 text-sm font-extrabold text-white hover:bg-[#25483a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
         >
-          내 상담으로 돌아가기
+          내 피드백으로 돌아가기
         </a>
       </section>
     </div>

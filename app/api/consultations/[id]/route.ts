@@ -51,7 +51,7 @@ function serializeConsultation(row: ConsultationRow) {
   return {
     id: String(row.id),
     sermonId: String(row.sermon_id),
-    sermonTitle: String(row.sermon_title ?? "설교 상담"),
+    sermonTitle: String(row.sermon_title ?? "설교 피드백"),
     reason: String(row.reason),
     status: String(row.status),
     expertName: row.expert_name ? String(row.expert_name) : null,
@@ -68,11 +68,14 @@ async function findAccessibleConsultation(
   user: { id: string; role: "preacher" | "expert" },
 ): Promise<ConsultationRow | null> {
   const select = `SELECT c.*, s.title AS sermon_title,
-      expert.name AS expert_name, requester.name AS requester_name
+      COALESCE(expert_profile.display_name, expert.name) AS expert_name,
+      COALESCE(requester_profile.display_name, requester.name) AS requester_name
     FROM consultations c
     INNER JOIN sermons s ON s.id = c.sermon_id AND s.deleted_at IS NULL
     LEFT JOIN users expert ON expert.id = c.expert_id
-    LEFT JOIN users requester ON requester.id = c.user_id`;
+    LEFT JOIN user_profiles expert_profile ON expert_profile.user_id = expert.id
+    LEFT JOIN users requester ON requester.id = c.user_id
+    LEFT JOIN user_profiles requester_profile ON requester_profile.user_id = requester.id`;
 
   if (user.role === "expert") {
     return db
@@ -103,7 +106,7 @@ export async function GET(
   if (!db) {
     if (!user.isDemo) return serviceUnavailableResponse();
     const item = localConsultation(id);
-    if (!item) return Response.json({ error: "상담을 찾을 수 없습니다." }, { status: 404 });
+    if (!item) return Response.json({ error: "피드백을 찾을 수 없습니다." }, { status: 404 });
     return Response.json({
       item: {
         ...item,
@@ -118,7 +121,7 @@ export async function GET(
   await ensureDatabase(db);
   const consultation = await findAccessibleConsultation(db, id, user);
   if (!consultation) {
-    return Response.json({ error: "상담을 찾을 수 없습니다." }, { status: 404 });
+    return Response.json({ error: "피드백을 찾을 수 없습니다." }, { status: 404 });
   }
 
   const messages = await db
@@ -166,11 +169,11 @@ export async function POST(
 
   if (payload.action === "assign") {
     if (user.role !== "expert") {
-      return forbiddenResponse("전문가 계정만 대기 중인 상담을 맡을 수 있습니다.");
+      return forbiddenResponse("전문가 계정만 대기 중인 피드백을 맡을 수 있습니다.");
     }
     if (!db) {
       if (id !== demoWaitingConsultation.id) {
-        return Response.json({ error: "대기 중인 상담을 찾을 수 없습니다." }, { status: 404 });
+        return Response.json({ error: "대기 중인 피드백을 찾을 수 없습니다." }, { status: 404 });
       }
       return Response.json({ status: "assigned", expertName: user.name, demo: true });
     }
@@ -190,7 +193,7 @@ export async function POST(
         .first<{ status: string }>();
       if (own) return Response.json({ status: own.status, expertName: user.name });
       return Response.json(
-        { error: "이미 다른 전문가가 맡았거나 대기 상태가 아닌 상담입니다." },
+        { error: "이미 다른 전문가가 맡았거나 대기 상태가 아닌 피드백입니다." },
         { status: 409 },
       );
     }
@@ -199,12 +202,12 @@ export async function POST(
 
   if (payload.action === "complete") {
     if (user.role !== "expert") {
-      return forbiddenResponse("배정된 전문가만 상담을 완료할 수 있습니다.");
+      return forbiddenResponse("배정된 전문가만 피드백을 완료할 수 있습니다.");
     }
     if (!db) {
       const item = localConsultation(id);
       if (!item || item.status === "waiting") {
-        return Response.json({ error: "배정된 상담을 찾을 수 없습니다." }, { status: 404 });
+        return Response.json({ error: "배정된 피드백을 찾을 수 없습니다." }, { status: 404 });
       }
       return Response.json({ status: "completed", demo: true });
     }
@@ -223,7 +226,7 @@ export async function POST(
         .bind(id, user.id)
         .first<{ status: string }>();
       if (own?.status === "completed") return Response.json({ status: "completed" });
-      return Response.json({ error: "완료할 수 있는 상담을 찾을 수 없습니다." }, { status: 404 });
+      return Response.json({ error: "완료할 수 있는 피드백을 찾을 수 없습니다." }, { status: 404 });
     }
     return Response.json({ status: "completed" });
   }
@@ -246,12 +249,12 @@ export async function POST(
 
   if (!db) {
     const item = localConsultation(id);
-    if (!item) return Response.json({ error: "상담을 찾을 수 없습니다." }, { status: 404 });
+    if (!item) return Response.json({ error: "피드백을 찾을 수 없습니다." }, { status: 404 });
     if (item.status === "completed") {
-      return Response.json({ error: "완료된 상담에는 메시지를 보낼 수 없습니다." }, { status: 409 });
+      return Response.json({ error: "완료된 피드백에는 메시지를 보낼 수 없습니다." }, { status: 409 });
     }
     if (item.status === "waiting") {
-      return Response.json({ error: "전문가가 상담을 맡은 뒤 메시지를 보낼 수 있습니다." }, { status: 409 });
+      return Response.json({ error: "전문가가 피드백을 맡은 뒤 메시지를 보낼 수 있습니다." }, { status: 409 });
     }
     return Response.json({ item: message, demo: true }, { status: 201 });
   }
@@ -293,12 +296,12 @@ export async function POST(
   const results = await db.batch([insert, update]);
   if (Number(results[0]?.meta.changes ?? 0) < 1) {
     const visible = await findAccessibleConsultation(db, id, user);
-    if (!visible) return Response.json({ error: "상담을 찾을 수 없습니다." }, { status: 404 });
+    if (!visible) return Response.json({ error: "피드백을 찾을 수 없습니다." }, { status: 404 });
     if (visible.status === "completed") {
-      return Response.json({ error: "완료된 상담에는 메시지를 보낼 수 없습니다." }, { status: 409 });
+      return Response.json({ error: "완료된 피드백에는 메시지를 보낼 수 없습니다." }, { status: 409 });
     }
     return Response.json(
-      { error: "전문가가 상담을 맡은 뒤 메시지를 보낼 수 있습니다." },
+      { error: "전문가가 피드백을 맡은 뒤 메시지를 보낼 수 있습니다." },
       { status: 409 },
     );
   }

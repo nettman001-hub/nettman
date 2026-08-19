@@ -12,7 +12,10 @@ export const userProfiles = sqliteTable("user_profiles", {
   userId: text("user_id").primaryKey(),
   displayName: text("display_name").notNull(),
   ministryRole: text("ministry_role").notNull().default("담임목사"),
+  denomination: text("denomination").notNull().default(""),
+  theology: text("theology").notNull().default(""),
   church: text("church").notNull().default(""),
+  phone: text("phone").notNull().default(""),
   updatedAt: text("updated_at").notNull(),
 });
 
@@ -50,6 +53,17 @@ export const managedAiUsage = sqliteTable("managed_ai_usage", {
   updatedAt: text("updated_at").notNull(),
 }, (table) => [
   uniqueIndex("idx_managed_ai_usage_user_date").on(table.userId, table.usageDate),
+]);
+
+export const sermonResourceUsage = sqliteTable("sermon_resource_usage", {
+  userId: text("user_id").notNull(),
+  usageDate: text("usage_date").notNull(),
+  requestCount: integer("request_count").notNull().default(0),
+  activeRequestId: text("active_request_id"),
+  activeStartedAt: text("active_started_at"),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("idx_sermon_resource_usage_user_date").on(table.userId, table.usageDate),
 ]);
 
 export const tokenWallets = sqliteTable("token_wallets", {
@@ -125,6 +139,7 @@ export const sermonDrafts = sqliteTable("sermon_drafts", {
   scripture: text("scripture").notNull().default(""),
   sermonType: text("sermon_type").notNull(),
   audience: text("audience").notNull(),
+  audienceSituation: text("audience_situation").notNull().default("일반"),
   pointCount: integer("point_count").notNull(),
   duration: integer("duration").notNull(),
   emotion: text("emotion").notNull(),
@@ -234,6 +249,7 @@ export const sermons = sqliteTable("sermons", {
   scripture: text("scripture").notNull(),
   sermonType: text("sermon_type").notNull(),
   audience: text("audience").notNull(),
+  audienceSituation: text("audience_situation").notNull().default("일반"),
   pointCount: integer("point_count").notNull(),
   duration: integer("duration").notNull(),
   emotion: text("emotion").notNull(),

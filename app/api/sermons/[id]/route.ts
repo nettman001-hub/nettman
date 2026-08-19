@@ -39,7 +39,7 @@ export async function GET(
       : "s.user_id = ?";
   const row = await db
     .prepare(
-      `SELECT s.id, s.title, s.scripture, s.sermon_type, s.audience,
+      `SELECT s.id, s.title, s.scripture, s.sermon_type, s.audience, s.audience_situation,
           s.point_count, s.duration, s.emotion, s.body_json,
           s.created_at, s.updated_at
        FROM sermons s
@@ -56,6 +56,7 @@ export async function GET(
       scripture: row.scripture,
       sermonType: row.sermon_type,
       audience: row.audience,
+      audienceSituation: row.audience_situation || "일반",
       pointCount: row.point_count,
       duration: row.duration,
       emotion: row.emotion,

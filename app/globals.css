@@ -44,11 +44,7 @@ img { max-width: 100%; }
 .landing-page { min-height: 100vh; overflow: hidden; }
 .landing-header { height: 92px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: 12px; font-weight: 760; letter-spacing: -0.04em; font-size: 19px; }
-.brand-mark { position: relative; width: 30px; height: 30px; display: inline-block; transform: rotate(-2deg); }
-.brand-mark span { position: absolute; top: 4px; width: 14px; height: 22px; border: 2px solid currentColor; border-radius: 8px 3px 8px 3px; }
-.brand-mark span:first-child { left: 2px; transform: rotate(-8deg); }
-.brand-mark span:last-child { right: 2px; transform: rotate(8deg); }
-.brand-mark::after { content: ""; position: absolute; left: 14px; bottom: 3px; width: 2px; height: 19px; background: currentColor; border-radius: 2px; }
+.brand-mark { width: 32px; height: 32px; display: inline-grid; place-items: center; border-radius: 11px; background: var(--ink); color: var(--paper); font-family: var(--font-serif); font-size: 16px; font-weight: 800; letter-spacing: 0; }
 .landing-nav { display: flex; align-items: center; gap: 30px; font-size: 14px; font-weight: 620; }
 .landing-nav > a:not(.button) { color: var(--muted); transition: color .2s ease; }
 .landing-nav > a:not(.button):hover { color: var(--ink); }

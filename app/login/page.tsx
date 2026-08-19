@@ -10,8 +10,8 @@ import { LoginForm } from "./login-form";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "로그인 | 설교가이드",
-  description: "이메일 또는 Google 계정으로 설교가이드에 로그인합니다.",
+  title: "로그인 | 로고스AI",
+  description: "이메일 또는 Google 계정으로 로고스AI에 로그인합니다.",
 };
 
 type LoginSearchParams = {

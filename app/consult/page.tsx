@@ -4,7 +4,7 @@ import { requirePageUser } from "../_lib/auth-user";
 import { ConsultClient } from "./consult-client";
 
 export const metadata: Metadata = {
-  title: "전문가 상담",
+  title: "설교 피드백",
   description: "완성한 설교를 목회 코치와 함께 점검합니다.",
 };
 export const dynamic = "force-dynamic";

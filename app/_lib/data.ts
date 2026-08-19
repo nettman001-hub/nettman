@@ -11,6 +11,7 @@ export type SermonRecord = {
   scripture: string;
   sermonType: string;
   audience: string;
+  audienceSituation: string;
   pointCount: number;
   duration: number;
   emotion: string;
@@ -38,6 +39,7 @@ export const demoSermons: SermonRecord[] = [
     scripture: "요한복음 15:1-8",
     sermonType: "강해",
     audience: "청장년",
+    audienceSituation: "일반",
     pointCount: 3,
     duration: 20,
     emotion: "따뜻한 도전",
@@ -59,7 +61,8 @@ export const demoSermons: SermonRecord[] = [
     title: "폭풍 속에서도 들리는 음성",
     scripture: "마가복음 4:35-41",
     sermonType: "내러티브",
-    audience: "대학부",
+    audience: "청년",
+    audienceSituation: "일반",
     pointCount: 3,
     duration: 15,
     emotion: "위로",

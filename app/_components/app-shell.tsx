@@ -13,6 +13,8 @@ export type AppSection =
   | "history"
   | "consult"
   | "expert"
+  | "study"
+  | "ministry"
   | "tokens"
   | "my"
   | "notifications"
@@ -47,8 +49,10 @@ const PRIMARY_NAV: NavItem[] = [
   { id: "home", label: "홈", href: "/home", marker: "홈" },
   { id: "sermon", label: "새 설교", href: "/sermon/options", marker: "새" },
   { id: "history", label: "내 설교", href: "/history", marker: "록" },
-  { id: "consult", label: "전문가 상담", href: "/consult", marker: "담" },
-  { id: "expert", label: "전문가 상담실", href: "/expert", marker: "코" },
+  { id: "consult", label: "설교 피드백", href: "/consult", marker: "피" },
+  { id: "study", label: "스터디", href: "/study", marker: "연" },
+  { id: "ministry", label: "사역 활용", href: "/ministry", marker: "활" },
+  { id: "expert", label: "설교 피드백실", href: "/expert", marker: "실" },
 ];
 
 const SETTINGS_NAV: NavItem[] = [
@@ -64,7 +68,7 @@ const SETTINGS_NAV: NavItem[] = [
 
 function initials(name: string): string {
   const trimmed = name.trim();
-  if (!trimmed) return "설";
+  if (!trimmed) return "로";
   const parts = trimmed.split(/\s+/);
   if (parts.length > 1) {
     return parts
@@ -107,20 +111,20 @@ function Brand() {
     <a
       href="/home"
       className="group inline-flex items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#c7894a] focus-visible:ring-offset-4 focus-visible:ring-offset-[#172b24]"
-      aria-label="설교가이드 홈"
+      aria-label="로고스AI 홈"
     >
       <span
         aria-hidden="true"
         className="grid size-10 place-items-center rounded-[14px] bg-[#f1d4a9] font-serif text-lg font-bold text-[#263d34] shadow-[inset_0_0_0_1px_rgba(255,255,255,.35)] transition-transform group-hover:-rotate-3"
       >
-        설
+        로
       </span>
       <span>
         <span className="block font-serif text-lg font-bold tracking-[-0.02em] text-white">
-          설교가이드
+          로고스AI
         </span>
         <span className="block text-[10px] font-semibold tracking-[0.18em] text-white">
-          SERMON STUDIO
+          LOGOS AI
         </span>
       </span>
     </a>
@@ -447,20 +451,20 @@ export function AppShell({ active, children, user }: AppShellProps) {
               <a
                 href="/home"
                 className="inline-flex items-center gap-2.5 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
-                aria-label="설교가이드 홈"
+                aria-label="로고스AI 홈"
               >
                 <span
                   aria-hidden="true"
                   className="grid size-9 place-items-center rounded-xl bg-[#315647] font-serif text-sm font-bold text-white"
                 >
-                  설
+                  로
                 </span>
                 <span className="max-[360px]:hidden">
                   <span className="block font-serif text-base font-bold tracking-tight text-[#1f382f]">
-                    설교가이드
+                    로고스AI
                   </span>
                   <span className="block text-[9px] font-semibold tracking-[0.14em] text-[#6c7a74]">
-                    SERMON STUDIO
+                    LOGOS AI
                   </span>
                 </span>
               </a>
