@@ -733,6 +733,20 @@ export function getD1(): D1Database | null {
   if (!configuredUrl || configuredUrl.startsWith("[")) return null;
 
   if (!database || databaseUrl !== configuredUrl) {
+    const poolSize = databaseConnectionPoolSize();
+    // Operational check for pool sizing: transaction pooling tolerates a
+    // larger per-instance pool than a direct connection. Log only the port
+    // and the pooler classification; never the host, user, or credentials.
+    try {
+      const parsed = new URL(configuredUrl);
+      console.warn("[db] pool", {
+        max: poolSize,
+        port: parsed.port || null,
+        pooled: parsed.hostname.includes("pooler"),
+      });
+    } catch {
+      console.warn("[db] pool", { max: poolSize, port: null, pooled: null });
+    }
     const client = postgres(configuredUrl, {
       connect_timeout: 10,
       idle_timeout: 20,
@@ -742,7 +756,7 @@ export function getD1(): D1Database | null {
       // so keep a small bounded pool. Supavisor transaction pooling stays
       // compatible because prepare stays off and every advisory lock and
       // timeout below is transaction-scoped.
-      max: databaseConnectionPoolSize(),
+      max: poolSize,
       prepare: false,
       ssl: "require",
     });
