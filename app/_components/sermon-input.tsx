@@ -81,6 +81,17 @@ export function SermonInput() {
     return () => generationController.current?.abort();
   }, []);
 
+  useEffect(() => {
+    const expectedCount = isGuest ? 1 : 5;
+    if (
+      draft?.stage === "alternatives" &&
+      !draft.generation &&
+      draft.alternatives.length === expectedCount
+    ) {
+      router.replace(sermonDraftUrl("/sermon/alternatives", draft.id));
+    }
+  }, [draft, isGuest, router]);
+
   const scriptureValid = useMemo(
     () => validScriptureInput(scripture),
     [scripture],

@@ -150,6 +150,11 @@ export function SermonAlternatives() {
           },
           controller.signal,
         );
+        if (normalized.scripture !== draft.scripture) {
+          throw new Error(
+            "저장된 본문 범위를 AI가 다르게 판정했습니다. 본문 입력 화면에서 범위를 다시 확인해 주세요.",
+          );
+        }
         canonicalScripture = normalized.scripture;
         scriptureNormalization = {
           input: draft.scripture,

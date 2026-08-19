@@ -11,6 +11,7 @@ import type { SermonRecord } from "./data.ts";
 
 export const SERMON_ACTIVE_DRAFT_KEY = "sermon-guide:active-draft:v1";
 export const SERMON_DRAFT_PREFIX = "sermon-guide:draft:v1:";
+export const SERMON_DRAFT_BACKUP_PREFIX = "sermon-guide:draft-backup:v1:";
 export const SERMON_HISTORY_KEY = "sermon-guide:history:v1";
 export const SERMON_GUEST_PREVIEW_KEY = "sermon-guide:guest-preview:v1";
 
@@ -167,8 +168,21 @@ export function loadSermonDraft(id: string): SermonDraft | null {
           ];
         })
       : [];
+    const completedGenerationAlternatives =
+      generation &&
+      generation.alternatives.length === generation.expectedCount &&
+      generation.alternatives.every(
+        (alternative) => alternative.scripture === storedScripture,
+      ) &&
+      new Set(
+        generation.alternatives.map((alternative) => alternative.title.trim()),
+      ).size ===
+        generation.expectedCount
+        ? generation.alternatives
+        : null;
     const hasActiveInitialGeneration = Boolean(
       generation?.mode === "initial" &&
+        !completedGenerationAlternatives &&
         generation.alternatives.length < generation.expectedCount,
     );
     const hasLegacyScriptureMismatch = Boolean(
@@ -182,11 +196,27 @@ export function loadSermonDraft(id: string): SermonDraft | null {
     );
     const discardLegacyResults =
       hasActiveInitialGeneration || hasLegacyScriptureMismatch;
+    const resetEditingState =
+      discardLegacyResults || Boolean(completedGenerationAlternatives);
+    if (hasLegacyScriptureMismatch) {
+      try {
+        const backupKey = `${SERMON_DRAFT_BACKUP_PREFIX}${id}`;
+        if (!window.localStorage.getItem(backupKey)) {
+          window.localStorage.setItem(backupKey, raw);
+        }
+      } catch {
+        // Keep loading the safe draft even if this browser cannot store a backup.
+      }
+    }
     return {
       ...createEmptySermonDraft(),
       ...parsed,
       id,
-      stage: hasLegacyScriptureMismatch ? "input" : parsed.stage ?? "options",
+      stage: completedGenerationAlternatives
+        ? "alternatives"
+        : hasLegacyScriptureMismatch
+          ? "input"
+          : parsed.stage ?? "options",
       scripture: storedScripture,
       options: { ...options, aiTier: aiTiers[0], aiTiers },
       scriptureNormalization:
@@ -208,23 +238,24 @@ export function loadSermonDraft(id: string): SermonDraft | null {
           ? parsed.scriptureNormalization
           : null,
       reference: { ...EMPTY_SERMON_REFERENCE, ...parsed.reference },
-      alternatives: discardLegacyResults ? [] : alternatives,
-      generation,
-      selectedAlternativeId: discardLegacyResults
+      alternatives: completedGenerationAlternatives ??
+        (discardLegacyResults ? [] : alternatives),
+      generation: completedGenerationAlternatives ? null : generation,
+      selectedAlternativeId: resetEditingState
         ? null
         : parsed.selectedAlternativeId ?? null,
-      versions: discardLegacyResults ? [] : versions,
+      versions: resetEditingState ? [] : versions,
       revisions:
-        discardLegacyResults || !Array.isArray(parsed.revisions)
+        resetEditingState || !Array.isArray(parsed.revisions)
           ? []
           : parsed.revisions,
       revisionCount:
-        discardLegacyResults || typeof parsed.revisionCount !== "number"
+        resetEditingState || typeof parsed.revisionCount !== "number"
           ? 0
           : parsed.revisionCount,
-      completedAt: discardLegacyResults ? null : parsed.completedAt ?? null,
-      savedSermonId: discardLegacyResults ? null : parsed.savedSermonId ?? null,
-      saveMode: discardLegacyResults ? null : parsed.saveMode ?? null,
+      completedAt: resetEditingState ? null : parsed.completedAt ?? null,
+      savedSermonId: resetEditingState ? null : parsed.savedSermonId ?? null,
+      saveMode: resetEditingState ? null : parsed.saveMode ?? null,
     };
   } catch {
     return null;
@@ -295,7 +326,10 @@ export function completedDraftToRecord(draft: SermonDraft): SermonRecord | null 
   return {
     id: draft.savedSermonId || draft.id,
     title: selected.title,
-    scripture: draft.scripture || selected.scripture,
+    scripture:
+      draft.scripture && selected.scripture === draft.scripture
+        ? draft.scripture
+        : selected.scripture,
     sermonType: draft.options.sermonType || "강해",
     audience: draft.options.audience || "청장년",
     pointCount: selected.sections.points.length,
