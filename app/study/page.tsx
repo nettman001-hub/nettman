@@ -7,7 +7,7 @@ import { requirePageUser } from "@/app/_lib/auth-user";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "스터디 | 로고스AI",
+  title: "스터디",
   description: "완성한 설교와 성경 본문을 원문, 배경과 구조 관점에서 연구합니다.",
 };
 

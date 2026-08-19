@@ -8,7 +8,7 @@ import { NotificationPreferencesForm } from "./notification-preferences-form";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "알림 설정 | 로고스AI",
+  title: "알림 설정",
   description: "설교 완성 알림을 받을 채널을 관리합니다.",
 };
 

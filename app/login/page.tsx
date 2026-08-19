@@ -10,7 +10,7 @@ import { LoginForm } from "./login-form";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "로그인 | 로고스AI",
+  title: "로그인",
   description: "이메일 또는 Google 계정으로 로고스AI에 로그인합니다.",
 };
 

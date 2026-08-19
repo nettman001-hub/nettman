@@ -7,7 +7,7 @@ import { requirePageUser } from "@/app/_lib/auth-user";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "사역 활용 | 로고스AI",
+  title: "사역 활용",
   description: "완성한 설교로 소그룹 질문지, 주보 요약과 숏폼 문구를 만듭니다.",
 };
 

@@ -7,7 +7,7 @@ import { TokenWalletPanel } from "./token-wallet-panel";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "토큰 충전 | 로고스AI",
+  title: "토큰 충전",
   description: "설교 생성 토큰 잔액과 사용 내역을 확인하고 필요한 만큼 일회성으로 충전합니다.",
 };
 

@@ -8,7 +8,7 @@ import { ResetPasswordForm } from "./reset-password-form";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "비밀번호 재설정 | 로고스AI",
+  title: "비밀번호 재설정",
   description: "이메일로 확인된 세션에서 새 비밀번호를 설정합니다.",
 };
 

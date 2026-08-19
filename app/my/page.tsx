@@ -8,7 +8,7 @@ import { ProfileForm } from "./profile-form";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "계정 설정 | 로고스AI",
+  title: "계정 설정",
   description: "표시 이름, 사역 정보와 로그인 보안을 관리합니다.",
 };
 

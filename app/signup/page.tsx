@@ -8,7 +8,7 @@ import { SignupForm } from "./signup-form";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "회원가입 | 로고스AI",
+  title: "회원가입",
   description: "이메일 인증 또는 Google 계정으로 로고스AI 계정을 만듭니다.",
 };
 

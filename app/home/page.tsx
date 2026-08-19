@@ -7,7 +7,7 @@ import { HomeRecentSermons } from "./home-recent-sermons";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "홈 | 로고스AI",
+  title: "홈",
   description: "최근 설교를 확인하고 새로운 설교 준비를 시작합니다.",
 };
 
