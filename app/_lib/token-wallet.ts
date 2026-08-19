@@ -12,6 +12,16 @@ import {
 
 export const WELCOME_TOKEN_GRANT = 200;
 export const TOKENS_PER_1000_KRW = 200;
+
+/**
+ * 임시 오픈 행사: 충전 기본 토큰의 80%를 보너스로 추가 지급한다.
+ * 행사가 끝나면 0으로 되돌리면 안내와 적립이 함께 꺼진다.
+ */
+export const TOPUP_EVENT_BONUS_RATE = 0.8;
+
+export function topupBonusTokens(baseTokens: number): number {
+  return Math.floor(baseTokens * TOPUP_EVENT_BONUS_RATE);
+}
 export const MINIMUM_TOPUP_KRW = 1_000;
 export const MAXIMUM_TOPUP_KRW = 500_000;
 export const TOPUP_PRESETS_KRW = [1_000, 5_000, 10_000, 20_000, 50_000, 100_000] as const;
@@ -115,7 +125,8 @@ export function tokensForKrw(amountKrw: number): number {
       `충전 금액은 ${MINIMUM_TOPUP_KRW.toLocaleString("ko-KR")}원부터 ${MAXIMUM_TOPUP_KRW.toLocaleString("ko-KR")}원까지 1,000원 단위로 입력해 주세요.`,
     );
   }
-  return (amountKrw / 1_000) * TOKENS_PER_1000_KRW;
+  const baseTokens = (amountKrw / 1_000) * TOKENS_PER_1000_KRW;
+  return baseTokens + topupBonusTokens(baseTokens);
 }
 
 export async function ensureTokenWallet(

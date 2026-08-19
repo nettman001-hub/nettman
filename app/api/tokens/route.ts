@@ -3,6 +3,7 @@ import {
   ensureTokenWallet,
   getTokenWallet,
   TOKENS_PER_1000_KRW,
+  TOPUP_EVENT_BONUS_RATE,
   TOPUP_PRESETS_KRW,
   SERMON_TOKEN_COSTS,
   tokenBillingConfigured,
@@ -34,6 +35,7 @@ export async function GET(request: Request): Promise<Response> {
       pricing: {
         welcomeGrant: WELCOME_TOKEN_GRANT,
         tokensPer1000Krw: TOKENS_PER_1000_KRW,
+        topupBonusRate: TOPUP_EVENT_BONUS_RATE,
         topupPresetsKrw: TOPUP_PRESETS_KRW,
         sermonCosts: SERMON_TOKEN_COSTS,
       },
@@ -84,6 +86,7 @@ export async function GET(request: Request): Promise<Response> {
         pricing: {
           welcomeGrant: WELCOME_TOKEN_GRANT,
           tokensPer1000Krw: TOKENS_PER_1000_KRW,
+          topupBonusRate: TOPUP_EVENT_BONUS_RATE,
           topupPresetsKrw: TOPUP_PRESETS_KRW,
           sermonCosts: SERMON_TOKEN_COSTS,
         },

@@ -23,6 +23,7 @@ type WalletResponse = {
   pricing: {
     welcomeGrant: number;
     tokensPer1000Krw: number;
+    topupBonusRate?: number;
     topupPresetsKrw: number[];
     sermonCosts: {
       basic: number;
@@ -218,10 +219,13 @@ export function TokenWalletPanel({ email }: { email: string }) {
     amountKrw >= 1_000 &&
     amountKrw <= 500_000 &&
     amountKrw % 1_000 === 0;
-  const tokenAmount = useMemo(
+  const bonusRate = data?.pricing.topupBonusRate ?? 0;
+  const baseTokenAmount = useMemo(
     () => (validAmount ? (amountKrw / 1_000) * (data?.pricing.tokensPer1000Krw ?? 200) : 0),
     [amountKrw, data?.pricing.tokensPer1000Krw, validAmount],
   );
+  const bonusTokenAmount = Math.floor(baseTokenAmount * bonusRate);
+  const tokenAmount = baseTokenAmount + bonusTokenAmount;
 
   async function checkout() {
     if (!validAmount || checkoutPending || !data?.checkoutConfigured) return;
@@ -303,7 +307,15 @@ export function TokenWalletPanel({ email }: { email: string }) {
   ];
 
   return (
-    <div className="mt-8 grid gap-7 lg:grid-cols-[minmax(0,1.45fr)_minmax(18rem,.75fr)]">
+    <div className="mt-8 space-y-7">
+      {bonusRate > 0 ? (
+        <div className="rounded-[1.75rem] border border-[#e8b98a] bg-gradient-to-r from-[#b96331] to-[#8a4a22] px-6 py-5 text-white shadow-[0_18px_55px_rgba(150,80,35,.18)] sm:px-8">
+          <p className="text-[11px] font-extrabold uppercase tracking-[.2em] text-[#ffd9b8]">Limited Open Event</p>
+          <p className="mt-2 font-serif text-2xl font-bold tracking-[-.02em]">임시 오픈 행사 — 80% 할인!</p>
+          <p className="mt-1 text-sm font-semibold text-[#ffe9d6]">지금 충전하면 충전 토큰의 {Math.round(bonusRate * 100)}%를 보너스 토큰으로 더 드립니다.</p>
+        </div>
+      ) : null}
+      <div className="grid gap-7 lg:grid-cols-[minmax(0,1.45fr)_minmax(18rem,.75fr)]">
       <section
         className="overflow-hidden rounded-[1.75rem] border border-[#d8d4cc] bg-white shadow-[0_18px_55px_rgba(40,48,43,.07)]"
         aria-labelledby="topup-title"
@@ -325,7 +337,7 @@ export function TokenWalletPanel({ email }: { email: string }) {
               </p>
             </div>
             <span className="rounded-full bg-[#edf4ef] px-4 py-2 text-xs font-extrabold text-[#315746]">
-              KRW · 1,000원 = 200토큰
+              KRW · 1,000원 = 200토큰{bonusRate > 0 ? ` + 보너스 ${Math.round(200 * bonusRate)}토큰` : ""}
             </span>
           </div>
         </div>
@@ -440,6 +452,11 @@ export function TokenWalletPanel({ email }: { email: string }) {
               <p className="mt-1 text-3xl font-black tracking-[-.04em] text-[#b96331]">
                 +{formatNumber(tokenAmount)}
               </p>
+              {bonusTokenAmount > 0 ? (
+                <p className="mt-1 text-xs font-extrabold text-[#b96331]">
+                  기본 {formatNumber(baseTokenAmount)} + 행사 보너스 {formatNumber(bonusTokenAmount)} ({Math.round(bonusRate * 100)}%)
+                </p>
+              ) : null}
             </div>
           </div>
           <p className="mt-3 text-xs leading-5 text-[#7b837f]">
@@ -508,6 +525,7 @@ export function TokenWalletPanel({ email }: { email: string }) {
           ) : <p className="mt-4 text-xs text-[#7b8580]">아직 사용 내역이 없습니다.</p>}
         </section>
       </aside>
+      </div>
     </div>
   );
 }
