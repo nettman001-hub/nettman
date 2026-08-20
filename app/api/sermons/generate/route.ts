@@ -1573,7 +1573,10 @@ export async function POST(request: Request): Promise<Response> {
       if (deepPipeline && aiResult && db && generationId) {
         // Judge on the cheapest configured engine; findings drive at most one
         // targeted section patch. The user's revision quota is untouched.
-        const judgeAi = managedAiConfigs.basic ?? userAi;
+        const judgeAi =
+          managedAiConfigs.basic && managedAiConfigs.basic.engine !== "custom"
+            ? managedAiConfigs.basic
+            : userAi;
         const judgeStartedAt = Date.now();
         const evaluation = await evaluateSermonDraftDepth(
           aiResult.value,

@@ -347,14 +347,28 @@ async function providerCall(args: {
   const signal = args.signal
     ? AbortSignal.any([args.signal, timeoutSignal])
     : timeoutSignal;
-  const response = await fetch(providerRequest.endpoint, {
-    method: "POST",
-    headers: providerRequest.headers,
-    body: JSON.stringify(providerRequest.body),
-    cache: "no-store",
-    redirect: "error",
-    signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(providerRequest.endpoint, {
+      method: "POST",
+      headers: providerRequest.headers,
+      body: JSON.stringify(providerRequest.body),
+      cache: "no-store",
+      redirect: "error",
+      signal,
+    });
+  } catch (caught) {
+    if (caught instanceof DOMException) throw caught;
+    // Network-level failure (unreachable host, refused connection). Custom
+    // engines typically point at a local LLM that the server cannot reach.
+    throw new UserAiProviderError(
+      args.ai.engine === "custom"
+        ? "사용자 지정 AI 엔진에 연결하지 못했습니다. 관리자 설정의 엔진 주소가 서버에서 접근 가능한지 확인해 주세요."
+        : "AI 엔진에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      "upstream",
+      502,
+    );
+  }
   const body = await readLimitedProviderBody(response);
   return { response, body };
 }

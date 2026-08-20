@@ -429,7 +429,7 @@ export function SermonInput() {
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
           mode: "clarify",
-          aiTier: "basic",
+          aiTier: draft.options.aiTier,
           scripture: scripture.trim(),
           notes: [
             draft.options.topic ? `설교 제목·방향: ${draft.options.topic}` : "",
