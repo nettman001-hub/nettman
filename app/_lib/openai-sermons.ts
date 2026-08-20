@@ -2387,6 +2387,7 @@ export async function generateSermonDesignOutlines(
   request: GenerateSermonsRequest,
   ai?: AiRequestConfig,
   signal?: AbortSignal,
+  exegesis?: SermonExegesisBrief,
 ): Promise<AiGenerated<SermonDesignOutline[]> | null> {
   const pointCount = request.options.pointCount ?? 3;
   try {
@@ -2418,6 +2419,9 @@ export async function generateSermonDesignOutlines(
           ? [`구속사적 교차참조 후보(TSK): ${crossReferences.join("; ")}`]
           : []),
         `설교 유형: ${request.options.sermonType}${request.options.worshipType ? ` / 예배 유형: ${request.options.worshipType}` : ""} / 청중: ${request.options.audience} / 청중 상황: ${request.options.audienceSituation} / 대지 수: ${pointCount} / 정서적 톤: ${request.options.tone}`,
+        ...(exegesis
+          ? [`서버가 준비한 주해 브리프(JSON) — 설계는 이 관찰에 근거해야 합니다: ${JSON.stringify(exegesis)}`]
+          : []),
         ...(preacherContext ? [preacherContext] : []),
       ].join("\n\n"),
       ai,
@@ -2437,6 +2441,253 @@ export async function generateSermonDesignOutlines(
   }
 }
 
+export type SermonExegesisBrief = {
+  literaryContext: string;
+  flowByVerseRange: Array<{ range: string; observation: string }>;
+  keyTerms: Array<{ term: string; note: string; confidence: "high" | "medium" | "low" }>;
+  canonicalContext: string;
+  interpretiveIssues: string[];
+};
+
+const EXEGESIS_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "literaryContext",
+    "flowByVerseRange",
+    "keyTerms",
+    "canonicalContext",
+    "interpretiveIssues",
+  ],
+  properties: {
+    literaryContext: { type: "string" },
+    flowByVerseRange: {
+      type: "array",
+      minItems: 2,
+      maxItems: 6,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["range", "observation"],
+        properties: {
+          range: { type: "string" },
+          observation: { type: "string" },
+        },
+      },
+    },
+    keyTerms: {
+      type: "array",
+      minItems: 0,
+      maxItems: 5,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["term", "note", "confidence"],
+        properties: {
+          term: { type: "string" },
+          note: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+        },
+      },
+    },
+    canonicalContext: { type: "string" },
+    interpretiveIssues: {
+      type: "array",
+      minItems: 0,
+      maxItems: 3,
+      items: { type: "string" },
+    },
+  },
+};
+
+function validateExegesisPayload(value: unknown): StructuredValueValidation {
+  if (!value || typeof value !== "object") {
+    return { ok: false, feedback: "\uC8FC\uD574 \uBE0C\uB9AC\uD504 \uAD6C\uC870\uAC00 \uC62C\uBC14\uB974\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." };
+  }
+  const brief = value as Partial<SermonExegesisBrief>;
+  const issues: string[] = [];
+  if (typeof brief.literaryContext !== "string" || brief.literaryContext.trim().length < 20) {
+    issues.push("literaryContext\uB294 \uC55E\uB4A4 \uBB38\uB9E5\uC744 \uB2F4\uC544 20\uC790 \uC774\uC0C1\uC774\uC5B4\uC57C \uD569\uB2C8\uB2E4.");
+  }
+  if (!Array.isArray(brief.flowByVerseRange) || brief.flowByVerseRange.length < 2) {
+    issues.push("flowByVerseRange\uB294 \uBCF8\uBB38 \uD750\uB984\uC744 2\uB2E8\uACC4 \uC774\uC0C1\uC73C\uB85C \uB098\uB220\uC57C \uD569\uB2C8\uB2E4.");
+  }
+  if (typeof brief.canonicalContext !== "string" || brief.canonicalContext.trim().length < 15) {
+    issues.push("canonicalContext\uB294 \uAD6C\uC18D\uC0AC\uC801 \uC704\uCE58\uB97C 15\uC790 \uC774\uC0C1\uC73C\uB85C \uC11C\uC220\uD574\uC57C \uD569\uB2C8\uB2E4.");
+  }
+  if (issues.length) return { ok: false, feedback: issues.join("\n") };
+  return { ok: true, value: brief };
+}
+
+/**
+ * The shared exegesis brief runs once per generation for the reasoning tier
+ * and feeds the design contract and every draft. Low-confidence key terms are
+ * kept in the brief but the drafts are told not to assert them.
+ */
+export async function generateSermonExegesisBrief(
+  request: GenerateSermonsRequest,
+  ai?: AiRequestConfig,
+  signal?: AbortSignal,
+): Promise<AiGenerated<SermonExegesisBrief> | null> {
+  try {
+    const passage = await getScripturePassage(request.scripture, { maxVerses: 60 });
+    if (!passage) return null;
+    const crossReferences = await getScriptureCrossReferences(request.scripture, 6);
+    const result = await structuredResponse({
+      name: "sermon_exegesis_brief",
+      schema: EXEGESIS_SCHEMA,
+      maxOutputTokens: resolveSermonMaxOutputTokens(ai, 2_200, "outline"),
+      instructions: [
+        "\uB2F9\uC2E0\uC740 \uC131\uC11C \uC8FC\uD574 \uD6C8\uB828\uC744 \uBC1B\uC740 \uC5F0\uAD6C \uC870\uAD50\uC785\uB2C8\uB2E4. \uC124\uAD50 \uC124\uACC4 \uC804\uC5D0 \uC544\uB798 \uBCF8\uBB38\uC758 \uC8FC\uD574 \uBE0C\uB9AC\uD504\uB97C \uC791\uC131\uD558\uC138\uC694.",
+        "literaryContext: \uC774 \uBCF8\uBB38\uC774 \uCC45 \uC804\uCCB4\uC640 \uC55E\uB4A4 \uB2E8\uB77D\uC5D0\uC11C \uCC28\uC9C0\uD558\uB294 \uC790\uB9AC. flowByVerseRange: \uBCF8\uBB38\uC744 2~6\uAC1C \uD750\uB984 \uB2E8\uC704\uB85C \uB098\uB204\uACE0 \uAC01 \uB2E8\uC704\uC5D0\uC11C \uC2E4\uC81C\uB85C \uAD00\uCC30\uB418\uB294 \uAC83. keyTerms: \uD575\uC2EC \uB2E8\uC5B4 \uCD5C\uB300 5\uAC1C \u2014 \uB110\uB9AC \uD569\uC758\uB41C \uC758\uBBF8\uB9CC note\uC5D0 \uC801\uACE0 confidence(high/medium/low)\uB97C \uC2A4\uC2A4\uB85C \uB9E4\uAE30\uC138\uC694. canonicalContext: \uC774 \uBCF8\uBB38\uC758 \uAD6C\uC18D\uC0AC\uC801 \uC704\uCE58(\uADF8\uB9AC\uC2A4\uB3C4\uC640\uC758 \uC5F0\uACB0). interpretiveIssues: \uD574\uC11D\uC0C1 \uC8FC\uC758\uD560 \uC7C1\uC810 \uCD5C\uB300 3\uAC1C.",
+        "\uC81C\uACF5\uB41C \uAC1C\uC5ED\uD55C\uAE00\uD310 \uBCF8\uBB38\uC758 \uC2E4\uC81C \uBB38\uC7A5\uC5D0 \uADFC\uAC70\uD574 \uAD00\uCC30\uD558\uACE0, \uD655\uC2E0\uC774 \uC5C6\uB294 \uC6D0\uC5B4\u00B7\uC5ED\uC0AC \uC8FC\uC7A5\uC5D0\uB294 confidence\uB97C \uB0AE\uAC8C \uB9E4\uAE30\uAC70\uB098 \uC0DD\uB7B5\uD558\uC138\uC694.",
+        "\uB2C8\uCF00\uC544 \uC2E0\uACBD\uACFC \uC0AC\uB3C4\uC2E0\uACBD\uC774 \uACE0\uBC31\uD558\uB294 \uBC94\uC704\uB97C \uBC97\uC5B4\uB098\uB294 \uB2E8\uC815\uC740 \uD558\uC9C0 \uB9C8\uC138\uC694.",
+      ].join("\n"),
+      input: [
+        "\uC11C\uBC84\uAC00 AI\uB85C \uD655\uC778\uD55C \uD45C\uC900 \uC131\uACBD \uBCF8\uBB38: " + request.scripture,
+        scripturePassagePromptBlock(passage),
+        ...(crossReferences.length
+          ? ["\uAD6C\uC18D\uC0AC\uC801 \uAD50\uCC28\uCC38\uC870 \uD6C4\uBCF4(TSK): " + crossReferences.join("; ")]
+          : []),
+        "\uC124\uAD50 \uBC29\uD5A5(\uCC38\uACE0): " + request.options.topic,
+      ].join("\n\n"),
+      ai,
+      signal,
+      validate: (value) => validateExegesisPayload(value),
+      invalidResponseMessage: "AI \uC81C\uACF5\uC790\uAC00 \uC8FC\uD574 \uBE0C\uB9AC\uD504\uC758 \uAD6C\uC870\uB97C \uCDA9\uC871\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.",
+    });
+    if (!result) return null;
+    return { ...result, value: result.value as SermonExegesisBrief };
+  } catch (caught) {
+    console.warn("[sermon-ai] exegesis brief skipped", {
+      reason: caught instanceof Error ? caught.name : "unknown",
+    });
+    return null;
+  }
+}
+
+export type SermonDepthEvaluation = {
+  scores: Array<{ rubric: string; score: number; evidence: string }>;
+  findings: Array<{
+    section: "introduction" | "body" | "conclusion" | "application";
+    severity: "high" | "medium" | "low";
+    fix: string;
+  }>;
+  theologicalFlags: Array<{ claim: string; section: string; reason: string }>;
+};
+
+const DEPTH_EVALUATION_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["scores", "findings", "theologicalFlags"],
+  properties: {
+    scores: {
+      type: "array",
+      minItems: 5,
+      maxItems: 7,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["rubric", "score", "evidence"],
+        properties: {
+          rubric: { type: "string" },
+          score: { type: "integer", minimum: 0, maximum: 2 },
+          evidence: { type: "string" },
+        },
+      },
+    },
+    findings: {
+      type: "array",
+      minItems: 0,
+      maxItems: 4,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["section", "severity", "fix"],
+        properties: {
+          section: {
+            type: "string",
+            enum: ["introduction", "body", "conclusion", "application"],
+          },
+          severity: { type: "string", enum: ["high", "medium", "low"] },
+          fix: { type: "string" },
+        },
+      },
+    },
+    theologicalFlags: {
+      type: "array",
+      minItems: 0,
+      maxItems: 3,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["claim", "section", "reason"],
+        properties: {
+          claim: { type: "string" },
+          section: { type: "string" },
+          reason: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+const DEPTH_RUBRIC = [
+  "\uD1B5\uC77C\uC131 \u2014 \uC124\uAD50 \uC804\uCCB4\uAC00 \uD55C \uBB38\uC7A5 \uC911\uC2EC \uBA85\uC81C\uC758 \uC804\uAC1C\uC778\uAC00",
+  "\uBCF8\uBB38 \uBC00\uCC29\uB3C4 \u2014 \uC774 \uBCF8\uBB38 \uC5C6\uC774\uB3C4 \uC131\uB9BD\uD558\uB294 \uC124\uAD50\uB294 \uC544\uB2CC\uAC00",
+  "\uC808 \uCEE4\uBC84\uB9AC\uC9C0 \u2014 \uBCF8\uBB38 \uBC94\uC704\uC758 \uC808\uB4E4\uC774 \uC2E4\uC81C\uB85C \uB2E4\uB904\uC9C0\uB294\uAC00",
+  "\uC740\uD61C-\uBA85\uB839 \uC21C\uC11C \u2014 \uBCF5\uC74C \uC120\uD3EC \uC5C6\uC774 \uBA85\uB839\uB9CC \uB098\uC5F4\uD558\uC9C0 \uC54A\uB294\uAC00",
+  "\uC801\uC6A9 \uAD6C\uCCB4\uC131 \u2014 \uCCAD\uC911\uC758 \uC2E4\uC81C \uC7A5\uBA74\uACFC \uC608\uC0C1 \uBC18\uBC1C\uC744 \uB2E4\uB8E8\uB294\uAC00",
+] as const;
+
+/**
+ * A separate judge call scores the finished draft against the depth rubric.
+ * Scores without a manuscript quotation are forced to 0 by instruction to
+ * resist leniency bias. Findings drive at most one targeted section patch.
+ */
+export async function evaluateSermonDraftDepth(
+  sermon: SermonAlternative,
+  request: GenerateSermonsRequest,
+  ai?: AiRequestConfig,
+  signal?: AbortSignal,
+): Promise<AiGenerated<SermonDepthEvaluation> | null> {
+  try {
+    const result = await structuredResponse({
+      name: "sermon_depth_evaluation",
+      schema: DEPTH_EVALUATION_SCHEMA,
+      maxOutputTokens: resolveSermonMaxOutputTokens(ai, 1_800, "judge"),
+      instructions: [
+        "\uB2F9\uC2E0\uC740 \uC124\uAD50\uD559 \uD6C8\uB828\uC744 \uBC1B\uC740 \uC5C4\uACA9\uD55C \uD3C9\uAC00\uC790\uC785\uB2C8\uB2E4. \uC544\uB798 \uC124\uAD50 \uCD08\uC548\uC744 \uB8E8\uBE0C\uB9AD\uC73C\uB85C \uCC44\uC810\uD558\uC138\uC694. \uC0DD\uC131 \uC9C0\uC2DC\uB294 \uC78A\uACE0 \uC624\uC9C1 \uC6D0\uACE0\uB9CC \uD3C9\uAC00\uD569\uB2C8\uB2E4.",
+        "\uB8E8\uBE0C\uB9AD(0~2\uC810): " + DEPTH_RUBRIC.map((axis, index) => (index + 1) + ") " + axis).join(" / "),
+        "\uAC01 \uC810\uC218\uC758 evidence\uC5D0\uB294 \uBC18\uB4DC\uC2DC \uC6D0\uACE0\uC5D0\uC11C \uC9C1\uC811 \uC778\uC6A9\uD55C \uBB38\uC7A5\uC744 \uB2F4\uC73C\uC138\uC694. \uC778\uC6A9\uD560 \uADFC\uAC70\uAC00 \uC5C6\uC73C\uBA74 \uADF8 \uCD95\uC740 0\uC810\uC785\uB2C8\uB2E4. \uC810\uC218\uB97C \uAD00\uB300\uD558\uAC8C \uBD80\uD480\uB9AC\uC9C0 \uB9C8\uC138\uC694.",
+        "\uAC1C\uC120\uC774 \uD544\uC694\uD55C \uACF3\uC740 findings\uC5D0 \uCD5C\uB300 4\uAC1C\uAE4C\uC9C0: section(introduction/body/conclusion/application), severity, \uADF8\uB9AC\uACE0 \uD3B8\uC9D1\uC790\uAC00 \uBC14\uB85C \uC2E4\uD589\uD560 \uC218 \uC788\uB294 \uAD6C\uCCB4\uC801 fix \uC9C0\uC2DC \uD55C \uBB38\uC7A5.",
+        "\uC815\uD1B5 \uC2E0\uC870(\uB2C8\uCF00\uC544\u00B7\uC0AC\uB3C4\uC2E0\uACBD)\uC758 \uBC94\uC704\uB97C \uBC97\uC5B4\uB098\uB294 \uB2E8\uC815\uC774\uB098 \uBCF8\uBB38 \uC65C\uACE1\uC774 \uBCF4\uC774\uBA74 theologicalFlags\uC5D0 \uB2F4\uC73C\uC138\uC694. \uAD50\uB2E8\uBCC4 \uC815\uB2F9\uD55C \uAC15\uC870\uB294 \uD50C\uB798\uADF8\uD558\uC9C0 \uB9C8\uC138\uC694.",
+      ].join("\n"),
+      input: [
+        "\uBCF8\uBB38: " + sermon.scripture,
+        "\uCCAD\uC911: " + request.options.audience + " (" + request.options.audienceSituation + ")",
+        "\uC124\uAD50 \uC6D0\uACE0(JSON): " + sermonAlternativePrompt(sermon),
+      ].join("\n\n"),
+      ai,
+      signal,
+      validate: (value) => {
+        if (!value || typeof value !== "object" || !Array.isArray((value as { scores?: unknown }).scores)) {
+          return { ok: false, feedback: "\uD3C9\uAC00 \uAD6C\uC870\uAC00 \uC62C\uBC14\uB974\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." };
+        }
+        return { ok: true, value };
+      },
+      invalidResponseMessage: "AI \uC81C\uACF5\uC790\uAC00 \uD3C9\uAC00 \uACB0\uACFC\uC758 \uAD6C\uC870\uB97C \uCDA9\uC871\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.",
+    });
+    if (!result) return null;
+    return { ...result, value: result.value as SermonDepthEvaluation };
+  } catch (caught) {
+    console.warn("[sermon-ai] depth evaluation skipped", {
+      reason: caught instanceof Error ? caught.name : "unknown",
+    });
+    return null;
+  }
+}
+
 async function requestAiAlternative(
   request: GenerateSermonsRequest,
   index: number,
@@ -2444,6 +2695,7 @@ async function requestAiAlternative(
   signal: AbortSignal | undefined,
   customDnsChecked = false,
   design?: SermonDesignOutline,
+  exegesis?: SermonExegesisBrief,
 ): Promise<AiGenerated<unknown> | null> {
   const pointCount = request.options.pointCount ?? 3;
   const targetCharacters = request.options.targetCharacters ?? 3_000;
@@ -2499,6 +2751,11 @@ async function requestAiAlternative(
           ]
         : []),
       "니케아 신경과 사도신경이 고백하는 삼위일체·기독론의 범위를 벗어나는 단정, 공로로 구원을 얻는다는 주장, 재림 시점 예측, 성경 밖 새로운 계시 주장은 하지 마세요.",
+      ...(exegesis
+        ? [
+            "서버가 준비한 주해 브리프를 관찰의 근거로 사용하세요. keyTerms 중 confidence가 'low'인 항목은 원고에서 단정적으로 주장하지 말고 생략하거나 완화된 표현으로만 언급하세요.",
+          ]
+        : []),
       `삶의 적용에서는 청중(${request.options.audience} · ${request.options.audienceSituation})을 두세 부류로 나누어, 부류마다 주중의 구체적인 삶의 장면 하나를 그리고 예상되는 속마음의 반발 한 가지에 응답하세요. 명령보다 먼저 하나님이 이미 행하신 은혜를 근거로 제시한 뒤 실천을 권하세요.`,
       ...(depthTier === "reasoning"
         ? [
@@ -2526,6 +2783,9 @@ async function requestAiAlternative(
       `사용자가 입력한 설교 제목·방향: ${request.options.topic}`,
       `서버가 AI로 확인한 표준 성경 본문: ${request.scripture}`,
       ...(passage ? [scripturePassagePromptBlock(passage)] : []),
+      ...(exegesis
+        ? [`주해 브리프(JSON): ${JSON.stringify(exegesis)}`]
+        : []),
       ...(crossReferences.length
         ? [
             `구속사적 연결에 참고할 수 있는 교차참조 후보(TSK): ${crossReferences.join("; ")} — 필요한 경우에만 자연스럽게 활용하고 본문 취지를 벗어나지 마세요.`,
@@ -2582,6 +2842,7 @@ export async function generateAiSermonAlternative(
   ai?: AiRequestConfig,
   signal?: AbortSignal,
   design?: SermonDesignOutline,
+  exegesis?: SermonExegesisBrief,
 ): Promise<AiGenerated<SermonAlternative> | null> {
   const pointCount = request.options.pointCount ?? 3;
   const targetCharacters = request.options.targetCharacters ?? 3_000;
@@ -2592,6 +2853,7 @@ export async function generateAiSermonAlternative(
     signal,
     false,
     design,
+    exegesis,
   );
   if (!result) return null;
 

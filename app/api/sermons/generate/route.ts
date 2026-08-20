@@ -1,13 +1,17 @@
 import { generateLocalSermons } from "@/app/_lib/sermon-content";
 import {
   assembleAiSermonAlternative,
+  evaluateSermonDraftDepth,
   generateAiSermonAlternative,
   generateAiSermonFragment,
   generateAiSermons,
   generateSermonDesignOutlines,
+  generateSermonExegesisBrief,
   isValidSermonGenerationFragment,
   planSermonGenerationSteps,
+  reviseAiSermon,
   type SermonDesignOutline,
+  type SermonExegesisBrief,
   type SermonGenerationFragment,
   type SermonGenerationStep,
   UserAiProviderError,
@@ -606,6 +610,66 @@ export async function GET(request: Request): Promise<Response> {
  */
 const SHARED_DESIGN_POSITION = 0;
 const SHARED_DESIGN_STEP = 0;
+const SHARED_EXEGESIS_STEP = 1;
+const DEPTH_EVALUATION_STEP = 90;
+
+async function loadSharedExegesisBrief(
+  db: NonNullable<ReturnType<typeof getD1>>,
+  generationId: string,
+): Promise<SermonExegesisBrief | null> {
+  try {
+    const row = await db
+      .prepare(
+        `SELECT part_json FROM sermon_generation_parts
+         WHERE generation_id = ? AND position = ? AND step = ?`,
+      )
+      .bind(generationId, SHARED_DESIGN_POSITION, SHARED_EXEGESIS_STEP)
+      .first<{ part_json: string }>();
+    if (!row || typeof row.part_json !== "string") return null;
+    const parsed = JSON.parse(row.part_json) as SermonExegesisBrief;
+    return parsed && Array.isArray(parsed.flowByVerseRange) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function savePipelinePart(args: {
+  db: NonNullable<ReturnType<typeof getD1>>;
+  generationId: string;
+  position: number;
+  step: number;
+  payload: unknown;
+  provider: string;
+  model: string | null;
+  reasoningEffort: string | null;
+  elapsedMs: number;
+}): Promise<void> {
+  try {
+    await args.db
+      .prepare(
+        `INSERT INTO sermon_generation_parts
+          (id, generation_id, position, step, part_json, provider, model,
+           reasoning_effort, elapsed_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(generation_id, position, step) DO NOTHING`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        args.generationId,
+        args.position,
+        args.step,
+        JSON.stringify(args.payload),
+        args.provider,
+        args.model,
+        args.reasoningEffort,
+        args.elapsedMs,
+        new Date().toISOString(),
+      )
+      .run();
+  } catch {
+    // Pipeline artifacts are enhancements; persistence failures stay silent.
+  }
+}
 
 function parseSharedSermonDesign(raw: unknown): SermonDesignOutline[] | null {
   if (typeof raw !== "string") return null;
@@ -1427,8 +1491,45 @@ export async function POST(request: Request): Promise<Response> {
         ];
       }
     } else if (splitGeneration && position) {
+      // Deep pipeline: the reasoning tier runs a shared exegesis brief and a
+      // post-draft depth judge; every hosted tier shares the design contract.
+      const deepPipeline = selectedAiTier === "reasoning" && Boolean(userAi);
+      let sharedExegesis: SermonExegesisBrief | null = null;
       let sharedDesign: SermonDesignOutline[] | null = null;
       if ((userAi || useManagedAi) && db && generationId) {
+        if (deepPipeline) {
+          sharedExegesis = await loadSharedExegesisBrief(db, generationId);
+          if (!sharedExegesis && position === 1) {
+            const exegesisStartedAt = Date.now();
+            const exegesisResult = await generateSermonExegesisBrief(
+              normalized,
+              userAi,
+              request.signal,
+            );
+            if (exegesisResult) {
+              sharedExegesis = exegesisResult.value;
+              const elapsedMs = Date.now() - exegesisStartedAt;
+              console.warn("[sermon-ai] deep-pipeline", {
+                stage: "exegesis",
+                position,
+                elapsedMs,
+                engine: exegesisResult.engine,
+                model: exegesisResult.model ?? null,
+              });
+              await savePipelinePart({
+                db,
+                generationId,
+                position: SHARED_DESIGN_POSITION,
+                step: SHARED_EXEGESIS_STEP,
+                payload: exegesisResult.value,
+                provider: exegesisResult.engine,
+                model: exegesisResult.model ?? null,
+                reasoningEffort: exegesisResult.reasoningEffort ?? null,
+                elapsedMs,
+              });
+            }
+          }
+        }
         sharedDesign = await loadSharedSermonDesign(db, generationId);
         if (!sharedDesign && position === 1) {
           const designStartedAt = Date.now();
@@ -1436,9 +1537,17 @@ export async function POST(request: Request): Promise<Response> {
             normalized,
             userAi,
             request.signal,
+            sharedExegesis ?? undefined,
           );
           if (designResult) {
             sharedDesign = designResult.value;
+            console.warn("[sermon-ai] deep-pipeline", {
+              stage: "design",
+              position,
+              elapsedMs: Date.now() - designStartedAt,
+              engine: designResult.engine,
+              model: designResult.model ?? null,
+            });
             await saveSharedSermonDesign({
               db,
               generationId,
@@ -1451,15 +1560,95 @@ export async function POST(request: Request): Promise<Response> {
           }
         }
       }
-      const aiResult = userAi || useManagedAi
+      let aiResult = userAi || useManagedAi
         ? await generateAiSermonAlternative(
             normalized,
             position,
             userAi,
             request.signal,
             sharedDesign?.[position - 1],
+            sharedExegesis ?? undefined,
           )
         : null;
+      if (deepPipeline && aiResult && db && generationId) {
+        // Judge on the cheapest configured engine; findings drive at most one
+        // targeted section patch. The user's revision quota is untouched.
+        const judgeAi = managedAiConfigs.basic ?? userAi;
+        const judgeStartedAt = Date.now();
+        const evaluation = await evaluateSermonDraftDepth(
+          aiResult.value,
+          normalized,
+          judgeAi,
+          request.signal,
+        );
+        if (evaluation) {
+          console.warn("[sermon-ai] deep-pipeline", {
+            stage: "judge",
+            position,
+            elapsedMs: Date.now() - judgeStartedAt,
+            engine: evaluation.engine,
+            model: evaluation.model ?? null,
+            findings: evaluation.value.findings.length,
+            flags: evaluation.value.theologicalFlags.length,
+          });
+          await savePipelinePart({
+            db,
+            generationId,
+            position,
+            step: DEPTH_EVALUATION_STEP,
+            payload: evaluation.value,
+            provider: evaluation.engine,
+            model: evaluation.model ?? null,
+            reasoningEffort: evaluation.reasoningEffort ?? null,
+            elapsedMs: Date.now() - judgeStartedAt,
+          });
+          const target = evaluation.value.findings.find(
+            (finding) => finding.severity === "high" && finding.fix.trim().length >= 10,
+          );
+          if (target) {
+            try {
+              const patchStartedAt = Date.now();
+              const patched = await reviseAiSermon(
+                {
+                  draftId: normalized.draftId,
+                  sermon: aiResult.value,
+                  options: normalized.options,
+                  section: target.section,
+                  instruction: target.fix.trim().slice(0, 1_000),
+                  toneAdjustment: "",
+                  revisionCount: 0,
+                  ...(normalized.preacherContext
+                    ? { preacherContext: normalized.preacherContext }
+                    : {}),
+                },
+                userAi,
+                request.signal,
+              );
+              if (patched) {
+                console.warn("[sermon-ai] deep-pipeline", {
+                  stage: "patch",
+                  position,
+                  section: target.section,
+                  elapsedMs: Date.now() - patchStartedAt,
+                  engine: patched.engine,
+                  model: patched.model ?? null,
+                });
+                aiResult = {
+                  ...aiResult,
+                  value: {
+                    ...patched.value,
+                    id: aiResult.value.id,
+                    scripture: aiResult.value.scripture,
+                    ...(aiResult.value.design ? { design: aiResult.value.design } : {}),
+                  },
+                };
+              }
+            } catch {
+              // The unpatched draft is already valid; keep it on patch failure.
+            }
+          }
+        }
+      }
       alternatives = [
         aiResult?.value ?? generateLocalSermons(normalized)[position - 1],
       ];
