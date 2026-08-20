@@ -1493,18 +1493,36 @@ export async function POST(request: Request): Promise<Response> {
     } else if (splitGeneration && position) {
       // Deep pipeline: the reasoning tier runs a shared exegesis brief and a
       // post-draft depth judge; every hosted tier shares the design contract.
+      // Every auxiliary stage is time-budgeted so the manuscript call always
+      // keeps the lion's share of the 240s function window — a slow stage is
+      // skipped, never allowed to starve the draft into a runtime timeout.
+      const generationStartedAt = Date.now();
+      const DRAFT_RESERVE_MS = 150_000;
+      const AUX_STAGE_TIMEOUT_MS = 45_000;
+      const remainingBudgetMs = () =>
+        240_000 - (Date.now() - generationStartedAt);
+      const auxSignal = (capMs: number) =>
+        AbortSignal.any([request.signal, AbortSignal.timeout(capMs)]);
+      // Planning and judging are structured extraction tasks: run them
+      // without extended reasoning so they finish in seconds, and spend the
+      // thinking budget on the manuscript itself.
+      const auxAi = userAi ? { ...userAi, reasoningEffort: "default" as const } : userAi;
       const deepPipeline = selectedAiTier === "reasoning" && Boolean(userAi);
       let sharedExegesis: SermonExegesisBrief | null = null;
       let sharedDesign: SermonDesignOutline[] | null = null;
       if ((userAi || useManagedAi) && db && generationId) {
         if (deepPipeline) {
           sharedExegesis = await loadSharedExegesisBrief(db, generationId);
-          if (!sharedExegesis && position === 1) {
+          if (
+            !sharedExegesis &&
+            position === 1 &&
+            remainingBudgetMs() > DRAFT_RESERVE_MS + AUX_STAGE_TIMEOUT_MS * 2
+          ) {
             const exegesisStartedAt = Date.now();
             const exegesisResult = await generateSermonExegesisBrief(
               normalized,
-              userAi,
-              request.signal,
+              auxAi,
+              auxSignal(AUX_STAGE_TIMEOUT_MS),
             );
             if (exegesisResult) {
               sharedExegesis = exegesisResult.value;
@@ -1531,12 +1549,16 @@ export async function POST(request: Request): Promise<Response> {
           }
         }
         sharedDesign = await loadSharedSermonDesign(db, generationId);
-        if (!sharedDesign && position === 1) {
+        if (
+          !sharedDesign &&
+          position === 1 &&
+          remainingBudgetMs() > DRAFT_RESERVE_MS + AUX_STAGE_TIMEOUT_MS
+        ) {
           const designStartedAt = Date.now();
           const designResult = await generateSermonDesignOutlines(
             normalized,
-            userAi,
-            request.signal,
+            auxAi,
+            auxSignal(AUX_STAGE_TIMEOUT_MS),
             sharedExegesis ?? undefined,
           );
           if (designResult) {
@@ -1565,24 +1587,39 @@ export async function POST(request: Request): Promise<Response> {
             normalized,
             position,
             userAi,
-            request.signal,
+            // Cap the manuscript call to the remaining function budget so a
+            // slow provider aborts cleanly instead of hitting the 240s
+            // runtime kill; cached aux artifacts make the retry near-full.
+            AbortSignal.any([
+              request.signal,
+              AbortSignal.timeout(Math.max(60_000, remainingBudgetMs() - 12_000)),
+            ]),
             sharedDesign?.[position - 1],
             sharedExegesis ?? undefined,
           )
         : null;
-      if (deepPipeline && aiResult && db && generationId) {
+      if (
+        deepPipeline &&
+        aiResult &&
+        db &&
+        generationId &&
+        remainingBudgetMs() > 60_000
+      ) {
         // Judge on the cheapest configured engine; findings drive at most one
         // targeted section patch. The user's revision quota is untouched.
-        const judgeAi =
+        const judgeBase =
           managedAiConfigs.basic && managedAiConfigs.basic.engine !== "custom"
             ? managedAiConfigs.basic
             : userAi;
+        const judgeAi = judgeBase
+          ? { ...judgeBase, reasoningEffort: "default" as const }
+          : judgeBase;
         const judgeStartedAt = Date.now();
         const evaluation = await evaluateSermonDraftDepth(
           aiResult.value,
           normalized,
           judgeAi,
-          request.signal,
+          auxSignal(Math.min(AUX_STAGE_TIMEOUT_MS, Math.max(15_000, remainingBudgetMs() - 20_000))),
         );
         if (evaluation) {
           console.warn("[sermon-ai] deep-pipeline", {
@@ -1608,7 +1645,7 @@ export async function POST(request: Request): Promise<Response> {
           const target = evaluation.value.findings.find(
             (finding) => finding.severity === "high" && finding.fix.trim().length >= 10,
           );
-          if (target) {
+          if (target && remainingBudgetMs() > 90_000) {
             try {
               const patchStartedAt = Date.now();
               const patched = await reviseAiSermon(
