@@ -108,7 +108,13 @@ export function buildAiProviderRequest(
       },
       body: {
         model: config.model,
-        max_tokens: input.maxOutputTokens,
+        // Extended reasoning consumes thinking tokens from the same budget as
+        // the manuscript, so grant headroom whenever an effort is requested.
+        // Without this the reasoning tier writes shorter drafts than basic.
+        max_tokens:
+          config.reasoningEffort === "default"
+            ? input.maxOutputTokens
+            : Math.min(128_000, input.maxOutputTokens + 8_000),
         system: promptOnlyInstructions,
         messages: [{ role: "user", content: input.input }],
         output_config: {

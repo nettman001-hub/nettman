@@ -33,6 +33,8 @@ export const MINISTRY_OUTPUT_TYPES = [
   "소그룹 나눔 질문지",
   "주보용 설교 요약문",
   "숏폼 문구 추출",
+  "주간 묵상 (월~금)",
+  "청중용 설교 아웃라인",
 ] as const;
 
 export type SermonResourceMode = "study" | "ministry";
@@ -149,6 +151,12 @@ function resourceInstructions(mode: SermonResourceMode, selections: readonly str
       : "",
     safeSelections.includes("숏폼 문구 추출")
       ? "숏폼 문구는 설교에 실제로 담긴 의미만 사용해 10개 안팎의 짧고 독립적인 문장으로 만들고 과장·낚시성 표현·가짜 직접 인용을 피하세요."
+      : "",
+    safeSelections.includes("주간 묵상 (월~금)")
+      ? "주간 묵상은 월요일부터 금요일까지 요일별 섹션 5개로 나누어, 각 섹션에 설교 핵심에서 이어지는 짧은 묵상글(300자 내외)과 한두 문장의 기도문을 담으세요. 설교가 다룬 본문과 메시지의 범위를 벗어난 새로운 해석을 만들지 마세요."
+      : "",
+    safeSelections.includes("청중용 설교 아웃라인")
+      ? "청중용 아웃라인은 예배 중 따라 적을 수 있도록 설교 제목·본문·대지 제목과 대지별 핵심 문장 한 줄, 빈칸 채우기용 키워드 한두 개로 간결하게 구성하세요."
       : "",
     "새로운 신학 주장이나 성경 인용을 덧붙이지 말고 제공된 원고의 뜻을 충실히 보존하세요.",
     "결과는 한국어로 작성하세요.",

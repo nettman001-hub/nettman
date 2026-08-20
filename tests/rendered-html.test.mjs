@@ -493,8 +493,8 @@ test("stores an optional per-engine maximum output token override", async () => 
   assert.match(form, /aria-describedby=\{`admin-ai-max-output-tokens-help-/);
   assert.match(generation, /maxOutputTokens: ai\.maxOutputTokens/);
   assert.match(sermons, /maxOutputTokens: 500/);
-  assert.match(sermons, /resolveSermonMaxOutputTokens\(ai, 1_600\)/);
-  assert.match(sermons, /resolveSermonMaxOutputTokens\(ai, 1_800\)/);
+  assert.match(sermons, /resolveSermonMaxOutputTokens\(ai, 1_600, "outline"\)/);
+  assert.match(sermons, /resolveSermonMaxOutputTokens\(ai, 1_800, "fragment"\)/);
   assert.match(migration, /ADD `max_output_tokens` integer/);
 });
 
@@ -1146,7 +1146,13 @@ test("builds and parses provider-specific structured-output requests", async () 
   assert.equal(anthropic.headers["x-api-key"], "secret-anthropic-key");
   assert.equal(anthropic.headers.Authorization, undefined);
   assert.equal(anthropic.body.output_config.effort, "medium");
-  assert.equal(anthropic.body.max_tokens, 12000);
+  // Reasoning effort adds thinking headroom so the manuscript budget survives.
+  assert.equal(anthropic.body.max_tokens, 20000);
+  const anthropicDefaultEffort = buildAiProviderRequest(
+    { ...makeConfig("anthropic"), reasoningEffort: "default" },
+    structured,
+  );
+  assert.equal(anthropicDefaultEffort.body.max_tokens, 12000);
   assert.equal(JSON.stringify(anthropic.body).includes("minLength"), false);
   assert.equal(JSON.stringify(anthropic.body).includes("minItems"), false);
   assert.equal(JSON.stringify(anthropic.body).includes("maxItems"), false);

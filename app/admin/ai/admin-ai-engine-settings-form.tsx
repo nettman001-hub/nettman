@@ -512,8 +512,9 @@ export function AdminAiEngineSettingsForm({
                     className="mt-2 block text-xs font-medium leading-5 text-[#6a756f]"
                   >
                     비워 두면 설교 분량과 작업 단계에 맞춘 기본값을 사용합니다.
-                    입력하면 설교 생성·조각·수정 요청의 최대 출력 토큰으로
-                    적용됩니다 ({AI_MAX_OUTPUT_TOKENS_MIN.toLocaleString("ko-KR")}–
+                    입력하면 설교 원고 생성·수정 요청의 최대 출력 토큰으로
+                    적용되고, 개요·조각·판정 같은 짧은 보조 호출은 자동값을
+                    유지합니다 ({AI_MAX_OUTPUT_TOKENS_MIN.toLocaleString("ko-KR")}–
                     {AI_MAX_OUTPUT_TOKENS_MAX.toLocaleString("ko-KR")}). 너무
                     낮으면 응답이 잘리고, 모델 허용 범위를 넘으면 오류가 날 수
                     있습니다.
