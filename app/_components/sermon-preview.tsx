@@ -190,6 +190,18 @@ export function SermonPreview() {
                   </ul>
                 </header>
 
+                {alternative.design ? (
+                  <section aria-label="설계 노트" className="preview-design-note">
+                    <span>NOTE</span>
+                    <div>
+                      <h4>설계 노트</h4>
+                      <p><strong>중심 명제</strong> · {alternative.design.bigIdea}</p>
+                      <p><strong>본문이 겨냥하는 곤경</strong> · {alternative.design.fcf}</p>
+                      <p><strong>그리스도 연결</strong> · {alternative.design.christConnection}</p>
+                    </div>
+                  </section>
+                ) : null}
+
                 <section id="preview-introduction">
                   <span>01</span>
                   <div>

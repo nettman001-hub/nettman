@@ -4,8 +4,10 @@ import {
   generateAiSermonAlternative,
   generateAiSermonFragment,
   generateAiSermons,
+  generateSermonDesignOutlines,
   isValidSermonGenerationFragment,
   planSermonGenerationSteps,
+  type SermonDesignOutline,
   type SermonGenerationFragment,
   type SermonGenerationStep,
   UserAiProviderError,
@@ -594,6 +596,79 @@ export async function GET(request: Request): Promise<Response> {
     );
   } catch {
     return error("AI 엔진의 생성 방식을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.", 503);
+  }
+}
+
+/**
+ * The contrastive design contract is generated once per run and shared by all
+ * five drafts. It lives in sermon_generation_parts at the reserved
+ * (position 0, step 0) slot; failures degrade to design-free drafts.
+ */
+const SHARED_DESIGN_POSITION = 0;
+const SHARED_DESIGN_STEP = 0;
+
+function parseSharedSermonDesign(raw: unknown): SermonDesignOutline[] | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.length !== 5) return null;
+    return parsed as SermonDesignOutline[];
+  } catch {
+    return null;
+  }
+}
+
+async function loadSharedSermonDesign(
+  db: NonNullable<ReturnType<typeof getD1>>,
+  generationId: string,
+): Promise<SermonDesignOutline[] | null> {
+  try {
+    const row = await db
+      .prepare(
+        `SELECT part_json FROM sermon_generation_parts
+         WHERE generation_id = ? AND position = ? AND step = ?`,
+      )
+      .bind(generationId, SHARED_DESIGN_POSITION, SHARED_DESIGN_STEP)
+      .first<{ part_json: string }>();
+    return row ? parseSharedSermonDesign(row.part_json) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveSharedSermonDesign(args: {
+  db: NonNullable<ReturnType<typeof getD1>>;
+  generationId: string;
+  design: SermonDesignOutline[];
+  provider: string;
+  model: string | null;
+  reasoningEffort: string | null;
+  elapsedMs: number;
+}): Promise<void> {
+  try {
+    await args.db
+      .prepare(
+        `INSERT INTO sermon_generation_parts
+          (id, generation_id, position, step, part_json, provider, model,
+           reasoning_effort, elapsed_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(generation_id, position, step) DO NOTHING`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        args.generationId,
+        SHARED_DESIGN_POSITION,
+        SHARED_DESIGN_STEP,
+        JSON.stringify(args.design),
+        args.provider,
+        args.model,
+        args.reasoningEffort,
+        args.elapsedMs,
+        new Date().toISOString(),
+      )
+      .run();
+  } catch {
+    // The design row is an enhancement; persistence failures stay silent.
   }
 }
 
@@ -1348,8 +1423,38 @@ export async function POST(request: Request): Promise<Response> {
         ];
       }
     } else if (splitGeneration && position) {
+      let sharedDesign: SermonDesignOutline[] | null = null;
+      if ((userAi || useManagedAi) && db && generationId) {
+        sharedDesign = await loadSharedSermonDesign(db, generationId);
+        if (!sharedDesign && position === 1) {
+          const designStartedAt = Date.now();
+          const designResult = await generateSermonDesignOutlines(
+            normalized,
+            userAi,
+            request.signal,
+          );
+          if (designResult) {
+            sharedDesign = designResult.value;
+            await saveSharedSermonDesign({
+              db,
+              generationId,
+              design: designResult.value,
+              provider: designResult.engine,
+              model: designResult.model ?? null,
+              reasoningEffort: designResult.reasoningEffort ?? null,
+              elapsedMs: Date.now() - designStartedAt,
+            });
+          }
+        }
+      }
       const aiResult = userAi || useManagedAi
-        ? await generateAiSermonAlternative(normalized, position, userAi, request.signal)
+        ? await generateAiSermonAlternative(
+            normalized,
+            position,
+            userAi,
+            request.signal,
+            sharedDesign?.[position - 1],
+          )
         : null;
       alternatives = [
         aiResult?.value ?? generateLocalSermons(normalized)[position - 1],

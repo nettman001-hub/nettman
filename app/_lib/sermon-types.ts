@@ -129,6 +129,12 @@ export type SermonAlternative = {
   summary: string;
   scripture: string;
   sections: SermonSections;
+  /** Server-issued design contract summary; absent on legacy drafts. */
+  design?: {
+    bigIdea: string;
+    fcf: string;
+    christConnection: string;
+  } | null;
 };
 
 export type SermonGenerationPart = {

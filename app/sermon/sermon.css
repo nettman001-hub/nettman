@@ -623,3 +623,9 @@
   .sermon-file-control { align-items: stretch; flex-direction: column; }
   .sermon-file-control > span { flex: auto; }
 }
+
+.preview-design-note { background: #f4efe4; border-radius: 0.9rem; padding: 1.35rem 1.1rem !important; border-bottom: none !important; }
+.preview-design-note > span { color: #9a673b; font-size: 0.62rem; font-weight: 850; letter-spacing: 0.14em; }
+.preview-design-note h4 { margin: 0 0 0.55rem; }
+.preview-design-note p { margin: 0.3rem 0; color: #4c5c53; font-size: 0.82rem; line-height: 1.65; }
+.preview-design-note strong { color: #35503f; }
