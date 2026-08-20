@@ -7,6 +7,11 @@ import {
   TOKEN_WALLET_CHANGED_EVENT,
   type TokenWalletEventDetail,
 } from "@/app/_lib/token-wallet-events";
+import {
+  subscribeSermonGenerationRun,
+  type SermonGenerationRunState,
+} from "@/app/_lib/sermon-generation-runner";
+import { sermonDraftUrl } from "@/app/_lib/sermon-store";
 
 export type AppSection =
   | "home"
@@ -144,19 +149,23 @@ function NavList({
   active,
   items,
   onNavigate,
+  generatingTarget,
 }: {
   active: AppSection;
   items: NavItem[];
   onNavigate?: () => void;
+  generatingTarget?: string | null;
 }) {
   return (
     <ul className="space-y-1.5">
       {items.map((item) => {
         const selected = item.id === active;
+        const generating = item.id === "sermon" && Boolean(generatingTarget);
+        const href = generating && generatingTarget ? generatingTarget : item.href;
         return (
           <li key={item.id}>
             <Link
-              href={item.href}
+              href={href}
               onClick={onNavigate}
               aria-current={selected ? "page" : undefined}
               className={`group flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e] ${
@@ -176,6 +185,15 @@ function NavList({
                 {item.marker}
               </span>
               <span>{item.label}</span>
+              {generating ? (
+                <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-[#e8c28d]/20 px-2 py-0.5 text-[10px] font-extrabold text-[#f2c98e]">
+                  <span
+                    aria-hidden="true"
+                    className="size-1.5 animate-pulse rounded-full bg-[#f2c98e]"
+                  />
+                  생성 중
+                </span>
+              ) : null}
             </Link>
           </li>
         );
@@ -311,11 +329,13 @@ function Sidebar({
   user,
   tokenWallet,
   onNavigate,
+  generatingTarget,
 }: {
   active: AppSection;
   user: AppShellUser | null;
   tokenWallet: TokenSummary | null;
   onNavigate?: () => void;
+  generatingTarget?: string | null;
 }) {
   const adminNav = user?.isAdmin ? ADMIN_NAV : [];
   return (
@@ -325,21 +345,43 @@ function Sidebar({
       </div>
 
       <Link
-        href="/sermon/options"
+        href={generatingTarget ?? "/sermon/options"}
         onClick={onNavigate}
         className="mt-8 flex min-h-12 items-center justify-between rounded-2xl bg-[#e5b679] px-4 text-sm font-extrabold text-[#21372e] shadow-[0_12px_24px_rgba(0,0,0,.16)] transition-all hover:-translate-y-0.5 hover:bg-[#edc48f] focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
       >
-        <span>새 설교 시작</span>
-        <span aria-hidden="true" className="text-xl font-normal">
-          +
-        </span>
+        {generatingTarget ? (
+          <>
+            <span className="inline-flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className="size-2 animate-pulse rounded-full bg-[#1d372d]"
+              />
+              설교 생성 중 · 보러 가기
+            </span>
+            <span aria-hidden="true" className="text-lg font-normal">
+              →
+            </span>
+          </>
+        ) : (
+          <>
+            <span>새 설교 시작</span>
+            <span aria-hidden="true" className="text-xl font-normal">
+              +
+            </span>
+          </>
+        )}
       </Link>
 
       <nav className="mt-7" aria-label="주요 메뉴">
         <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white">
           WORKSPACE
         </p>
-        <NavList active={active} items={PRIMARY_NAV} onNavigate={onNavigate} />
+        <NavList
+          active={active}
+          items={PRIMARY_NAV}
+          onNavigate={onNavigate}
+          generatingTarget={generatingTarget}
+        />
       </nav>
 
       <nav className="mt-7" aria-label="설정 메뉴">
@@ -371,7 +413,10 @@ function Sidebar({
 export function AppShell({ active, children, user }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [tokenWallet, setTokenWallet] = useState<TokenSummary | null>(null);
+  const [generationRun, setGenerationRun] = useState<SermonGenerationRunState | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => subscribeSermonGenerationRun(setGenerationRun), []);
 
   useEffect(() => {
     if (!user) {
@@ -452,6 +497,16 @@ export function AppShell({ active, children, user }: AppShellProps) {
     };
   }, [menuOpen]);
 
+  const generatingTarget =
+    generationRun && generationRun.status === "running"
+      ? sermonDraftUrl(
+          generationRun.mode === "regenerate"
+            ? "/sermon/alternatives"
+            : "/sermon/input",
+          generationRun.draftId,
+        )
+      : null;
+
   return (
     <div className="min-h-screen bg-[#f4f1ea] text-[#1d2c25]">
       <a
@@ -463,7 +518,12 @@ export function AppShell({ active, children, user }: AppShellProps) {
 
       <div className="lg:grid lg:min-h-screen lg:grid-cols-[17.5rem_minmax(0,1fr)]">
         <aside className="hidden bg-[#172b24] lg:sticky lg:top-0 lg:block lg:h-screen">
-          <Sidebar active={active} user={user} tokenWallet={tokenWallet} />
+          <Sidebar
+            active={active}
+            user={user}
+            tokenWallet={tokenWallet}
+            generatingTarget={generatingTarget}
+          />
         </aside>
 
         <div className="min-w-0">
@@ -542,6 +602,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
               user={user}
               tokenWallet={tokenWallet}
               onNavigate={() => setMenuOpen(false)}
+              generatingTarget={generatingTarget}
             />
           </aside>
         </div>
