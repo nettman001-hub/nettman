@@ -23,6 +23,7 @@ import {
   SERMON_POINT_COUNTS,
   SERMON_TONES,
   SERMON_TYPES,
+  SERMON_WORSHIP_TYPES,
   durationToTargetCharacters,
   isSermonAudienceSituationValue,
   isSermonOptionsComplete,
@@ -342,6 +343,15 @@ export function SermonOptions() {
             options={SERMON_TYPES}
             onChange={(value) => change("sermonType", value)}
             error={submitted ? errors.sermonType : ""}
+          />
+          <ChoiceGroup
+            legend="예배 유형"
+            name="worship-type"
+            value={form.worshipType ?? "주일 대예배"}
+            options={SERMON_WORSHIP_TYPES}
+            onChange={(value) => change("worshipType", value)}
+            hint="예배의 성격에 맞춰 어조와 적용의 결이 조정됩니다."
+            error=""
           />
           <ChoiceGroup
             legend="설교 구성"

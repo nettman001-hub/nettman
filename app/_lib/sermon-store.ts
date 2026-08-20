@@ -144,6 +144,10 @@ export function loadSermonDraft(id: string): SermonDraft | null {
           : storedAudienceSituation === undefined
             ? "일반"
             : "",
+      worshipType:
+        typeof (parsed.options as { worshipType?: unknown }).worshipType === "string"
+          ? ((parsed.options as { worshipType: string }).worshipType.trim() || "주일 대예배")
+          : "주일 대예배",
     };
     const aiTiers = normalizeSermonAiTiers(options);
     const storedScripture =

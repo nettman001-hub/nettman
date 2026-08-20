@@ -1658,6 +1658,7 @@ function sermonOptionsPrompt(options: SermonOptions): string {
     sermonType: options.sermonType,
     audience: options.audience,
     audienceSituation: options.audienceSituation,
+    ...(options.worshipType ? { worshipType: options.worshipType } : {}),
     pointCount: options.pointCount,
   });
 }
@@ -2416,7 +2417,7 @@ export async function generateSermonDesignOutlines(
         ...(crossReferences.length
           ? [`구속사적 교차참조 후보(TSK): ${crossReferences.join("; ")}`]
           : []),
-        `설교 유형: ${request.options.sermonType} / 청중: ${request.options.audience} / 청중 상황: ${request.options.audienceSituation} / 대지 수: ${pointCount} / 정서적 톤: ${request.options.tone}`,
+        `설교 유형: ${request.options.sermonType}${request.options.worshipType ? ` / 예배 유형: ${request.options.worshipType}` : ""} / 청중: ${request.options.audience} / 청중 상황: ${request.options.audienceSituation} / 대지 수: ${pointCount} / 정서적 톤: ${request.options.tone}`,
         ...(preacherContext ? [preacherContext] : []),
       ].join("\n\n"),
       ai,
@@ -2531,6 +2532,9 @@ async function requestAiAlternative(
           ]
         : []),
       `설교 유형: ${request.options.sermonType}`,
+      ...(request.options.worshipType
+        ? [`예배 유형: ${request.options.worshipType}`]
+        : []),
       `청중: ${request.options.audience}`,
       `청중 상황: ${request.options.audienceSituation}`,
       `예상 시간: ${request.options.duration}분`,

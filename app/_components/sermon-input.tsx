@@ -51,6 +51,9 @@ export function SermonInput() {
   const router = useRouter();
   const { draft, ready, isGuest, clientUserScope, updateDraft } = useSermonWorkflow();
   const [scripture, setScripture] = useState("");
+  const [clarifyState, setClarifyState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [clarifyQuestions, setClarifyQuestions] = useState<Array<{ heading: string; content: string }>>([]);
+  const [clarifyError, setClarifyError] = useState("");
   const [reference, setReference] = useState<SermonReference>({
     url: "",
     notes: "",
@@ -416,6 +419,45 @@ export function SermonInput() {
   const hasSavedProgress =
     completedCount > 0 || Boolean(pendingGeneration?.parts.length);
 
+  async function requestClarifyingQuestions() {
+    if (clarifyState === "loading" || !draft) return;
+    setClarifyState("loading");
+    setClarifyError("");
+    try {
+      const response = await fetch("/api/sermon-resources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          mode: "clarify",
+          aiTier: "basic",
+          scripture: scripture.trim(),
+          notes: [
+            draft.options.topic ? `설교 제목·방향: ${draft.options.topic}` : "",
+            draft.options.worshipType ? `예배 유형: ${draft.options.worshipType}` : "",
+            `청중: ${draft.options.audience} (${draft.options.audienceSituation})`,
+            `설교 유형: ${draft.options.sermonType} · ${draft.options.duration}분 · ${draft.options.pointCount}대지`,
+            reference.notes.trim() ? `메모: ${reference.notes.trim().slice(0, 2000)}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as
+        | { result?: { sections?: Array<{ heading: string; content: string }> }; error?: string }
+        | null;
+      if (!response.ok || !body?.result?.sections?.length) {
+        throw new Error(body?.error || "보완 질문을 만들지 못했습니다.");
+      }
+      setClarifyQuestions(body.result.sections.slice(0, 3));
+      setClarifyState("done");
+    } catch (caught) {
+      setClarifyError(
+        caught instanceof Error ? caught.message : "보완 질문을 만들지 못했습니다.",
+      );
+      setClarifyState("error");
+    }
+  }
+
   return (
     <div className="sermon-input-page">
       <section className="sermon-form-intro">
@@ -460,6 +502,37 @@ export function SermonInput() {
               : "요한복음 3:16-18 · 요한복음 3장 16절 · 요한복음 3장 16~17절 모두 입력할 수 있습니다."}
           </p>
         </div>
+      </section>
+
+      <section className="sermon-form-card" aria-labelledby="clarify-title">
+        <div className="sermon-section-heading">
+          <span>질문</span>
+          <div>
+            <h3 id="clarify-title">AI 보완 질문 (선택)</h3>
+            <p>입력이 빈약하거나 모호한 부분을 AI가 되물어 줍니다. 답을 아래 메모에 덧붙이면 초안이 더 깊어집니다.</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="sermon-secondary-button"
+          onClick={() => void requestClarifyingQuestions()}
+          disabled={clarifyState === "loading"}
+        >
+          {clarifyState === "loading" ? "질문 만드는 중…" : "보완 질문 받기"}
+        </button>
+        {clarifyState === "error" ? (
+          <p className="sermon-field-error" role="alert">{clarifyError}</p>
+        ) : null}
+        {clarifyState === "done" && clarifyQuestions.length ? (
+          <ul className="sermon-clarify-list">
+            {clarifyQuestions.map((question) => (
+              <li key={question.heading}>
+                <strong>{question.heading}</strong>
+                <p>{question.content}</p>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       {pendingScriptureConfirmation ? (

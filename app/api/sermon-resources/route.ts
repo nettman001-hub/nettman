@@ -67,12 +67,17 @@ function hasVisibleText(value: string): boolean {
 }
 
 function isMode(value: unknown): value is SermonResourceMode {
-  return value === "study" || value === "ministry" || value === "critique";
+  return (
+    value === "study" ||
+    value === "ministry" ||
+    value === "critique" ||
+    value === "clarify"
+  );
 }
 
 function validatedSelections(mode: SermonResourceMode, value: unknown): string[] | null {
-  // The critique rubric is fixed server-side; client selections are ignored.
-  if (mode === "critique") return [];
+  // The critique rubric and clarify interview are fixed server-side.
+  if (mode === "critique" || mode === "clarify") return [];
   if (!Array.isArray(value) || value.length < 1 || value.length > 12) return null;
   const allowed = new Set<string>(mode === "study" ? STUDY_OPTIONS : MINISTRY_OUTPUT_TYPES);
   const selections = [...new Set(value.filter((item): item is string => typeof item === "string"))];
@@ -213,6 +218,25 @@ export async function POST(request: Request): Promise<Response> {
       emotion: "-",
       manuscript: scripturePassagePromptBlock(passage),
       ...(requestedNotes ? { notes: requestedNotes } : {}),
+    };
+  } else if (mode === "clarify") {
+    const notes =
+      typeof payload.notes === "string" ? payload.notes.trim().slice(0, 4_000) : "";
+    const summaryLines = [
+      `설교 제목·방향: ${notes ? "" : "(메모 없음)"}`,
+      requestedScripture ? `성경 본문: ${requestedScripture}` : "성경 본문: (미입력)",
+      notes ? `설교자 입력 요약:
+${notes}` : "",
+    ].filter(Boolean);
+    source = {
+      title: "설교 준비 보완 질문",
+      scripture: requestedScripture || "-",
+      sermonType: "-",
+      audience: "-",
+      audienceSituation: "-",
+      duration: 0,
+      emotion: "-",
+      manuscript: summaryLines.join("\n"),
     };
   } else if (mode === "critique") {
     const manuscriptInput =

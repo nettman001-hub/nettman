@@ -629,3 +629,11 @@
 .preview-design-note h4 { margin: 0 0 0.55rem; }
 .preview-design-note p { margin: 0.3rem 0; color: #4c5c53; font-size: 0.82rem; line-height: 1.65; }
 .preview-design-note strong { color: #35503f; }
+
+.sermon-secondary-button { display: inline-flex; align-items: center; min-height: 2.7rem; border: 1px solid #cfc8bb; border-radius: 0.8rem; background: #fbfaf6; padding: 0 1.1rem; color: #29473b; font-size: 0.82rem; font-weight: 800; cursor: pointer; }
+.sermon-secondary-button:hover { background: #f0eee7; }
+.sermon-secondary-button:disabled { cursor: not-allowed; opacity: 0.55; }
+.sermon-clarify-list { display: grid; gap: 0.7rem; margin: 1rem 0 0; padding: 0; list-style: none; }
+.sermon-clarify-list li { border-left: 3px solid #b97838; border-radius: 0 0.7rem 0.7rem 0; background: #f7f2e8; padding: 0.8rem 1rem; }
+.sermon-clarify-list strong { color: #35503f; font-size: 0.88rem; }
+.sermon-clarify-list p { margin: 0.35rem 0 0; color: #5a6a61; font-size: 0.8rem; line-height: 1.65; }

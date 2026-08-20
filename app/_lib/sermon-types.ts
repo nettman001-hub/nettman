@@ -61,6 +61,16 @@ export type ReferenceFile = {
   text?: string;
 };
 
+export const SERMON_WORSHIP_TYPES = [
+  "주일 대예배",
+  "주일 오후예배",
+  "새벽예배",
+  "수요예배",
+  "금요기도회",
+  "청년부 예배",
+  "특별 집회",
+] as const;
+
 export type SermonOptions = {
   topic: string;
   /** 첫 번째 초안 엔진. 이전 저장 데이터와 수정 요청의 호환성을 위해 유지합니다. */
@@ -75,6 +85,8 @@ export type SermonOptions = {
   audience: SermonAudience | "";
   /** 기본 청중 상황 또는 사용자가 '기타'에 입력한 짧은 상황입니다. */
   audienceSituation: string;
+  /** 예배 유형 — 프롬프트 문맥 전용 선택값. 과거 초안에는 없을 수 있다. */
+  worshipType?: string;
   pointCount: SermonPointCount | null;
   referenceMode: ReferenceMode;
 };
@@ -261,6 +273,7 @@ export const EMPTY_SERMON_OPTIONS: SermonOptions = {
   sermonType: "",
   audience: "",
   audienceSituation: "",
+  worshipType: "주일 대예배",
   pointCount: null,
   referenceMode: "auto",
 };

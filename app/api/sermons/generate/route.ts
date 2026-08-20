@@ -900,6 +900,10 @@ export async function POST(request: Request): Promise<Response> {
       sermonType: options.sermonType as SermonType,
       audience: options.audience as SermonAudience,
       audienceSituation: options.audienceSituation.trim(),
+      worshipType:
+        typeof (options as { worshipType?: unknown }).worshipType === "string"
+          ? ((options as { worshipType: string }).worshipType.trim().slice(0, 40))
+          : "",
       pointCount,
       referenceMode: options.referenceMode,
     },
