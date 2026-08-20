@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import vinext from "vinext";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
@@ -44,6 +45,24 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    resolve: {
+      alias: [
+        // The 6MB scripture data modules stall rolldown; the private Sites
+        // build ships empty stubs and bible-aware features degrade gracefully.
+        {
+          find: /^(?:\.\/)?krv-bible\.data(\.ts)?$/,
+          replacement: fileURLToPath(
+            new URL("./app/_lib/bible/krv-bible.data.worker.ts", import.meta.url),
+          ),
+        },
+        {
+          find: /^(?:\.\/)?cross-references\.data(\.ts)?$/,
+          replacement: fileURLToPath(
+            new URL("./app/_lib/bible/cross-references.data.worker.ts", import.meta.url),
+          ),
+        },
+      ],
+    },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
