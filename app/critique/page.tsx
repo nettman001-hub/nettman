@@ -7,24 +7,24 @@ import { requirePageUser } from "@/app/_lib/auth-user";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "스터디",
-  description: "성경 본문을 직접 입력해 원문, 배경과 구조 관점에서 연구합니다.",
+  title: "설교 비평",
+  description: "직접 작성한 설교 원고를 설교학 루브릭으로 점검받습니다.",
 };
 
-export default async function StudyPage() {
-  const user = await requirePageUser("/study");
+export default async function CritiquePage() {
+  const user = await requirePageUser("/critique");
   return (
     <AppShell
-      active="study"
+      active="critique"
       user={{ id: user.id, displayName: user.name, email: user.email, isAdmin: user.isAdmin }}
     >
       <div className="mx-auto max-w-[90rem] px-4 py-7 sm:px-7 sm:py-10 xl:px-10">
         <AppPageHeading
-          eyebrow="04 · Study"
-          title="스터디"
-          description="연구할 성경 본문을 입력하고 원문 이해, 배경 이해와 구조 이해를 선택해 본문 연구를 시작합니다."
+          eyebrow="06 · Critique"
+          title="설교 비평"
+          description="직접 쓴 원고를 붙여 넣으면 통일성, 본문 밀착도, 은혜-명령 순서, 적용 구체성 등 일곱 가지 축으로 점검해 드립니다. 최종 판단과 책임은 설교자에게 있습니다."
         />
-        <SermonResourceTool mode="study" />
+        <SermonResourceTool mode="critique" />
       </div>
     </AppShell>
   );

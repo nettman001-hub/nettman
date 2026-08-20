@@ -15,6 +15,7 @@ export type AppSection =
   | "expert"
   | "study"
   | "ministry"
+  | "critique"
   | "tokens"
   | "my"
   | "notifications"
@@ -53,6 +54,7 @@ const PRIMARY_NAV: NavItem[] = [
   { id: "consult", label: "설교 피드백", href: "/consult", marker: "피" },
   { id: "study", label: "스터디", href: "/study", marker: "연" },
   { id: "ministry", label: "사역 활용", href: "/ministry", marker: "활" },
+  { id: "critique", label: "설교 비평", href: "/critique", marker: "평" },
   { id: "expert", label: "설교 피드백실", href: "/expert", marker: "실" },
 ];
 

@@ -67,6 +67,129 @@ async function bookIndex(book: string): Promise<number> {
 
 const REFERENCE_PATTERN = /^(.+?)\s+(\d{1,3}):(\d{1,3})(?:-(?:(\d{1,3}):)?(\d{1,3}))?$/;
 
+async function resolveBookIndex(rawBook: string): Promise<number> {
+  const bible = await loadBible();
+  const compact = rawBook.replace(/\s+/g, "");
+  if (!compact) return -1;
+  const exact = await bookIndex(compact);
+  if (exact >= 0) return exact;
+  const byAbbr = bible.books.findIndex((book) => book.abbr === compact);
+  if (byAbbr >= 0) return byAbbr;
+  // Common suffix-less forms such as "요한" stay ambiguous on purpose; only a
+  // unique prefix of a full book name resolves.
+  const prefixMatches = bible.books
+    .map((book, index) => ({ book, index }))
+    .filter((entry) => entry.book.name.startsWith(compact));
+  return prefixMatches.length === 1 ? prefixMatches[0].index : -1;
+}
+
+/**
+ * Parses user-typed references such as "요 3:16-20", "요한복음 3장 16-20절",
+ * "시편 23", "창세기 1-2장" into a full range against the loaded text.
+ * Returns null when the book is unknown/ambiguous or the range is invalid.
+ */
+export async function resolveLooseScriptureReference(
+  input: string,
+): Promise<{ range: ScriptureRange; canonical: string } | null> {
+  const trimmed = input.normalize("NFC").trim();
+  const match = /^([가-힣0-9\s]+?)\s*(\d[\d\s장절:.~-]*)$/.exec(trimmed);
+  if (!match) return null;
+  // The numeric tail starts at the first digit that is not part of a book
+  // name like 사무엘상; split book letters from the numeric expression.
+  const bookPart = match[1].replace(/\d+$/, (digits) => digits).trim();
+  const numberPart = match[2].trim();
+  const index = await resolveBookIndex(bookPart);
+  if (index < 0) return null;
+  const bible = await loadBible();
+  const book = bible.books[index];
+
+  const normalizedNumbers = numberPart
+    .replace(/[~—–]/g, "-")
+    .replace(/장/g, ":")
+    .replace(/절/g, "")
+    .replace(/\./g, ":")
+    .replace(/\s+/g, "")
+    .replace(/:$/, "");
+  const rangeMatch = /^(\d{1,3})(?::(\d{1,3}))?(?:-(\d{1,3})(?::(\d{1,3}))?)?$/.exec(
+    normalizedNumbers,
+  );
+  if (!rangeMatch) return null;
+  const first = Number(rangeMatch[1]);
+  const second = rangeMatch[2] ? Number(rangeMatch[2]) : null;
+  const third = rangeMatch[3] ? Number(rangeMatch[3]) : null;
+  const fourth = rangeMatch[4] ? Number(rangeMatch[4]) : null;
+
+  let startChapter: number;
+  let startVerse: number;
+  let endChapter: number;
+  let endVerse: number;
+  const chapterCount = book.chapters.length;
+  const versesIn = (chapter: number) => book.chapters[chapter - 1]?.length ?? 0;
+
+  if (second === null && third === null) {
+    // "시편 23" — whole chapter
+    startChapter = first;
+    startVerse = 1;
+    endChapter = first;
+    endVerse = versesIn(first);
+  } else if (second === null && third !== null && fourth === null) {
+    // "창세기 1-2" — whole chapters
+    startChapter = first;
+    startVerse = 1;
+    endChapter = third;
+    endVerse = versesIn(third);
+  } else if (second !== null && third !== null && fourth !== null) {
+    // "요 3:16-4:2"
+    startChapter = first;
+    startVerse = second;
+    endChapter = third;
+    endVerse = fourth;
+  } else if (second !== null && third !== null) {
+    // "요 3:16-20"
+    startChapter = first;
+    startVerse = second;
+    endChapter = first;
+    endVerse = third;
+  } else if (second !== null) {
+    // "요 3:16"
+    startChapter = first;
+    startVerse = second;
+    endChapter = first;
+    endVerse = second;
+  } else {
+    return null;
+  }
+
+  if (
+    startChapter < 1 ||
+    endChapter < startChapter ||
+    endChapter > chapterCount ||
+    startVerse < 1 ||
+    startVerse > versesIn(startChapter) ||
+    endVerse < 1 ||
+    endVerse > versesIn(endChapter) ||
+    (startChapter === endChapter && endVerse < startVerse)
+  ) {
+    return null;
+  }
+
+  const range: ScriptureRange = {
+    bookIndex: index,
+    book: book.name,
+    startChapter,
+    startVerse,
+    endChapter,
+    endVerse,
+  };
+  const canonical =
+    startChapter === endChapter
+      ? startVerse === endVerse
+        ? `${book.name} ${startChapter}:${startVerse}`
+        : `${book.name} ${startChapter}:${startVerse}-${endVerse}`
+      : `${book.name} ${startChapter}:${startVerse}-${endChapter}:${endVerse}`;
+  return { range, canonical };
+}
+
 /** Parses the server-canonical "책 장:절[-장:절|절]" reference format. */
 export async function parseScriptureReference(
   reference: string,

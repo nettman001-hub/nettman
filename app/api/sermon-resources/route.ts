@@ -12,6 +12,11 @@ import { demoSermons, safeJson, type SermonSections } from "../../_lib/data";
 import { getManagedAiRequestConfig } from "../../_lib/managed-ai-engines";
 import { UserAiProviderError } from "../../_lib/openai-sermons";
 import {
+  getScripturePassage,
+  resolveLooseScriptureReference,
+  scripturePassagePromptBlock,
+} from "../../_lib/bible/bible-text";
+import {
   generateSermonResource,
   MINISTRY_OUTPUT_TYPES,
   STUDY_OPTIONS,
@@ -25,6 +30,9 @@ type ResourcePayload = {
   mode?: unknown;
   selections?: unknown;
   aiTier?: unknown;
+  scripture?: unknown;
+  notes?: unknown;
+  manuscript?: unknown;
 };
 
 type SermonRow = {
@@ -59,10 +67,12 @@ function hasVisibleText(value: string): boolean {
 }
 
 function isMode(value: unknown): value is SermonResourceMode {
-  return value === "study" || value === "ministry";
+  return value === "study" || value === "ministry" || value === "critique";
 }
 
 function validatedSelections(mode: SermonResourceMode, value: unknown): string[] | null {
+  // The critique rubric is fixed server-side; client selections are ignored.
+  if (mode === "critique") return [];
   if (!Array.isArray(value) || value.length < 1 || value.length > 12) return null;
   const allowed = new Set<string>(mode === "study" ? STUDY_OPTIONS : MINISTRY_OUTPUT_TYPES);
   const selections = [...new Set(value.filter((item): item is string => typeof item === "string"))];
@@ -139,11 +149,15 @@ export async function POST(request: Request): Promise<Response> {
   if (!user) return unauthorizedResponse();
 
   const payload = (await request.json().catch(() => null)) as ResourcePayload | null;
+  if (!isMode(payload?.mode)) {
+    return Response.json({ error: "작업 종류를 확인해 주세요." }, { status: 400 });
+  }
+  const mode = payload.mode;
   const sermonId = typeof payload?.sermonId === "string" ? payload.sermonId.trim() : "";
-  if (!sermonId || sermonId.length > 100 || !isMode(payload?.mode)) {
+  if (mode === "ministry" && (!sermonId || sermonId.length > 100)) {
     return Response.json({ error: "설교와 작업 종류를 확인해 주세요." }, { status: 400 });
   }
-  const selections = validatedSelections(payload.mode, payload.selections);
+  const selections = validatedSelections(mode, payload.selections);
   if (!selections) {
     return Response.json({ error: "생성할 항목을 하나 이상 선택해 주세요." }, { status: 400 });
   }
@@ -158,10 +172,119 @@ export async function POST(request: Request): Promise<Response> {
     church: "",
   };
 
-  if (!db) {
-    if (!user.isDemo) {
-      return Response.json({ error: "데이터 저장소에 연결할 수 없습니다." }, { status: 503 });
+  const requestedScripture =
+    typeof payload.scripture === "string" ? payload.scripture.trim().slice(0, 120) : "";
+  const requestedNotes =
+    typeof payload.notes === "string" ? payload.notes.trim().slice(0, 2_000) : "";
+
+  if (mode === "study") {
+    // Study starts from a scripture reference, not a saved sermon: the user
+    // types the passage and optional research notes.
+    if (!requestedScripture) {
+      return Response.json(
+        { error: "연구할 성경 본문을 입력해 주세요. 예: 요한복음 3:16-20" },
+        { status: 400 },
+      );
     }
+    const resolved = await resolveLooseScriptureReference(requestedScripture);
+    if (!resolved) {
+      return Response.json(
+        {
+          error:
+            "성경 본문 표기를 해석하지 못했습니다. '요한복음 3:16-20', '시편 23', '창세기 1-2장' 같은 형식으로 입력해 주세요.",
+        },
+        { status: 400 },
+      );
+    }
+    const passage = await getScripturePassage(resolved.canonical, { maxVerses: 120 });
+    if (!passage) {
+      return Response.json(
+        { error: "해당 본문을 찾지 못했습니다. 장·절 범위를 확인해 주세요." },
+        { status: 400 },
+      );
+    }
+    source = {
+      title: `${resolved.canonical} 본문 연구`,
+      scripture: resolved.canonical,
+      sermonType: "본문 연구",
+      audience: "-",
+      audienceSituation: "-",
+      duration: 0,
+      emotion: "-",
+      manuscript: scripturePassagePromptBlock(passage),
+      ...(requestedNotes ? { notes: requestedNotes } : {}),
+    };
+  } else if (mode === "critique") {
+    const manuscriptInput =
+      typeof payload.manuscript === "string" ? payload.manuscript.trim() : "";
+    if (manuscriptInput.length < 300) {
+      return Response.json(
+        { error: "비평할 설교 원고를 300자 이상 붙여 넣어 주세요." },
+        { status: 400 },
+      );
+    }
+    if (manuscriptInput.length > 60_000) {
+      return Response.json(
+        { error: "원고가 너무 깁니다. 60,000자 이하로 줄여 주세요." },
+        { status: 400 },
+      );
+    }
+    let extraContext = "";
+    let canonicalScripture = requestedScripture;
+    if (requestedScripture) {
+      const resolved = await resolveLooseScriptureReference(requestedScripture);
+      if (resolved) {
+        canonicalScripture = resolved.canonical;
+        const passage = await getScripturePassage(resolved.canonical, { maxVerses: 80 });
+        if (passage) extraContext = scripturePassagePromptBlock(passage);
+      }
+    }
+    source = {
+      title: "설교 비평",
+      scripture: canonicalScripture || "-",
+      sermonType: "-",
+      audience: "-",
+      audienceSituation: "-",
+      duration: 0,
+      emotion: "-",
+      manuscript: manuscriptInput,
+      ...(extraContext ? { extraContext } : {}),
+    };
+  }
+
+  if (mode !== "ministry" && db) {
+    // Profile still frames denominational emphasis for study and critique.
+    try {
+      await ensureDatabase(db);
+      const profileRow = await db
+        .prepare(
+          `SELECT denomination, theology, ministry_role, church
+           FROM user_profiles WHERE user_id = ?`,
+        )
+        .bind(user.id)
+        .first<{
+          denomination: string;
+          theology: string;
+          ministry_role: string;
+          church: string;
+        }>();
+      if (profileRow) {
+        profile = {
+          denomination: profileRow.denomination || "",
+          theology: profileRow.theology || "",
+          ministryRole: profileRow.ministry_role || "",
+          church: profileRow.church || "",
+        };
+      }
+    } catch {
+      // Profile framing is optional; generation proceeds without it.
+    }
+  }
+
+  if (!db && !user.isDemo) {
+    return Response.json({ error: "데이터 저장소에 연결할 수 없습니다." }, { status: 503 });
+  }
+  if (mode === "ministry" && !db) {
     const sermon = demoSermons.find((item) => item.id === sermonId);
     if (sermon) {
       source = {
@@ -175,7 +298,7 @@ export async function POST(request: Request): Promise<Response> {
         manuscript: manuscript(sermon.sections),
       };
     }
-  } else {
+  } else if (mode === "ministry" && db) {
     await ensureDatabase(db);
     const [sermon, profileRow] = await Promise.all([
       db.prepare(
@@ -205,10 +328,13 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (!source) {
-    return Response.json({ error: "선택한 설교를 찾을 수 없습니다." }, { status: 404 });
+    return Response.json(
+      { error: mode === "ministry" ? "선택한 설교를 찾을 수 없습니다." : "요청 내용을 확인해 주세요." },
+      { status: 404 },
+    );
   }
   if (!source.manuscript.trim()) {
-    return Response.json({ error: "완성된 설교 원고를 확인할 수 없습니다." }, { status: 409 });
+    return Response.json({ error: "원고 또는 본문 내용을 확인할 수 없습니다." }, { status: 409 });
   }
 
   const ai = await getManagedAiRequestConfig(db, aiTier);
@@ -259,7 +385,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const result = await generateSermonResource({
       ai,
-      mode: payload.mode,
+      mode,
       selections,
       source,
       profile,

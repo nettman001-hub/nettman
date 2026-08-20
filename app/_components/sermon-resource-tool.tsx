@@ -55,6 +55,9 @@ export function SermonResourceTool({ mode }: ToolProps) {
   const [sermonsError, setSermonsError] = useState("");
   const [sermonsWarning, setSermonsWarning] = useState("");
   const [sermonId, setSermonId] = useState("");
+  const [scriptureInput, setScriptureInput] = useState("");
+  const [notesInput, setNotesInput] = useState("");
+  const [manuscriptInput, setManuscriptInput] = useState("");
   const [selections, setSelections] = useState<string[]>(
     mode === "ministry" ? [MINISTRY_OUTPUT_TYPES[0]] : [],
   );
@@ -67,6 +70,10 @@ export function SermonResourceTool({ mode }: ToolProps) {
   const [fairUse, setFairUse] = useState<FairUseStatus | null>(null);
 
   useEffect(() => {
+    if (mode !== "ministry") {
+      setSermonsLoading(false);
+      return;
+    }
     const controller = new AbortController();
     async function loadSermons() {
       setSermonsLoading(true);
@@ -129,7 +136,7 @@ export function SermonResourceTool({ mode }: ToolProps) {
     }
     void loadSermons();
     return () => controller.abort();
-  }, []);
+  }, [mode]);
 
   const selectedSermon = useMemo(
     () => sermons.find((sermon) => sermon.id === sermonId) ?? null,
@@ -149,8 +156,15 @@ export function SermonResourceTool({ mode }: ToolProps) {
     setRequestState("idle");
   }
 
+  const canGenerate =
+    mode === "ministry"
+      ? Boolean(sermonId) && selections.length > 0
+      : mode === "study"
+        ? scriptureInput.trim().length > 0 && selections.length > 0
+        : manuscriptInput.trim().length >= 300;
+
   async function generate() {
-    if (!sermonId || selections.length === 0 || requestState === "loading") return;
+    if (!canGenerate || requestState === "loading") return;
     setRequestState("loading");
     setError("");
     setResult(null);
@@ -163,7 +177,13 @@ export function SermonResourceTool({ mode }: ToolProps) {
       const response = await fetch("/api/sermon-resources", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ sermonId, mode, selections, aiTier }),
+        body: JSON.stringify(
+          mode === "ministry"
+            ? { sermonId, mode, selections, aiTier }
+            : mode === "study"
+              ? { mode, selections, aiTier, scripture: scriptureInput.trim(), notes: notesInput.trim() }
+              : { mode, aiTier, manuscript: manuscriptInput, scripture: scriptureInput.trim() },
+        ),
         signal: controller.signal,
       });
       const body = (await response.json().catch(() => null)) as
@@ -220,15 +240,88 @@ export function SermonResourceTool({ mode }: ToolProps) {
       <section className="rounded-[1.75rem] border border-[#d9d4ca] bg-white p-5 shadow-[0_16px_45px_rgba(39,50,44,.06)] sm:p-7">
         <div>
           <p className="text-[10px] font-extrabold uppercase tracking-[.16em] text-[#a56732]">
-            01 · Source sermon
+            {mode === "ministry" ? "01 · Source sermon" : mode === "study" ? "01 · Scripture" : "01 · Manuscript"}
           </p>
-          <h2 className="mt-2 font-serif text-2xl font-bold text-[#294238]">완성 설교 선택</h2>
+          <h2 className="mt-2 font-serif text-2xl font-bold text-[#294238]">
+            {mode === "ministry" ? "완성 설교 선택" : mode === "study" ? "성경 본문 입력" : "설교 원고 붙여넣기"}
+          </h2>
           <p className="mt-2 text-sm leading-6 text-[#6f7b75]">
-            저장한 설교를 기준으로 결과물을 만듭니다.
+            {mode === "ministry"
+              ? "저장한 설교를 기준으로 결과물을 만듭니다."
+              : mode === "study"
+                ? "연구할 본문의 장·절을 입력하면 개역한글판(1961) 본문으로 연구합니다."
+                : "직접 작성한 원고를 붙여 넣으면 설교학 루브릭으로 점검해 드립니다."}
           </p>
         </div>
 
-        {sermonsLoading ? (
+        {mode === "study" ? (
+          <div className="mt-5 space-y-4">
+            <label className="block text-sm font-extrabold text-[#34473e]" htmlFor="study-scripture">
+              성경 본문
+              <input
+                id="study-scripture"
+                type="text"
+                value={scriptureInput}
+                onChange={(event) => {
+                  setScriptureInput(event.target.value.slice(0, 120));
+                  setResult(null);
+                  setError("");
+                  setRequestState("idle");
+                }}
+                placeholder="예: 요한복음 3:16-20 · 시편 23 · 창세기 1-2장"
+                className="mt-2 min-h-12 w-full rounded-xl border border-[#d5cfc4] bg-[#fcfbf8] px-4 text-sm font-medium text-[#263c32] outline-none focus:border-[#6f8d80] focus:ring-2 focus:ring-[#b9cec5]/60"
+              />
+            </label>
+            <label className="block text-sm font-extrabold text-[#34473e]" htmlFor="study-notes">
+              기타 필요사항 <span className="font-medium text-[#7b847f]">(선택)</span>
+              <textarea
+                id="study-notes"
+                value={notesInput}
+                onChange={(event) => setNotesInput(event.target.value.slice(0, 2000))}
+                rows={3}
+                placeholder="설교 방향, 관심 주제, 특별히 확인하고 싶은 부분을 적어 주세요."
+                className="mt-2 w-full rounded-xl border border-[#d5cfc4] bg-[#fcfbf8] px-4 py-3 text-sm font-medium leading-6 text-[#263c32] outline-none focus:border-[#6f8d80] focus:ring-2 focus:ring-[#b9cec5]/60"
+              />
+            </label>
+          </div>
+        ) : null}
+
+        {mode === "critique" ? (
+          <div className="mt-5 space-y-4">
+            <label className="block text-sm font-extrabold text-[#34473e]" htmlFor="critique-manuscript">
+              설교 원고
+              <textarea
+                id="critique-manuscript"
+                value={manuscriptInput}
+                onChange={(event) => {
+                  setManuscriptInput(event.target.value.slice(0, 60000));
+                  setResult(null);
+                  setError("");
+                  setRequestState("idle");
+                }}
+                rows={12}
+                placeholder="설교 원고 전체를 붙여 넣어 주세요. (300자 이상)"
+                className="mt-2 w-full rounded-xl border border-[#d5cfc4] bg-[#fcfbf8] px-4 py-3 text-sm font-medium leading-6 text-[#263c32] outline-none focus:border-[#6f8d80] focus:ring-2 focus:ring-[#b9cec5]/60"
+              />
+              <span className="mt-1 block text-right text-[11px] font-semibold text-[#8a938d]">
+                {manuscriptInput.length.toLocaleString("ko-KR")}자
+              </span>
+            </label>
+            <label className="block text-sm font-extrabold text-[#34473e]" htmlFor="critique-scripture">
+              설교 본문 <span className="font-medium text-[#7b847f]">(선택 — 입력하면 인용 정확성도 점검)</span>
+              <input
+                id="critique-scripture"
+                type="text"
+                value={scriptureInput}
+                onChange={(event) => setScriptureInput(event.target.value.slice(0, 120))}
+                placeholder="예: 요한복음 3:16-20"
+                className="mt-2 min-h-12 w-full rounded-xl border border-[#d5cfc4] bg-[#fcfbf8] px-4 text-sm font-medium text-[#263c32] outline-none focus:border-[#6f8d80] focus:ring-2 focus:ring-[#b9cec5]/60"
+              />
+            </label>
+          </div>
+        ) : null}
+
+        {mode !== "ministry" ? null : sermonsLoading ? (
           <div className="mt-5 h-13 animate-pulse rounded-xl bg-[#f0eee8]" aria-label="설교 목록을 불러오는 중" />
         ) : sermonsError ? (
           <p className="mt-5 rounded-xl border border-[#e4bcb3] bg-[#fff2ef] p-4 text-xs font-semibold leading-5 text-[#843c31]" role="alert">
@@ -275,7 +368,7 @@ export function SermonResourceTool({ mode }: ToolProps) {
           </>
         )}
 
-        <fieldset className="mt-7 border-t border-[#e4dfd6] pt-6">
+        <fieldset className={`mt-7 border-t border-[#e4dfd6] pt-6 ${mode === "critique" ? "hidden" : ""}`}>
           <legend className="text-sm font-extrabold text-[#34473e]">
             {mode === "study" ? "연구 범위" : "생성할 자료"}
           </legend>
@@ -375,7 +468,7 @@ export function SermonResourceTool({ mode }: ToolProps) {
 
         <button
           type="button"
-          disabled={!sermonId || selections.length === 0 || requestState === "loading"}
+          disabled={!canGenerate || requestState === "loading"}
           onClick={() => void generate()}
           className="mt-7 inline-flex min-h-13 w-full items-center justify-center rounded-xl bg-[#285343] px-5 text-sm font-extrabold text-white shadow-[0_10px_25px_rgba(38,81,65,.16)] hover:bg-[#204739] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -383,7 +476,9 @@ export function SermonResourceTool({ mode }: ToolProps) {
             ? "생성 중…"
             : mode === "study"
               ? "선택 항목 스터디 생성"
-              : "사역 자료 생성"}
+              : mode === "critique"
+                ? "내 설교 비평받기"
+                : "사역 자료 생성"}
         </button>
         <p className="mt-3 text-center text-[11px] font-semibold leading-5 text-[#7b847f]">
           토큰 차감 없음 · 계정당 하루 20회 무료 · 동시에 1건 생성
