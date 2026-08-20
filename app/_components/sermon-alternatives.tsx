@@ -1,24 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   requestScriptureNormalization,
-  requestSermonGenerationSequence,
   SCRIPTURE_NORMALIZATION_GRANT_INVALID,
   SermonClientError,
 } from "@/app/_lib/sermon-client";
+import {
+  getSermonGenerationRunState,
+  isSermonGenerationRunActive,
+  startSermonGenerationRun,
+  stopSermonGenerationRun,
+  subscribeSermonGenerationRun,
+  acknowledgeSermonGenerationRun,
+  type SermonGenerationRunState,
+} from "@/app/_lib/sermon-generation-runner";
 import {
   createSermonGeneration,
   hasActiveScriptureNormalizationGrant,
   sermonGenerationUsesScripture,
   sermonDraftUrl,
 } from "@/app/_lib/sermon-store";
-import {
-  isSermonAlternative,
-  type SermonGeneration,
-} from "@/app/_lib/sermon-types";
 import {
   OptionBadges,
   SermonLoading,
@@ -45,15 +49,37 @@ export function SermonAlternatives() {
   } | null>(null);
   const [error, setError] = useState("");
   const [guestMessage, setGuestMessage] = useState(false);
-  const generationController = useRef<AbortController | null>(null);
+  const [runState, setRunState] = useState<SermonGenerationRunState | null>(
+    () => getSermonGenerationRunState(),
+  );
 
   useEffect(() => {
     if (draft?.selectedAlternativeId) setSelectedId(draft.selectedAlternativeId);
   }, [draft?.selectedAlternativeId]);
 
+  // Regeneration runs in the module singleton and survives navigation; this
+  // page mirrors its progress.
+  useEffect(() => subscribeSermonGenerationRun(setRunState), []);
+
   useEffect(() => {
-    return () => generationController.current?.abort();
-  }, []);
+    if (!draft || !runState || runState.draftId !== draft.id) return;
+    if (runState.mode !== "regenerate") return;
+    if (runState.status === "running") {
+      setRegenerating(true);
+      setGenerationProgress(runState.completedCount);
+      setGenerationStep(runState.step);
+      return;
+    }
+    setRegenerating(false);
+    setStopping(false);
+    setGenerationStep(null);
+    if (runState.status === "completed") {
+      setSelectedId(null);
+    } else if (runState.error) {
+      setError(runState.error);
+    }
+    acknowledgeSermonGenerationRun();
+  }, [draft, runState]);
 
   useEffect(() => {
     const expectedCount = isGuest ? 1 : 5;
@@ -116,7 +142,7 @@ export function SermonAlternatives() {
   };
 
   const regenerate = async () => {
-    if (generationController.current) return;
+    if (isSermonGenerationRunActive()) return;
     if (isGuest) {
       setGuestMessage(true);
       return;
@@ -139,8 +165,6 @@ export function SermonAlternatives() {
     setGenerationProgress(draft.generation?.alternatives.length ?? 0);
     setError("");
     const controller = new AbortController();
-    generationController.current = controller;
-    let generation: SermonGeneration | null = null;
     try {
       let canonicalScripture = draft.scripture;
       let scriptureNormalization = draft.scriptureNormalization;
@@ -187,10 +211,9 @@ export function SermonAlternatives() {
           draft.scripture === canonicalScripture &&
           sermonGenerationUsesScripture(draft.generation, canonicalScripture),
       );
-      generation = resumable && draft.generation
+      const activeGeneration = resumable && draft.generation
         ? draft.generation
         : createSermonGeneration("regenerate", 5);
-      const activeGeneration = generation;
       setGenerationProgress(activeGeneration.alternatives.length);
       updateDraft((current) => ({
         ...current,
@@ -199,81 +222,23 @@ export function SermonAlternatives() {
         stage: "generating",
         generation: activeGeneration,
       }));
-      const result = await requestSermonGenerationSequence(
-        {
+      startSermonGenerationRun({
+        draftId: draft.id,
+        mode: "regenerate",
+        request: {
           draftId: draft.id,
           options: draft.options,
           scripture: canonicalScripture,
           scriptureNormalizationGrant: scriptureNormalization?.grant ?? undefined,
           reference: draft.reference,
         },
-        {
-          generationId: activeGeneration.id,
-          expectedCount: 5,
-          completed: activeGeneration.alternatives,
-          completedParts: activeGeneration.parts,
-          signal: controller.signal,
-          clientUserScope: clientUserScope ?? null,
-          onStepProgress: (parts, position, completed, total) => {
-            if (controller.signal.aborted) return;
-            setGenerationStep({ position, completed, total });
-            updateDraft((current) =>
-              current.generation?.id === activeGeneration.id
-                ? {
-                    ...current,
-                    generation: { ...current.generation, parts },
-                    stage: "generating",
-                  }
-                : current,
-            );
-          },
-          onProgress: (alternatives, completedCount) => {
-            if (controller.signal.aborted) return;
-            setGenerationProgress(completedCount);
-            setGenerationStep(null);
-            updateDraft((current) =>
-              current.generation?.id === activeGeneration.id
-                ? {
-                    ...current,
-                    generation: {
-                      ...current.generation,
-                      alternatives,
-                      parts: current.generation.parts.filter(
-                        (part) => part.position > completedCount,
-                      ),
-                    },
-                    stage: "generating",
-                  }
-                : current,
-            );
-          },
-        },
-      );
-      if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-      if (
-        result.alternatives.length !== 5 ||
-        !result.alternatives.every(isSermonAlternative) ||
-        result.alternatives.some(
-          (alternative) => alternative.scripture !== canonicalScripture,
-        )
-      ) {
-        throw new Error("다섯 초안을 모두 생성하지 못했습니다.");
-      }
-      updateDraft((current) => ({
-        ...current,
-        scripture: canonicalScripture,
-        scriptureNormalization,
-        alternatives: result.alternatives,
-        generation: null,
-        selectedAlternativeId: null,
-        versions: [],
-        revisions: [],
-        revisionCount: 0,
-        completedAt: null,
-        savedSermonId: null,
-        saveMode: null,
-        stage: "alternatives",
-      }));
+        generation: activeGeneration,
+        expectedCount: 5,
+        clientUserScope: clientUserScope ?? null,
+        isGuest,
+        canonicalScripture,
+        scriptureNormalization: scriptureNormalization ?? null,
+      });
       setSelectedId(null);
     } catch (caught) {
       const normalizationGrantInvalid =
@@ -286,37 +251,20 @@ export function SermonAlternatives() {
           : caught instanceof Error
             ? caught.message
             : "새 초안을 준비하지 못했습니다.";
-      const restartRequired =
-        message.includes("새 초안 묶음") || message.includes("새 묶음으로 다시 시작");
       setError(message);
-      updateDraft((current) => {
-        const next =
-          generation && current.generation?.id === generation.id
-            ? {
-                ...current,
-                stage: "alternatives" as const,
-                generation: restartRequired ? null : current.generation,
-              }
-            : current;
-        return normalizationGrantInvalid
-          ? { ...next, scriptureNormalization: null }
-          : next;
-      });
-    } finally {
-      if (generationController.current === controller) {
-        generationController.current = null;
-      }
       setRegenerating(false);
       setStopping(false);
       setGenerationStep(null);
+      if (normalizationGrantInvalid) {
+        updateDraft((current) => ({ ...current, scriptureNormalization: null }));
+      }
     }
   };
 
   const stopGeneration = () => {
-    const controller = generationController.current;
-    if (!controller || controller.signal.aborted) return;
+    if (!isSermonGenerationRunActive(draft?.id)) return;
     setStopping(true);
-    controller.abort();
+    stopSermonGenerationRun();
   };
 
   const pendingGeneration =

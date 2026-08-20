@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SecureSignoutButton } from "@/app/_components/secure-signout-link";
 import {
@@ -116,7 +117,7 @@ function formatCompactTokens(value: number): string {
 
 function Brand() {
   return (
-    <a
+    <Link
       href="/home"
       className="group inline-flex items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#c7894a] focus-visible:ring-offset-4 focus-visible:ring-offset-[#172b24]"
       aria-label="로고스AI 홈"
@@ -135,7 +136,7 @@ function Brand() {
           LOGOS AI
         </span>
       </span>
-    </a>
+    </Link>
   );
 }
 
@@ -154,7 +155,7 @@ function NavList({
         const selected = item.id === active;
         return (
           <li key={item.id}>
-            <a
+            <Link
               href={item.href}
               onClick={onNavigate}
               aria-current={selected ? "page" : undefined}
@@ -175,7 +176,7 @@ function NavList({
                 {item.marker}
               </span>
               <span>{item.label}</span>
-            </a>
+            </Link>
           </li>
         );
       })}
@@ -246,7 +247,7 @@ function TokenSummaryLink({
 
   if (compact) {
     return (
-      <a
+      <Link
         href="/tokens"
         className="ml-auto grid min-w-[7rem] grid-cols-2 gap-1 rounded-xl border border-[#d4cec2] bg-white px-2 py-1.5 text-center shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
         aria-label={
@@ -267,12 +268,12 @@ function TokenSummaryLink({
             {remaining}
           </strong>
         </span>
-      </a>
+      </Link>
     );
   }
 
   return (
-    <a
+    <Link
       href="/tokens"
       className="block rounded-2xl border border-white/10 bg-white/7 p-3.5 text-white transition-colors hover:bg-white/11 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e]"
       aria-label={
@@ -301,7 +302,7 @@ function TokenSummaryLink({
           </strong>
         </span>
       </span>
-    </a>
+    </Link>
   );
 }
 
@@ -323,7 +324,7 @@ function Sidebar({
         <Brand />
       </div>
 
-      <a
+      <Link
         href="/sermon/options"
         onClick={onNavigate}
         className="mt-8 flex min-h-12 items-center justify-between rounded-2xl bg-[#e5b679] px-4 text-sm font-extrabold text-[#21372e] shadow-[0_12px_24px_rgba(0,0,0,.16)] transition-all hover:-translate-y-0.5 hover:bg-[#edc48f] focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
@@ -332,7 +333,7 @@ function Sidebar({
         <span aria-hidden="true" className="text-xl font-normal">
           +
         </span>
-      </a>
+      </Link>
 
       <nav className="mt-7" aria-label="주요 메뉴">
         <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white">

@@ -25,6 +25,7 @@ import {
   type SermonDraft,
 } from "@/app/_lib/sermon-types";
 import { AI_ENGINE_TIER_META } from "@/app/_lib/ai-engine-tiers";
+import { SERMON_DRAFT_EXTERNAL_UPDATE_EVENT } from "@/app/_lib/sermon-generation-runner";
 
 type SermonContextValue = {
   draft: SermonDraft | null;
@@ -68,6 +69,24 @@ export function SermonWorkflowProvider({
     setDraft(restored);
     setReady(true);
   }, [queryDraftId]);
+
+  useEffect(() => {
+    // The background generation runner persists progress straight to
+    // localStorage while this provider may be unmounted; re-read on its
+    // update events so returning pages show live progress.
+    const onExternalUpdate = (event: Event) => {
+      const draftId = (event as CustomEvent<{ draftId?: string }>).detail?.draftId;
+      if (!draftId || draftRef.current?.id !== draftId) return;
+      const reloaded = loadSermonDraft(draftId);
+      if (reloaded) {
+        draftRef.current = reloaded;
+        setDraft(reloaded);
+      }
+    };
+    window.addEventListener(SERMON_DRAFT_EXTERNAL_UPDATE_EVENT, onExternalUpdate);
+    return () =>
+      window.removeEventListener(SERMON_DRAFT_EXTERNAL_UPDATE_EVENT, onExternalUpdate);
+  }, []);
 
   const save = useCallback((nextDraft: SermonDraft): SermonDraft => {
     try {

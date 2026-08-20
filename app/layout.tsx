@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
+import { GenerationStatusPill } from "@/app/_components/generation-status-pill";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
@@ -50,6 +52,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="ko">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
+        <Suspense fallback={null}>
+          <GenerationStatusPill />
+        </Suspense>
       </body>
     </html>
   );

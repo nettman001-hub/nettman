@@ -3322,7 +3322,7 @@ test("accepts natural scripture notation and normalizes it before creating a gen
 });
 
 test("allows AI generation providers up to 220 seconds end to end", async () => {
-  const [provider, client, input, alternatives, editor, generateRoute, reviseRoute] =
+  const [provider, client, input, alternatives, editor, generateRoute, reviseRoute, runner] =
     await Promise.all([
       readFile(new URL("../app/_lib/openai-sermons.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/_lib/sermon-client.ts", import.meta.url), "utf8"),
@@ -3331,6 +3331,7 @@ test("allows AI generation providers up to 220 seconds end to end", async () => 
       readFile(new URL("../app/_components/sermon-editor.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/sermons/revise/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/_lib/sermon-generation-runner.ts", import.meta.url), "utf8"),
     ]);
 
   assert.match(provider, /PROVIDER_TIMEOUT_MS = 220_000/);
@@ -3338,12 +3339,16 @@ test("allows AI generation providers up to 220 seconds end to end", async () => 
   assert.match(client, /GENERATION_REQUEST_TIMEOUT_MS = 250_000/);
   assert.match(client, /for \(let index = alternatives\.length; index < options\.expectedCount;/);
   assert.match(editor, /controller\.abort\(\), 250_000/);
-  assert.match(input, /requestSermonGenerationSequence/);
+  assert.match(runner, /requestSermonGenerationSequence/);
+  assert.match(input, /startSermonGenerationRun/);
   assert.doesNotMatch(input, /compatible-openai|deepseek-v4-flash|deepseek-v4-pro/);
   assert.doesNotMatch(`${client}\n${input}`, /currentAiRequestConfig|engineChoice|generationEngine/);
-  assert.match(alternatives, /requestSermonGenerationSequence/);
-  assert.match(input, /const generate = async \(\) => \{\s*if \(generationController\.current\) return;/);
-  assert.match(alternatives, /const regenerate = async \(\) => \{\s*if \(generationController\.current\) return;/);
+  assert.match(alternatives, /startSermonGenerationRun/);
+  assert.match(input, /const generate = async \(\) => \{\s*if \(isSermonGenerationRunActive\(\)\) return;/);
+  assert.match(alternatives, /const regenerate = async \(\) => \{\s*if \(isSermonGenerationRunActive\(\)\) return;/);
+  // Navigating away must not abort the run: pages own no generation controller.
+  assert.doesNotMatch(input, /generationController/);
+  assert.doesNotMatch(alternatives, /generationController/);
   assert.match(input, /stage: "generating",\s*alternatives: \[\],/);
   for (const route of [generateRoute, reviseRoute]) {
     assert.match(route, /export const maxDuration = 240/);
@@ -3384,11 +3389,16 @@ test("keeps the revised sermon options, one engine picker, and stop controls", a
   assert.doesNotMatch(options, /SERMON_ALTERNATIVE_POSITIONS\.map/);
   assert.match(home, /제목과 청중 정하기/);
   assert.doesNotMatch(home, /주제와 청중 정하기/);
+  const runnerSource = await readFile(
+    new URL("../app/_lib/sermon-generation-runner.ts", import.meta.url),
+    "utf8",
+  );
   for (const source of [input, alternatives]) {
     assert.match(source, /"생성 중지"/);
-    assert.match(source, /generationController\.current/);
-    assert.match(source, /\.abort\(\)/);
+    assert.match(source, /stopSermonGenerationRun/);
   }
+  assert.match(runnerSource, /controller\.abort\(\)/);
+  assert.match(runnerSource, /persistSermonDraft/);
 });
 
 test("validates the revised durations, audiences, situations, and target lengths", async () => {
