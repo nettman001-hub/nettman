@@ -444,6 +444,17 @@ ${notes}` : "",
     if (caught instanceof DOMException && caught.name === "TimeoutError") {
       return Response.json({ error: "AI 생성 시간이 초과되었습니다. 다시 시도해 주세요." }, { status: 504 });
     }
+    // Diagnostic whitelist log: name + short message only (no payloads, no
+    // keys — provider error messages never carry credentials).
+    const record = caught && typeof caught === "object" ? (caught as Record<string, unknown>) : {};
+    console.warn("[sermon-resources] generation failed", {
+      mode,
+      engine: ai.engine,
+      model: ai.model,
+      errorName: typeof record.name === "string" ? record.name.slice(0, 60) : typeof caught,
+      message:
+        caught instanceof Error ? caught.message.slice(0, 200) : String(caught).slice(0, 120),
+    });
     return Response.json({ error: "자료를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요." }, { status: 500 });
   } finally {
     if (resourceReservation && db) {
