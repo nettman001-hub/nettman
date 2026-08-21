@@ -57,7 +57,7 @@ export const AI_AGENT_CAPABILITY_ARGUMENT_GUIDE: Record<AiAgentCapability, strin
   "sermon.alternative.select": '{"alternativeId":"현재 화면에 있는 대안 ID"}',
   "sermon.generation.stop": "{}",
   "sermon.revision.prepare":
-    '{"section":"introduction|body|conclusion|application","instruction":"10~1000자","toneAdjustment?":"100자 이하"}',
+    '{"section":"introduction|body|conclusion|application","instruction":"10~1000자","toneAdjustment?":"빈 문자열|더 부드럽게|더 도전적으로|더 간결하게|더 구체적으로|100자 이하의 구체적인 감정선"}',
   "resource.form.patch":
     'study={"patch":{"scripture?":"문자열","notes?":"문자열","selections?":[],"aiTier?":"등급"}}; critique={"patch":{"manuscript?":"문자열","scripture?":"문자열","aiTier?":"등급"}}; ministry={"patch":{"sermonId?":"ID","selections?":[],"aiTier?":"등급"}}',
   "resource.generate": "{}",

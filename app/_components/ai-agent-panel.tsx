@@ -279,8 +279,9 @@ export function AiAgentPanel({
             </div>
           </div>
         ) : (
-          <>
-            <div className="border-b border-white/10 px-4 py-3 sm:px-5">
+          <div className="min-h-0 flex-1 overflow-y-auto" data-ai-agent-scroll-region>
+            <div className="flex min-h-full flex-col">
+              <div className="border-b border-white/10 px-4 py-3 sm:px-5">
               <div className="flex items-start justify-between gap-3">
                 <span className="min-w-0">
                   <span className="block text-[10px] font-extrabold tracking-[0.16em] text-[#e5c37e] uppercase">
@@ -308,13 +309,13 @@ export function AiAgentPanel({
                   ))}
                 </div>
               ) : null}
-            </div>
+              </div>
 
-            <div
-              className="flex-1 overflow-y-auto px-4 py-5 sm:px-5"
-              aria-live="polite"
-              aria-relevant="additions"
-            >
+              <div
+                className="flex-1 px-4 py-4 sm:px-5"
+                aria-live="polite"
+                aria-relevant="additions"
+              >
               {!messages.length ? (
                 <div>
                   <p className="text-sm leading-6 text-white/80">
@@ -409,10 +410,10 @@ export function AiAgentPanel({
                   ) : null}
                 </ol>
               )}
-              <div ref={messagesEndRef} />
-            </div>
+                <div ref={messagesEndRef} />
+              </div>
 
-            <footer className="shrink-0 border-t border-white/10 bg-[#11271f] px-4 py-4 sm:px-5">
+              <footer className="border-t border-white/10 bg-[#11271f] px-4 py-3 sm:px-5">
               {error ? (
                 <p className="mb-3 rounded-xl border border-[#eaa897]/35 bg-[#8f3f32]/25 px-3 py-2.5 text-xs font-semibold leading-5 text-white" role="alert">
                   {error}
@@ -421,13 +422,13 @@ export function AiAgentPanel({
               <label htmlFor="ai-agent-tier" className="sr-only">
                 AI 엔진 선택
               </label>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <select
                   id="ai-agent-tier"
                   value={tier}
                   onChange={(event) => setTier(event.target.value as typeof tier)}
                   disabled={pending}
-                  className="min-h-11 min-w-0 flex-1 rounded-xl border border-white/15 bg-[#1b362c] px-3 text-base font-bold text-white outline-none focus:border-[#e4c17f] focus:ring-2 focus:ring-[#e4c17f]/25 disabled:opacity-50"
+                  className="h-9 !min-h-9 min-w-0 flex-1 rounded-lg border border-white/15 !bg-[#1b362c] !px-2.5 !py-0 text-sm font-bold !text-white outline-none focus:border-[#e4c17f] focus:ring-2 focus:ring-[#e4c17f]/25 disabled:opacity-50"
                 >
                   {AI_ENGINE_TIERS.map((engineTier) => (
                     <option key={engineTier} value={engineTier} className="bg-[#1b362c] text-white">
@@ -435,14 +436,14 @@ export function AiAgentPanel({
                     </option>
                   ))}
                 </select>
-                <span className="shrink-0 rounded-full bg-[#e4c17f]/14 px-2.5 py-1.5 text-xs font-extrabold text-[#f0d59f]">
+                <span className="shrink-0 rounded-full bg-[#e4c17f]/14 px-2 py-1 text-[10px] font-extrabold text-[#f0d59f]">
                   메시지 {AI_AGENT_MESSAGE_COSTS[tier]}토큰
                 </span>
               </div>
               <label htmlFor="ai-agent-message" className="sr-only">
                 AI 에이전트에게 요청하기
               </label>
-              <div className="mt-3 flex items-end gap-2 rounded-2xl border border-white/15 bg-white/7 p-2 focus-within:border-[#e4c17f] focus-within:ring-2 focus-within:ring-[#e4c17f]/20">
+              <div className="mt-2 flex items-end gap-2 rounded-xl border border-white/15 bg-white/7 p-1.5 focus-within:border-[#e4c17f] focus-within:ring-2 focus-within:ring-[#e4c17f]/20">
                 <textarea
                   id="ai-agent-message"
                   value={draft}
@@ -460,7 +461,7 @@ export function AiAgentPanel({
                   placeholder="현재 화면에 관해 묻거나, 고쳐 달라고 요청하세요"
                   rows={2}
                   disabled={pending || !page}
-                  className="max-h-36 min-h-12 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm leading-6 text-white placeholder:text-white/45 focus:shadow-none focus:outline-none disabled:opacity-50"
+                  className="!max-h-28 !min-h-14 flex-1 resize-none border-0 !bg-transparent !px-2 !py-1.5 text-sm leading-6 !text-white placeholder:text-white/45 focus:shadow-none focus:outline-none disabled:opacity-50"
                 />
                 {pending ? (
                   <button
@@ -483,11 +484,12 @@ export function AiAgentPanel({
                   </button>
                 )}
               </div>
-              <p className="mt-2 text-[10px] leading-4 text-white/55">
+              <p className="mt-1.5 text-[10px] leading-4 text-white/55">
                 Enter 전송 · Shift+Enter 줄바꿈 · 변경은 확인 후 적용됩니다
               </p>
-            </footer>
-          </>
+              </footer>
+            </div>
+          </div>
         )}
       </aside>
     </>

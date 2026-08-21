@@ -31,6 +31,14 @@ const SECTION_OPTIONS: Array<{
   { value: "application", label: "적용" },
 ];
 
+const TONE_ADJUSTMENT_OPTIONS = [
+  "",
+  "더 부드럽게",
+  "더 도전적으로",
+  "더 간결하게",
+  "더 구체적으로",
+] as const;
+
 function Paragraphs({ text }: { text: string }) {
   return (
     <>
@@ -142,22 +150,16 @@ export function SermonEditor() {
         ) {
           throw new Error("수정 지시는 10자 이상 1,000자 이하로 입력해 주세요.");
         }
-        const allowedTones = [
-          "",
-          "더 부드럽게",
-          "더 도전적으로",
-          "더 간결하게",
-          "더 구체적으로",
-        ];
         if (
           nextTone !== undefined &&
-          (typeof nextTone !== "string" || !allowedTones.includes(nextTone))
+          (typeof nextTone !== "string" || nextTone.trim().length > 100)
         ) {
-          throw new Error("감정선 조정값을 화면에서 제공하는 항목 중 선택해 주세요.");
+          throw new Error("감정선 조정은 100자 이하로 제안해 주세요.");
         }
+        const normalizedTone = typeof nextTone === "string" ? nextTone.trim() : "";
         setSection(nextSection as SermonRevision["section"]);
         setInstruction(nextInstruction.trim());
-        setToneAdjustment(typeof nextTone === "string" ? nextTone : "");
+        setToneAdjustment(normalizedTone);
         setError("");
         setNotice("");
         return {
@@ -521,11 +523,15 @@ export function SermonEditor() {
               onChange={(event) => setToneAdjustment(event.target.value)}
               disabled={remaining === 0 || revising || completing}
             >
-              <option value="">현재 감정선 유지</option>
-              <option value="더 부드럽게">더 부드럽게</option>
-              <option value="더 도전적으로">더 도전적으로</option>
-              <option value="더 간결하게">더 간결하게</option>
-              <option value="더 구체적으로">더 구체적으로</option>
+              {toneAdjustment &&
+              !TONE_ADJUSTMENT_OPTIONS.some((option) => option === toneAdjustment) ? (
+                <option value={toneAdjustment}>AI 제안 · {toneAdjustment}</option>
+              ) : null}
+              {TONE_ADJUSTMENT_OPTIONS.map((option) => (
+                <option value={option} key={option || "keep-current-tone"}>
+                  {option || "현재 감정선 유지"}
+                </option>
+              ))}
             </select>
           </div>
           <div className="sermon-field is-full">

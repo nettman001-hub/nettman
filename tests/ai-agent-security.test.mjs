@@ -303,6 +303,10 @@ test("workspace shell keeps account tools in the top bar and toggles one accessi
   assert.match(panel, /stopResponse/);
   assert.match(panel, /AI_AGENT_MESSAGE_COSTS\[tier\]/);
   assert.match(panel, /text-white/);
+  assert.match(panel, /data-ai-agent-scroll-region/);
+  assert.match(panel, /className="min-h-0 flex-1 overflow-y-auto"/);
+  assert.doesNotMatch(panel, /className="flex-1 overflow-y-auto px-4 py-5/);
+  assert.match(panel, /className="h-9 !min-h-9/);
 
   assert.match(provider, /activePageRegistration/);
   assert.match(provider, /Object\.keys\(value\.snapshot\)\.length > 0/);
@@ -329,6 +333,9 @@ test("page bridges expose bounded actions while reusing existing generation path
   assert.match(alternatives, /draft\.alternatives\.some/);
   assert.match(editor, /sermon\.revision\.prepare/);
   assert.match(editor, /수정 지시를 입력란에 준비했습니다/);
+  assert.match(editor, /nextTone\.trim\(\)\.length > 100/);
+  assert.match(editor, /AI 제안 · \{toneAdjustment\}/);
+  assert.doesNotMatch(editor, /감정선 조정값을 화면에서 제공하는 항목 중 선택해 주세요/);
   assert.match(resource, /resource\.form\.patch/);
   assert.match(resource, /await generate\(\)/);
   assert.match(resource, /fetch\("\/api\/sermon-resources"/);
