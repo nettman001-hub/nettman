@@ -1,4 +1,5 @@
 import { resolveRequestUserResponse, unauthorizedResponse } from "@/app/_lib/auth-user";
+import { reconcileExpiredSermonHelperCoachRequests } from "@/app/_lib/sermon-helper-coach-ledger";
 import {
   ensureTokenWallet,
   getTokenWallet,
@@ -48,6 +49,16 @@ export async function GET(request: Request): Promise<Response> {
 
   try {
     await ensureDatabase(db);
+    // Wallet reads are a safe recovery point for provider calls whose process
+    // ended before it could persist a response or refund the debit. Recovery
+    // is bounded and idempotent; if storage is temporarily unavailable we
+    // still return the last committed wallet with an explicit retry signal.
+    const coachReconciliation = user.isDemo
+      ? { refunded: 0, expiredResponses: 0, failed: 0 }
+      : await reconcileExpiredSermonHelperCoachRequests({
+          db,
+          userId: user.id,
+        }).catch(() => ({ refunded: 0, expiredResponses: 0, failed: 1 }));
     // Central auth already ensured the wallet for authenticated users in this
     // request, so a read is enough. Demo users skip persistence and keep the
     // ensure path.
@@ -91,6 +102,7 @@ export async function GET(request: Request): Promise<Response> {
           sermonCosts: SERMON_TOKEN_COSTS,
         },
         checkoutConfigured: tokenBillingConfigured(),
+        coachReconciliationPending: coachReconciliation.failed > 0,
       },
       { headers: { "Cache-Control": "no-store" } },
     );

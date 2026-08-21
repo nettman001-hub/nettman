@@ -101,7 +101,7 @@ export function HistoryDetailClient({ id }: { id: string }) {
               <button type="button" onClick={() => setViewingId(null)} className="inline-flex min-h-9 items-center rounded-lg bg-[#284b3d] px-3 text-xs font-extrabold text-white hover:bg-[#18382d]">저장한 원고 보기</button>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[#7c8882]"><span className="rounded-full bg-[#e4ece3] px-3 py-1.5 text-[#41634e]">{sermon.sermonType}</span><span>{sermon.audience}</span><span>·</span><span>{sermon.audienceSituation || "일반"}</span><span>·</span><span>{sermon.duration}분</span><span>·</span><span>{sermon.pointCount}대지</span><span>·</span><span>{sermon.emotion}</span></div>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[#7c8882]"><span className="rounded-full bg-[#e4ece3] px-3 py-1.5 text-[#41634e]">{sermon.sermonType}</span><span className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold ${sermon.authorshipMode === "pastor_assisted" ? "bg-[#fff0d8] text-[#89572b]" : "bg-[#eceaf6] text-[#65568b]"}`}>{sermon.authorshipMode === "pastor_assisted" ? "목회자 작성 · AI 보조" : "AI 초안 기반"}</span><span>{sermon.audience}</span><span>·</span><span>{sermon.audienceSituation || "일반"}</span><span>·</span><span>{sermon.duration}분</span><span>·</span><span>{sermon.pointCount}대지</span><span>·</span><span>{sermon.emotion}</span></div>
           )}
           <p className="mt-8 text-sm font-extrabold text-[#a05c30]">{(viewing ?? sermon).scripture}</p>
           <h1 className="mt-3 font-serif text-[clamp(2.25rem,5vw,3.8rem)] font-bold leading-[1.08] tracking-[-.045em] text-[#1d372d]">{(viewing ?? sermon).title}</h1>

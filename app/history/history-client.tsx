@@ -12,6 +12,10 @@ type HistoryResponse = { items: SermonRecord[]; total: number; page: number; lim
 
 const formatter = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric" });
 
+function authorshipLabel(mode: SermonRecord["authorshipMode"]): string {
+  return mode === "pastor_assisted" ? "목회자 작성 · AI 보조" : "AI 초안 기반";
+}
+
 export function HistoryClient() {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -148,7 +152,7 @@ export function HistoryClient() {
               <li key={sermon.id}>
                 <a href={`/history/${sermon.id}`} className="group grid gap-4 px-5 py-5 transition-colors hover:bg-[#f6f7f1] sm:grid-cols-[1fr_auto] sm:items-center sm:px-7">
                   <div className="min-w-0">
-                    <div className="mb-2 flex flex-wrap items-center gap-2"><span className="rounded-full bg-[#e2ece4] px-2.5 py-1 text-[10px] font-extrabold text-[#41654e]">{sermon.sermonType}</span><span className="text-xs font-semibold text-[#8a948f]">{sermon.scripture}</span></div>
+                    <div className="mb-2 flex flex-wrap items-center gap-2"><span className="rounded-full bg-[#e2ece4] px-2.5 py-1 text-[10px] font-extrabold text-[#41654e]">{sermon.sermonType}</span><span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${sermon.authorshipMode === "pastor_assisted" ? "bg-[#fff0d8] text-[#89572b]" : "bg-[#eceaf6] text-[#65568b]"}`}>{authorshipLabel(sermon.authorshipMode)}</span><span className="text-xs font-semibold text-[#8a948f]">{sermon.scripture}</span></div>
                     <h2 className="font-serif text-xl font-bold leading-snug tracking-[-.02em] text-[#203b30] group-hover:text-[#a35d2f]">{sermon.title}</h2>
                     <p className="mt-2 line-clamp-2 text-sm text-[#6c7872]">{sermon.sections.introduction}</p>
                   </div>

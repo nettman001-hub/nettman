@@ -202,6 +202,85 @@ export const paymentOrders = sqliteTable("payment_orders", {
   index("idx_payment_orders_status").on(table.status),
 ]);
 
+/**
+ * Pastor-led sermon-helper workbooks. These records intentionally do not
+ * reference sermon_drafts or generation runs: the helper is an independent,
+ * manually authored workflow whose AI contributions are explicit provenance.
+ */
+export const sermonHelperProjects = sqliteTable("sermon_helper_projects", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  title: text("title").notNull(),
+  scripture: text("scripture").notNull().default(""),
+  status: text("status", { enum: ["in_progress", "completed"] })
+    .notNull()
+    .default("in_progress"),
+  currentStepId: text("current_step_id").notNull().default("brief"),
+  stepsJson: text("steps_json").notNull(),
+  provenanceJson: text("provenance_json").notNull().default("[]"),
+  provenanceMode: text("provenance_mode").notNull().default("pastor_assisted"),
+  completedSermonId: text("completed_sermon_id"),
+  completedStepCount: integer("completed_step_count").notNull().default(0),
+  version: integer("version").notNull().default(1),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  deletedAt: text("deleted_at"),
+}, (table) => [
+  index("idx_sermon_helper_projects_user_updated").on(table.userId, table.updatedAt),
+  index("idx_sermon_helper_projects_user_status").on(table.userId, table.status),
+  uniqueIndex("idx_sermon_helper_projects_completed_sermon").on(
+    table.completedSermonId,
+  ),
+]);
+
+/**
+ * Durable idempotency and billing ledger for one explicit AI coach message.
+ * Provider responses are bounded and retained briefly for safe retry replay;
+ * the minimal terminal row remains after response_json is redacted.
+ */
+export const sermonHelperCoachRequests = sqliteTable("sermon_helper_coach_requests", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  projectId: text("project_id").notNull(),
+  sessionId: text("session_id").notNull(),
+  messageId: text("message_id").notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(),
+  tier: text("tier", { enum: ["basic", "advanced", "reasoning"] }).notNull(),
+  mode: text("mode", { enum: ["question", "research", "review", "refine"] }).notNull(),
+  stepId: text("step_id").notNull(),
+  status: text("status", { enum: ["pending", "succeeded", "refunded"] })
+    .notNull()
+    .default("pending"),
+  cost: integer("cost").notNull(),
+  chargeReferenceId: text("charge_reference_id").notNull(),
+  responseJson: text("response_json"),
+  failureCode: text("failure_code"),
+  leaseExpiresAt: text("lease_expires_at").notNull(),
+  responseExpiresAt: text("response_expires_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  completedAt: text("completed_at"),
+  refundedAt: text("refunded_at"),
+}, (table) => [
+  uniqueIndex("idx_sermon_helper_coach_user_session_message").on(
+    table.userId,
+    table.sessionId,
+    table.messageId,
+  ),
+  uniqueIndex("idx_sermon_helper_coach_charge_reference").on(
+    table.chargeReferenceId,
+  ),
+  index("idx_sermon_helper_coach_user_status_lease").on(
+    table.userId,
+    table.status,
+    table.leaseExpiresAt,
+  ),
+  index("idx_sermon_helper_coach_user_response_expiry").on(
+    table.userId,
+    table.responseExpiresAt,
+  ),
+]);
+
 export const sermonDrafts = sqliteTable("sermon_drafts", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),

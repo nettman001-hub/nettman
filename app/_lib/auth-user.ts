@@ -79,6 +79,8 @@ const USER_OWNER_COLUMNS = [
   ["token_adjustments", "user_id"],
   ["token_adjustments", "actor_user_id"],
   ["payment_orders", "user_id"],
+  ["sermon_helper_projects", "user_id"],
+  ["sermon_helper_coach_requests", "user_id"],
   ["sermon_drafts", "user_id"],
   ["sermon_generation_runs", "user_id"],
   ["sermons", "user_id"],

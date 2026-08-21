@@ -14,34 +14,41 @@ export const metadata: Metadata = {
 const QUICK_LINKS = [
   {
     number: "01",
-    title: "본문에서 시작",
-    description: "제목과 본문을 정하고 5가지 설교 방향을 받아보세요.",
+    title: "설교도우미",
+    description: "묵상과 연구를 여덟 단계로 이어가며 내 설교를 직접 완성하세요.",
+    href: "/sermon-helper",
+    cta: "단계별로 준비하기",
+  },
+  {
+    number: "02",
+    title: "AI 설교 생성",
+    description: "본문과 상황을 입력하고 다섯 가지 설교 방향을 비교하세요.",
     href: "/sermon/options",
     cta: "새 설교 만들기",
   },
   {
-    number: "02",
+    number: "03",
     title: "완성본 다시 보기",
     description: "저장한 설교와 당시 설정을 한곳에서 찾아보세요.",
     href: "/history",
     cta: "내 설교 열기",
   },
   {
-    number: "03",
+    number: "04",
     title: "설교 피드백",
     description: "전문가와 설교의 흐름, 적용, 표현을 함께 점검하세요.",
     href: "/consult",
     cta: "피드백 살펴보기",
   },
   {
-    number: "04",
+    number: "05",
     title: "스터디",
     description: "원문, 배경과 구조를 살피며 완성한 설교의 본문 이해를 넓혀보세요.",
     href: "/study",
     cta: "본문 연구하기",
   },
   {
-    number: "05",
+    number: "06",
     title: "사역 활용",
     description: "완성한 설교로 소그룹 질문지, 주보 요약과 숏폼 문구를 만들어보세요.",
     href: "/ministry",
@@ -101,24 +108,24 @@ export default async function HomePage() {
                 <br className="hidden sm:block" /> 전하시나요?
               </h1>
               <p className="mt-5 max-w-xl text-sm leading-6 text-white sm:text-base">
-                본문과 마음에 품은 방향을 들려주세요. 구조가 선명한 첫 초안부터
-                함께 시작하겠습니다.
+                AI가 원고를 대신 쓰지 않습니다. 마음에 품은 본문과 회중을
+                차근차근 기록하며 목회자님의 설교를 직접 완성해 보세요.
               </p>
             </div>
 
             <div className="flex shrink-0 flex-col gap-2.5 sm:flex-row lg:flex-col">
               <a
-                href="/sermon/options"
+                href="/sermon-helper"
                 className="inline-flex min-h-13 items-center justify-center gap-3 rounded-2xl bg-[#e7bb80] px-6 text-sm font-extrabold text-[#20392f] shadow-[0_14px_30px_rgba(0,0,0,.16)] transition-transform hover:-translate-y-0.5 hover:bg-[#f0ca99] focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
               >
-                새 설교 시작
+                설교도우미로 시작
                 <span aria-hidden="true" className="text-lg">→</span>
               </a>
               <a
-                href="/history"
+                href="/sermon/options"
                 className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-white/15 bg-white/7 px-6 text-sm font-bold text-white hover:bg-white/12 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e7bb80]"
               >
-                저장한 설교 보기
+                AI로 초안 만들기
               </a>
             </div>
           </div>
@@ -157,7 +164,7 @@ export default async function HomePage() {
               <h2 id="quick-title" className="mt-1.5 font-serif text-2xl font-bold tracking-tight text-[#254238]">바로가기</h2>
             </div>
           </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {QUICK_LINKS.map((item) => (
               <a
                 key={item.number}

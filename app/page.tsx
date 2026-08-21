@@ -4,30 +4,29 @@ import { AiSessionBoundary } from "@/app/_components/ai-session-boundary";
 const features = [
   {
     number: "01",
-    title: "한 본문, 다섯 관점",
+    title: "목회자가 이끄는 여덟 단계",
     description:
-      "입력한 성경 본문과 목회 상황을 바탕으로 서로 다른 5개의 설교 방향을 제안합니다.",
+      "상황과 본문에서 시작해 연구·메시지·구조·적용·직접쓰기·점검을 목회자의 기록으로 이어갑니다.",
   },
   {
     number: "02",
-    title: "대화하듯 다듬기",
+    title: "필요할 때만 받는 AI 제안",
     description:
-      "도입, 본론, 결론, 적용 중 원하는 부분을 짚어 최대 3번까지 정교하게 수정합니다.",
+      "AI는 질문과 연구 방향, 점검과 짧은 표현 대안만 제안하며 목회자가 채택해야 기록에 반영됩니다.",
   },
   {
     number: "03",
-    title: "바로 쓸 수 있는 원고",
+    title: "두 가지 준비 방식",
     description:
-      "완성한 설교를 안전하게 보관하고 PDF와 Word 문서로 내려받아 바로 준비합니다.",
+      "직접 준비하는 설교도우미와 다섯 초안을 비교하는 AI 설교 생성을 목적에 맞게 선택할 수 있습니다.",
   },
 ];
 
 const steps = [
-  ["01", "설교의 방향을 정합니다", "제목·대상·청중 상황·분량·감정선과 구성을 선택하세요."],
-  ["02", "성경 본문을 입력합니다", "본문 중심의 해석과 목회적 적용을 함께 구성합니다."],
-  ["03", "다섯 초안 중 하나를 고릅니다", "각 설교의 도입과 핵심 흐름을 비교할 수 있습니다."],
-  ["04", "내 목소리에 맞게 다듬습니다", "구체적인 수정 지시를 주고 이전 버전과 비교하세요."],
-  ["05", "완성하고 보관합니다", "히스토리에 저장하고 원하는 문서 형식으로 내려받습니다."],
+  ["01", "마음을 열고 본문을 읽습니다", "설교 상황을 정리하고 본문에서 직접 관찰한 내용을 기록합니다."],
+  ["02", "깊이 살피고 메시지를 붙잡습니다", "문맥과 자료를 검증하고 이번 설교의 한 문장 메시지를 씁니다."],
+  ["03", "흐름을 세우고 삶에 잇습니다", "구조를 설계하고 실제 회중에게 닿는 적용을 준비합니다."],
+  ["04", "내 언어로 쓰고 책임 있게 점검합니다", "원고를 직접 쓴 뒤 본문·출처·신학·개인정보를 확인합니다."],
 ];
 
 export default function LandingPage() {
@@ -61,31 +60,31 @@ export default function LandingPage() {
             <em>준비의 부담은 덜어드립니다.</em>
           </h1>
           <p className="hero-lead">
-            로고스AI는 성경 본문과 목회 상황을 바탕으로 설교 초안 생성,
-            원고 수정과 보관을 돕는 AI 설교 작성 서비스입니다. 본문과 현장을
-            입력하면 설교의 뼈대부터 적용까지 함께 정리합니다.
+            설교도우미는 원고를 대신 쓰지 않습니다. 목회자가 본문을 묵상하고
+            회중을 생각하며 자기 설교를 완성하도록, 여덟 단계마다 질문과 자료,
+            점검을 제공합니다. 필요할 때만 AI의 제안을 받아 직접 선택하세요.
           </p>
           <div className="hero-actions">
-            <Link className="button button-primary button-lg" href="/sermon/options">
-              첫 설교 만들기 <span aria-hidden="true">→</span>
+            <Link className="button button-primary button-lg" href="/sermon-helper">
+              설교도우미로 준비하기 <span aria-hidden="true">→</span>
             </Link>
-            <Link className="text-link" href="/sermon">
-              먼저 둘러보기 <span aria-hidden="true">↗</span>
+            <Link className="text-link" href="/sermon/options">
+              AI로 초안 만들기 <span aria-hidden="true">↗</span>
             </Link>
           </div>
           <div className="hero-proof" aria-label="서비스 특징">
-            <span><b>5</b>가지 설교 대안</span>
-            <span><b>3</b>회의 세밀한 수정</span>
-            <span><b>2</b>가지 문서 형식</span>
+            <span><b>8</b>단계 직접 준비</span>
+            <span><b>4</b>묵상 흐름</span>
+            <span><b>1</b>명확한 최종 책임</span>
           </div>
         </div>
 
-        <div className="hero-visual" aria-label="생성된 설교 미리보기 예시">
+        <div className="hero-visual" aria-label="설교도우미 직접 작성 화면 예시">
           <div className="hero-glow" />
           <article className="sermon-paper">
             <div className="paper-topline">
-              <span className="paper-label">SERMON NOTE · 01</span>
-              <span className="paper-status">초안 완성</span>
+              <span className="paper-label">SERMON HELPER · 07</span>
+              <span className="paper-status">직접 작성 중</span>
             </div>
             <p className="paper-scripture">요한복음 15:1–8</p>
             <h2>머무름이 열매가 되는 삶</h2>
@@ -117,8 +116,8 @@ export default function LandingPage() {
             <span>감정선</span><strong>따뜻한 도전</strong>
           </div>
           <div className="floating-note floating-note-bottom">
-            <span className="spark" aria-hidden="true">✦</span>
-            <div><strong>AI 구조 점검 완료</strong><small>도입 · 본론 · 결론 · 적용</small></div>
+              <span className="spark" aria-hidden="true">✦</span>
+            <div><strong>AI 질문 제안</strong><small>채택 전에는 원고에 반영되지 않습니다</small></div>
           </div>
         </div>
       </section>
@@ -157,13 +156,13 @@ export default function LandingPage() {
         <div className="container workflow-layout">
           <div className="workflow-intro">
             <span className="section-kicker light">A CLEAR PROCESS</span>
-            <h2>생각의 흐름을<br />놓치지 않는 5단계</h2>
+            <h2>생각의 흐름을<br />이어가는 4가지 움직임</h2>
             <p>
-              이전 단계의 선택은 자동으로 이어지고, 언제든 돌아가 다시
-              조정할 수 있습니다.
+              여덟 세부 단계를 자유롭게 오가며 목회자의 생각을 기록하고,
+              언제든 돌아가 다시 조정할 수 있습니다.
             </p>
-            <Link className="button button-light" href="/sermon/options">
-              지금 시작하기 <span aria-hidden="true">→</span>
+            <Link className="button button-light" href="/sermon-helper">
+              설교도우미 시작하기 <span aria-hidden="true">→</span>
             </Link>
           </div>
           <ol className="workflow-list">
@@ -199,7 +198,7 @@ export default function LandingPage() {
           <div>
             <p>가입 전에도 한 번의 설교 미리보기를 경험할 수 있습니다.</p>
             <Link className="button button-accent button-lg" href="/sermon/options">
-              무료로 설교 만들기 <span aria-hidden="true">→</span>
+              AI 설교 미리보기 <span aria-hidden="true">→</span>
             </Link>
           </div>
         </div>

@@ -14,6 +14,8 @@ const protectedTables = [
   "token_adjustments",
   "token_topups",
   "payment_orders",
+  "sermon_helper_projects",
+  "sermon_helper_coach_requests",
   "sermon_drafts",
   "sermon_alternatives",
   "sermon_generation_runs",

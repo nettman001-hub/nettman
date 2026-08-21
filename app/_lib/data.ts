@@ -5,6 +5,8 @@ export type SermonSections = {
   application: string;
 };
 
+export type SermonAuthorshipMode = "pastor_assisted" | "ai_generated";
+
 export type SermonRecord = {
   id: string;
   title: string;
@@ -16,6 +18,8 @@ export type SermonRecord = {
   duration: number;
   emotion: string;
   sections: SermonSections;
+  /** Derived from a completed helper relationship; legacy/local records may omit it. */
+  authorshipMode?: SermonAuthorshipMode;
   createdAt: string;
   updatedAt: string;
 };

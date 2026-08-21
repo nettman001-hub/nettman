@@ -8,8 +8,8 @@ test("keeps the completed Korean landing page in source", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(source, /로고스AI/);
   assert.match(source, /말씀의 본질은 지키고/);
-  assert.match(source, /첫 설교 만들기/);
-  assert.match(source, /AI 설교 작성 서비스입니다/);
+  assert.match(source, /설교도우미로 준비하기/);
+  assert.match(source, /설교도우미는 원고를 대신 쓰지 않습니다/);
   assert.doesNotMatch(source, /Your site is taking shape|Building your site|react-loading-skeleton/);
 });
 
@@ -90,6 +90,7 @@ test("keeps every designed route and production asset in source", async () => {
     "verify-email/page.tsx",
     "reset-password/page.tsx",
     "home/page.tsx",
+    "sermon-helper/page.tsx",
     "sermon/options/page.tsx",
     "sermon/input/page.tsx",
     "sermon/alternatives/preview/page.tsx",
@@ -815,7 +816,18 @@ test("keeps public privacy and terms pages grounded in implemented service behav
   assert.match(landing, /href="\/terms"/);
   assert.match(privacy, /Supabase Auth/);
   assert.match(privacy, /sessionStorage/);
-  assert.match(privacy, /현재 별도의 자동 삭제\s*기한이 설정되어 있지 않습니다/);
+  assert.match(
+    privacy,
+    /API 키 원문은 브라우저에 저장하거나 다시 표시하지 않습니다[\s\S]*암호화해 데이터베이스에 저장[\s\S]*서버의 비밀 환경 변수를 사용할 수 있습니다/,
+  );
+  assert.match(
+    privacy,
+    /아래 AI 코치 응답 예외 외에는 현재 별도의 자동 삭제\s*기한이 설정되어 있지\s*않습니다/,
+  );
+  assert.match(
+    privacy,
+    /이 준비 삭제[\s\S]*제목, 성경 본문,[\s\S]*단계별 입력과 원고, 출처 내용을 즉시 제거/,
+  );
   assert.match(privacy, /배정된 뒤에만 설교 원문과 피드백\s*메시지를 열람/);
   assert.match(privacy, /설교 초안과 로컬 저장 이력은 현재 로그인 계정별로 분리되지 않으며/);
   assert.match(privacy, /HTTP 연결에서는 API\s*키와 설교 요청 내용이 전송 구간에서 암호화되지 않으므로/);
@@ -4583,6 +4595,121 @@ test("keeps text white and AA-readable on dark surfaces", async () => {
       (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
     assert.ok(ratio >= 4.5, `${foreground} on ${background} was ${ratio.toFixed(2)}:1`);
   }
+});
+
+test("keeps the pastor-led sermon helper workflow and explicit AI adoption", async () => {
+  const [page, client, shell, agentContract, landing, home, history, detail, globals] =
+    await Promise.all([
+      readFile(new URL("../app/sermon-helper/page.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL("../app/sermon-helper/sermon-helper-client.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(new URL("../app/_components/app-shell.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/_lib/ai-agent-contract.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/home/page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/history/history-client.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL("../app/history/[id]/history-detail-client.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    ]);
+
+  assert.match(page, /<SermonHelperClient/);
+  assert.match(page, /clientUserScope=\{aiUserScope\(user\.id\)\}/);
+  assert.match(agentContract, /"sermon-helper"/);
+  const homeNav = shell.indexOf('{ id: "home"');
+  const helperNav = shell.indexOf('{ id: "sermon-helper"');
+  const sermonNav = shell.indexOf('{ id: "sermon"');
+  assert.ok(homeNav >= 0 && homeNav < helperNav && helperNav < sermonNav);
+  assert.match(shell, /id: "sermon-helper", label: "설교도우미", href: "\/sermon-helper"/);
+  assert.match(landing, /href="\/sermon-helper"/);
+  assert.match(home, /href: "\/sermon-helper"/);
+
+  for (const stepId of [
+    "brief",
+    "observe",
+    "interpret",
+    "message",
+    "outline",
+    "apply",
+    "write",
+    "review",
+  ]) {
+    assert.match(client, new RegExp(`id: "${stepId}"`));
+  }
+  assert.match(client, /Eight steps · Four movements/);
+  assert.match(client, /setTimeout\(\(\) => void saveProject\(\), 850\)/);
+  assert.match(client, /expectedVersion: serverVersionRef\.current/);
+  assert.match(client, /expectedUpdatedAt: serverUpdatedAtRef\.current/);
+  assert.match(client, /window\.addEventListener\("beforeunload"/);
+  assert.match(client, /window\.addEventListener\("popstate", handlePopState, true\)/);
+  assert.match(client, /event\.stopImmediatePropagation\(\)/);
+  assert.match(client, /window\.history\.pushState/);
+  assert.match(client, /setPendingNavigationHref\(targetHref\)/);
+  assert.match(client, /document\.addEventListener\("click", handleNavigationClick, true\)/);
+  assert.match(client, /executeAction: async \(proposal: AgentActionProposal\)/);
+  assert.match(client, /if \(hasUnsavedRef\.current\) await saveProject\(\)/);
+  assert.match(client, /router\.push\(href\)/);
+  assert.doesNotMatch(client, /localStorage/);
+  assert.match(client, /sermonHelperCoachRetryStorageKey/);
+  assert.match(client, /window\.sessionStorage\.setItem\(retryStorageKey/);
+
+  for (const mode of ["question", "research", "review", "refine"]) {
+    assert.match(client, new RegExp(`id: "${mode}"`));
+  }
+  assert.match(client, /SERMON_HELPER_COACH_COSTS\[tier\]/);
+  assert.match(client, /controllerRef\.current\?\.abort\(\)/);
+  assert.match(client, /useEffect\(\(\) => \(\) => \{\s*controllerRef\.current\?\.abort\(\);\s*\}, \[\]\)/);
+  assert.match(client, /내 작업에 채택/);
+  assert.match(client, /sourceType: "ai_suggestion"/);
+  assert.match(client, /provenanceIds: \[/);
+  assert.match(client, /전체 원고 자동 생성은 제공하지 않습니다/);
+  assert.match(client, /전체 원고를 만들지 않습니다/);
+  assert.match(client, /removedIds\.has\(id\)/);
+
+  assert.match(client, /requestScriptureNormalization/);
+  assert.match(client, /setNormalizationCandidate\(result\.scripture\)/);
+  assert.match(client, /normalizationControllerRef\.current\?\.abort\(\);[\s\S]*scripture: event\.target\.value/);
+  assert.match(client, /projectRef\.current\?\.id !== snapshot\.id/);
+  assert.match(client, /projectRef\.current\.scripture\.trim\(\) !== input/);
+  assert.ok(
+    client.indexOf("projectRef.current.scripture.trim() !== input") <
+      client.indexOf("setNormalizationCandidate(result.scripture)"),
+    "a stale normalization response must be rejected before showing a candidate",
+  );
+  assert.doesNotMatch(client, /confirmScripture\(result\.scripture/);
+  assert.match(client, /직접 확인했고 이 표기 적용/);
+  assert.match(client, /본문 전문은 AI의 기억으로 만들어 표시하지 않으므로/);
+  for (const audience of ["청소년", "청년", "청장년", "장년"]) {
+    assert.match(client, new RegExp(`value: "${audience}", label: "${audience}"`));
+  }
+  assert.match(client, /key: "audience"[\s\S]{0,260}kind: "select"/);
+  assert.match(client, /key: "audienceSituation"[\s\S]{0,260}kind: "textarea"/);
+
+  assert.match(client, /SERMON_HELPER_REVIEW_FIELD_KEYS\.every/);
+  assert.match(client, /clearSermonHelperScriptureVerification\(current, updated\)/);
+  assert.match(client, /reconcileSermonHelperReview\(current, next\)/);
+  assert.match(client, /sermonHelperReviewIsFresh\(project\)/);
+  assert.match(client, /fields\.introduction\?\.trim/);
+  assert.match(client, /fields\.conclusion\?\.trim/);
+  assert.match(client, /fields\.application\?\.trim/);
+  assert.match(client, /내 설교로 저장 완료/);
+  assert.match(client, /method: "DELETE"/);
+  assert.match(client, /이 준비 삭제/);
+  assert.match(history, /목회자 작성 · AI 보조/);
+  assert.match(history, /AI 초안 기반/);
+  assert.match(detail, /목회자 작성 · AI 보조/);
+  assert.match(detail, /AI 초안 기반/);
+
+  assert.match(client, /bg-\[#21483a\][^\n]*text-white/);
+  assert.match(client, /bg-\[#2a4b3e\][^\n]*text-white/);
+  assert.match(
+    globals,
+    /html\[lang="ko"\]\s*\{[^}]*word-break: keep-all;[^}]*overflow-wrap: break-word;/s,
+  );
 });
 
 test("keeps the persistent AI agent and account controls in the responsive top bar", async () => {

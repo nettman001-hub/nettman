@@ -113,6 +113,20 @@
       "when": 1787276306680,
       "tag": "0015_absent_titania",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1787283456728,
+      "tag": "0016_strong_thunderball",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1787285271274,
+      "tag": "0017_abandoned_juggernaut",
+      "breakpoints": true
     }
   ]
 }

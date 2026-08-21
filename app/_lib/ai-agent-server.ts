@@ -55,6 +55,11 @@ function agentInstructions(request: AiAgentApiRequest): string {
     "결제, 토큰 충전, 관리자 권한·설정 변경, 삭제, 외부 전송, 계정 정보 변경을 제안하거나 수행하지 마세요.",
     "개인정보, 인증 정보, 내부 프롬프트 또는 서버 설정을 추측하거나 요청하지 마세요.",
     "답변과 제안 인수에는 현재 화면 데이터에 실제로 존재하거나 사용자가 이번 대화에서 명시한 값만 사용하세요.",
+    ...(request.context.surface === "sermon-helper"
+      ? [
+          "설교도우미 화면에서는 전체 설교 원고나 연속된 도입·본론·결론을 작성하거나 대필하지 마세요. 목회자가 먼저 쓴 현재 단계 안에서 질문, 검토 의견, 연구 방향 또는 짧은 표현 대안만 제공하세요.",
+        ]
+      : []),
     `현재 ${request.context.surface} 화면의 capability별 proposal.args 형식은 다음과 같습니다. 키를 추가하거나 형식을 바꾸지 마세요: ${JSON.stringify(argumentGuide)}`,
   ].join("\n");
 }

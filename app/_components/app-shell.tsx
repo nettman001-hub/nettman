@@ -30,7 +30,7 @@ import {
 } from "@/app/_lib/token-wallet-events";
 
 export type AppSection =
-  | "home" | "sermon" | "history" | "consult" | "expert" | "study"
+  | "home" | "sermon-helper" | "sermon" | "history" | "consult" | "expert" | "study"
   | "ministry" | "critique" | "tokens" | "my" | "notifications"
   | "admin-members" | "admin-ai";
 
@@ -58,6 +58,7 @@ type TokenSummary = { total: number; remaining: number };
 
 const PRIMARY_NAV: NavItem[] = [
   { id: "home", label: "홈", href: "/home", marker: "홈" },
+  { id: "sermon-helper", label: "설교도우미", href: "/sermon-helper", marker: "도" },
   { id: "sermon", label: "새 설교", href: "/sermon/options", marker: "새" },
   { id: "history", label: "내 설교", href: "/history", marker: "록" },
   { id: "consult", label: "설교 피드백", href: "/consult", marker: "피" },
@@ -75,6 +76,7 @@ const ACCOUNT_NAV = [
 
 const SECTION_META: Record<AppSection, { title: string; surface: AiAgentSurface }> = {
   home: { title: "홈", surface: "home" },
+  "sermon-helper": { title: "설교도우미", surface: "sermon-helper" },
   sermon: { title: "설교 제작", surface: "sermon" },
   history: { title: "내 설교", surface: "history" },
   consult: { title: "설교 피드백", surface: "consult" },
@@ -202,7 +204,7 @@ function Sidebar({
     <div className="flex h-full flex-col overflow-y-auto px-4 py-5 sm:px-5 sm:py-6">
       <div className="px-2"><Brand /></div>
       <Link
-        href={generatingTarget ?? "/sermon/options"}
+        href={generatingTarget ?? "/sermon-helper"}
         onClick={onNavigate}
         className="mt-8 flex min-h-12 items-center justify-between rounded-2xl bg-[#e5b679] px-4 text-sm font-extrabold text-[#21372e] shadow-[0_12px_24px_rgba(0,0,0,.16)] transition-all hover:-translate-y-0.5 hover:bg-[#edc48f] focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
       >
@@ -215,7 +217,7 @@ function Sidebar({
             <span aria-hidden="true">→</span>
           </>
         ) : (
-          <><span>새 설교 시작</span><span aria-hidden="true" className="text-xl">+</span></>
+          <><span>설교도우미 시작</span><span aria-hidden="true" className="text-xl">+</span></>
         )}
       </Link>
       <nav className="mt-7" aria-label="업무 메뉴">

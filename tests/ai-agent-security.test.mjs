@@ -259,6 +259,9 @@ test("AI agent route keeps auth, origin, token debit, refund, and managed-provid
   assert.doesNotMatch(server, /assertCustomEndpointHasPublicDns/);
   assert.match(server, /nativeStructuredOutput = false/);
   assert.match(server, /결제, 토큰 충전, 관리자 권한·설정 변경, 삭제, 외부 전송/);
+  assert.match(server, /request\.context\.surface === "sermon-helper"/);
+  assert.match(server, /전체 설교 원고나 연속된 도입·본론·결론을 작성하거나 대필하지 마세요/);
+  assert.match(server, /질문, 검토 의견, 연구 방향 또는 짧은 표현 대안만 제공하세요/);
   assert.doesNotMatch(server, /console\.(?:log|warn|error)\(/);
 
   assert.match(wallet, /export async function chargeTokenWallet/);

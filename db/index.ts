@@ -359,6 +359,8 @@ const protectedTableNames = [
   "token_adjustments",
   "token_topups",
   "payment_orders",
+  "sermon_helper_projects",
+  "sermon_helper_coach_requests",
   "sermon_drafts",
   "sermon_alternatives",
   "sermon_generation_runs",
@@ -522,6 +524,45 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_payment_orders_user_created
     ON payment_orders(user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_payment_orders_status ON payment_orders(status)`,
+  `CREATE TABLE IF NOT EXISTS sermon_helper_projects (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
+    scripture TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'in_progress',
+    current_step_id TEXT NOT NULL DEFAULT 'brief', steps_json TEXT NOT NULL,
+    provenance_json TEXT NOT NULL DEFAULT '[]',
+    provenance_mode TEXT NOT NULL DEFAULT 'pastor_assisted',
+    completed_sermon_id TEXT, completed_step_count INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
+  )`,
+  `ALTER TABLE sermon_helper_projects ADD COLUMN IF NOT EXISTS completed_step_count INTEGER NOT NULL DEFAULT 0`,
+  `CREATE INDEX IF NOT EXISTS idx_sermon_helper_projects_user_updated
+    ON sermon_helper_projects(user_id, updated_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_sermon_helper_projects_user_status
+    ON sermon_helper_projects(user_id, status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_sermon_helper_projects_completed_sermon
+    ON sermon_helper_projects(completed_sermon_id)`,
+  `CREATE TABLE IF NOT EXISTS sermon_helper_coach_requests (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL, message_id TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL, tier TEXT NOT NULL, mode TEXT NOT NULL,
+    step_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+      CHECK (status IN ('pending', 'succeeded', 'refunded')),
+    cost INTEGER NOT NULL CHECK (cost >= 1 AND cost <= 4),
+    charge_reference_id TEXT NOT NULL,
+    response_json TEXT, failure_code TEXT, lease_expires_at TEXT NOT NULL,
+    response_expires_at TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    completed_at TEXT, refunded_at TEXT
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_sermon_helper_coach_user_session_message
+    ON sermon_helper_coach_requests(user_id, session_id, message_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_sermon_helper_coach_charge_reference
+    ON sermon_helper_coach_requests(charge_reference_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_sermon_helper_coach_user_status_lease
+    ON sermon_helper_coach_requests(user_id, status, lease_expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_sermon_helper_coach_user_response_expiry
+    ON sermon_helper_coach_requests(user_id, response_expires_at)`,
   `CREATE TABLE IF NOT EXISTS sermon_drafts (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, topic TEXT NOT NULL,
     scripture TEXT NOT NULL DEFAULT '', sermon_type TEXT NOT NULL,
@@ -646,6 +687,23 @@ const requiredSchemaColumns = [
   ["user_ai_preferences", "engine"],
   ["global_ai_settings", "api_key_encrypted"],
   ["global_ai_settings", "max_output_tokens"],
+  ["sermon_helper_projects", "user_id"],
+  ["sermon_helper_projects", "steps_json"],
+  ["sermon_helper_projects", "provenance_json"],
+  ["sermon_helper_projects", "provenance_mode"],
+  ["sermon_helper_projects", "completed_sermon_id"],
+  ["sermon_helper_projects", "completed_step_count"],
+  ["sermon_helper_projects", "version"],
+  ["sermon_helper_coach_requests", "user_id"],
+  ["sermon_helper_coach_requests", "project_id"],
+  ["sermon_helper_coach_requests", "session_id"],
+  ["sermon_helper_coach_requests", "message_id"],
+  ["sermon_helper_coach_requests", "request_fingerprint"],
+  ["sermon_helper_coach_requests", "status"],
+  ["sermon_helper_coach_requests", "charge_reference_id"],
+  ["sermon_helper_coach_requests", "response_json"],
+  ["sermon_helper_coach_requests", "lease_expires_at"],
+  ["sermon_helper_coach_requests", "response_expires_at"],
   ["ai_agent_usage", "active_request_id"],
   ["ai_agent_usage", "active_started_at"],
   ["sermon_drafts", "active_generation_id"],
@@ -666,6 +724,9 @@ const requiredUniqueIndexNames = [
   "idx_token_adjustments_transaction",
   "idx_token_topups_checkout_session",
   "idx_payment_orders_payment_id",
+  "idx_sermon_helper_projects_completed_sermon",
+  "idx_sermon_helper_coach_user_session_message",
+  "idx_sermon_helper_coach_charge_reference",
   "idx_alternatives_draft_position",
   "idx_generation_items_run_position",
   "idx_generation_claims_run_position",

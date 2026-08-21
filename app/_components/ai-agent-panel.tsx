@@ -24,6 +24,10 @@ const DEFAULT_SUGGESTIONS: Partial<Record<AiAgentSurface, readonly string[]>> = 
     "오늘 준비할 설교의 시작 순서를 알려줘",
     "최근 설교를 바탕으로 다음 작업을 추천해줘",
   ],
+  "sermon-helper": [
+    "지금 단계에서 제가 먼저 생각할 질문을 알려줘",
+    "제 메모에서 더 깊이 묵상할 지점을 짚어줘",
+  ],
   sermon: [
     "현재 설교 작업에서 다음 단계를 알려줘",
     "빠뜨린 내용이 있는지 검토해줘",

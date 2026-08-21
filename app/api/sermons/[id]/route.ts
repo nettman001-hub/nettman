@@ -43,6 +43,11 @@ export async function GET(
     .prepare(
       `SELECT s.id, s.draft_id, s.title, s.scripture, s.sermon_type, s.audience, s.audience_situation,
           s.point_count, s.duration, s.emotion, s.body_json,
+          CASE WHEN EXISTS (
+            SELECT 1 FROM sermon_helper_projects helper
+             WHERE helper.completed_sermon_id = s.id AND helper.user_id = s.user_id
+               AND helper.status = 'completed'
+          ) THEN 'pastor_assisted' ELSE 'ai_generated' END AS authorship_mode,
           s.created_at, s.updated_at
        FROM sermons s
        WHERE s.id = ? AND s.deleted_at IS NULL AND ${ownershipClause}`,
@@ -128,6 +133,7 @@ export async function GET(
         conclusion: "",
         application: "",
       }),
+      authorshipMode: row.authorship_mode,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     },

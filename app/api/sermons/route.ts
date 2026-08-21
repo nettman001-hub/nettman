@@ -6,7 +6,8 @@ import { isSermonAudienceSituationValue } from "../../_lib/sermon-types";
 type SermonRow = {
   id: string; title: string; scripture: string; sermon_type: string;
   audience: string; audience_situation: string; point_count: number; duration: number; emotion: string;
-  body_json: string; created_at: string; updated_at: string;
+  body_json: string; authorship_mode: "pastor_assisted" | "ai_generated";
+  created_at: string; updated_at: string;
 };
 
 function fromRow(row: SermonRow): SermonRecord {
@@ -21,6 +22,7 @@ function fromRow(row: SermonRow): SermonRecord {
     duration: row.duration,
     emotion: row.emotion,
     sections: safeJson<SermonSections>(row.body_json, { introduction: "", body: [], conclusion: "", application: "" }),
+    authorshipMode: row.authorship_mode,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -57,13 +59,22 @@ export async function GET(request: Request) {
 
   await ensureDatabase(db);
   const pattern = `%${query}%`;
-  const where = query ? "AND (title LIKE ? OR scripture LIKE ? OR created_at LIKE ?)" : "";
+  const where = query ? "AND (s.title LIKE ? OR s.scripture LIKE ? OR s.created_at LIKE ?)" : "";
+  const selectColumns = `SELECT s.id, s.title, s.scripture, s.sermon_type, s.audience,
+      s.audience_situation, s.point_count, s.duration, s.emotion, s.body_json,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM sermon_helper_projects helper
+         WHERE helper.completed_sermon_id = s.id AND helper.user_id = s.user_id
+           AND helper.status = 'completed'
+      ) THEN 'pastor_assisted' ELSE 'ai_generated' END AS authorship_mode,
+      s.created_at, s.updated_at
+    FROM sermons s`;
   const listStatement = query
-    ? db.prepare(`SELECT id, title, scripture, sermon_type, audience, audience_situation, point_count, duration, emotion, body_json, created_at, updated_at FROM sermons WHERE user_id = ? AND deleted_at IS NULL ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(user.id, pattern, pattern, pattern, limit, offset)
-    : db.prepare("SELECT id, title, scripture, sermon_type, audience, audience_situation, point_count, duration, emotion, body_json, created_at, updated_at FROM sermons WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?").bind(user.id, limit, offset);
+    ? db.prepare(`${selectColumns} WHERE s.user_id = ? AND s.deleted_at IS NULL ${where} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).bind(user.id, pattern, pattern, pattern, limit, offset)
+    : db.prepare(`${selectColumns} WHERE s.user_id = ? AND s.deleted_at IS NULL ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).bind(user.id, limit, offset);
   const countStatement = query
-    ? db.prepare(`SELECT COUNT(*) AS count FROM sermons WHERE user_id = ? AND deleted_at IS NULL ${where}`).bind(user.id, pattern, pattern, pattern)
-    : db.prepare("SELECT COUNT(*) AS count FROM sermons WHERE user_id = ? AND deleted_at IS NULL").bind(user.id);
+    ? db.prepare(`SELECT COUNT(*) AS count FROM sermons s WHERE s.user_id = ? AND s.deleted_at IS NULL ${where}`).bind(user.id, pattern, pattern, pattern)
+    : db.prepare("SELECT COUNT(*) AS count FROM sermons s WHERE s.user_id = ? AND s.deleted_at IS NULL").bind(user.id);
   const [rows, count] = await Promise.all([listStatement.all<SermonRow>(), countStatement.first<{ count: number }>()]);
   return Response.json({
     items: rows.results.map(fromRow).map((sermon) => ({
@@ -105,6 +116,7 @@ export async function POST(request: Request) {
     duration: Math.min(40, Math.max(5, payload.duration || 20)),
     emotion: payload.emotion || "따뜻함",
     sections: payload.sections,
+    authorshipMode: "ai_generated",
     createdAt: payload.createdAt || now,
     updatedAt: now,
   };

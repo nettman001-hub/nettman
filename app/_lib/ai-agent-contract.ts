@@ -7,6 +7,7 @@ import type { TokenWalletSnapshot } from "./token-wallet.ts";
 
 export const AI_AGENT_SURFACES = [
   "home",
+  "sermon-helper",
   "sermon",
   "sermon.options",
   "sermon.input",
@@ -79,6 +80,7 @@ export const AI_AGENT_MAX_MESSAGE_CHARACTERS = 2_000;
 
 const SURFACE_CAPABILITIES: Record<AiAgentSurface, readonly AiAgentCapability[]> = {
   home: ["navigate", "history.open"],
+  "sermon-helper": ["navigate"],
   sermon: ["navigate", "sermon.generation.stop"],
   "sermon.options": ["navigate", "sermon.options.patch", "sermon.generation.stop"],
   "sermon.input": ["navigate", "sermon.input.patch", "sermon.generation.stop"],
@@ -105,6 +107,7 @@ const SURFACE_CAPABILITIES: Record<AiAgentSurface, readonly AiAgentCapability[]>
 /** Only these top-level page values may leave the browser for each surface. */
 const SURFACE_SNAPSHOT_KEYS: Record<AiAgentSurface, readonly string[]> = {
   home: ["summary", "generationStatus", "recentSermons"],
+  "sermon-helper": ["helper"],
   sermon: ["draftId", "step", "generationStatus"],
   "sermon.options": ["draftId", "options", "completion", "validation", "generationStatus"],
   "sermon.input": ["draftId", "topic", "scripture", "notes", "options", "generationStatus"],
