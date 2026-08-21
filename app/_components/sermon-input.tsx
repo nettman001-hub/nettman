@@ -321,7 +321,10 @@ export function SermonInput() {
           url: reference.url.trim(),
           notes: reference.notes.trim(),
         }
-      : { ...EMPTY_SERMON_REFERENCE };
+      : {
+          ...EMPTY_SERMON_REFERENCE,
+          notes: reference.notes.trim(),
+        };
     const expectedCount: 1 | 5 = isGuest ? 1 : 5;
     const controller = new AbortController();
     try {
@@ -600,6 +603,23 @@ export function SermonInput() {
             ))}
           </ul>
         ) : null}
+        <div className="sermon-field sermon-clarify-notes">
+          <label htmlFor="reference-notes">보완 질문 답변 및 설교 메모</label>
+          <textarea
+            id="reference-notes"
+            value={reference.notes}
+            maxLength={20_000}
+            onChange={(event) =>
+              setReference((current) => ({ ...current, notes: event.target.value }))
+            }
+            placeholder="AI 보완 질문의 답변, 반드시 포함할 해석 포인트나 예화를 적어 주세요."
+            rows={6}
+          />
+          <div className="sermon-field-meta">
+            <span>개인정보나 비공개 자료는 넣지 마세요. 참고 자료 방식과 관계없이 초안 생성에 반영됩니다.</span>
+            <span>{reference.notes.length.toLocaleString()}/20,000</span>
+          </div>
+        </div>
       </section>
 
       {pendingScriptureConfirmation ? (
@@ -643,23 +663,6 @@ export function SermonInput() {
                   http:// 또는 https://로 시작하는 올바른 URL을 입력해 주세요.
                 </p>
               ) : null}
-            </div>
-            <div className="sermon-field">
-              <label htmlFor="reference-notes">직접 메모</label>
-              <textarea
-                id="reference-notes"
-                value={reference.notes}
-                maxLength={20_000}
-                onChange={(event) =>
-                  setReference((current) => ({ ...current, notes: event.target.value }))
-                }
-                placeholder="반드시 포함할 해석 포인트나 예화를 적어 주세요."
-                rows={5}
-              />
-              <div className="sermon-field-meta">
-                <span>개인정보나 비공개 자료는 넣지 않는 것을 권합니다.</span>
-                <span>{reference.notes.length.toLocaleString()}/20,000</span>
-              </div>
             </div>
             <div className="sermon-field">
               <label htmlFor="reference-file">파일 첨부</label>

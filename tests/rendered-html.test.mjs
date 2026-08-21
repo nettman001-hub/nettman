@@ -3422,6 +3422,17 @@ test("keeps the revised sermon options, one engine picker, and stop controls", a
   assert.doesNotMatch(options, /SERMON_ALTERNATIVE_POSITIONS\.map/);
   assert.match(home, /제목과 청중 정하기/);
   assert.doesNotMatch(home, /주제와 청중 정하기/);
+  assert.equal(input.match(/id="reference-notes"/g)?.length, 1);
+  assert.match(input, /보완 질문 답변 및 설교 메모/);
+  assert.match(input, /참고 자료 방식과 관계없이 초안 생성에 반영됩니다/);
+  assert.match(
+    input,
+    /: \{[\s\S]{0,120}\.\.\.EMPTY_SERMON_REFERENCE,[\s\S]{0,120}notes: reference\.notes\.trim\(\),[\s\S]{0,40}\};/,
+  );
+  assert.ok(
+    input.indexOf('id="reference-notes"') <
+      input.lastIndexOf('draft.options.referenceMode === "manual"'),
+  );
   const runnerSource = await readFile(
     new URL("../app/_lib/sermon-generation-runner.ts", import.meta.url),
     "utf8",
