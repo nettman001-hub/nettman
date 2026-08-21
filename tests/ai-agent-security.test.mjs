@@ -332,7 +332,10 @@ test("page bridges expose bounded actions while reusing existing generation path
   assert.match(alternatives, /sermon\.alternative\.select/);
   assert.match(alternatives, /draft\.alternatives\.some/);
   assert.match(editor, /sermon\.revision\.prepare/);
-  assert.match(editor, /수정 지시를 입력란에 준비했습니다/);
+  assert.match(
+    editor,
+    /수정 사항을 원래 페이지에 옮겼습니다\. AI에이전트 화면을 닫으시고 원래 페이지의 아래에 있는 수정 내용을 확인하시고 수정요청 버튼을 눌러주세요\./,
+  );
   assert.match(editor, /nextTone\.trim\(\)\.length > 100/);
   assert.match(editor, /AI 제안 · \{toneAdjustment\}/);
   assert.doesNotMatch(editor, /감정선 조정값을 화면에서 제공하는 항목 중 선택해 주세요/);
