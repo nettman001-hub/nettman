@@ -47,7 +47,7 @@ npm run dev
 | 주 데이터베이스 | Supabase PostgreSQL (`POSTGRES_URL` 또는 `POSTGRES_URL_NON_POOLING`) |
 | 인증 | Supabase Auth 이메일/비밀번호 + Google OAuth |
 | 배포 기준 | GitHub `main` 최신 HEAD를 Vercel과 Sites에 동일하게 배포 |
-| 최종 검증 | 테스트 90개 통과, ESLint·TypeScript·Next.js Webpack·vinext 프로덕션 빌드 통과 |
+| 최종 검증 | 테스트 110개 통과, ESLint·TypeScript·Next.js Webpack·vinext 프로덕션 빌드 통과 |
 
 대표 운영 주소와 Sites 배포본은 GitHub `main`의 같은 기능 소스로 배포합니다. 기능 수정 후에는 원격 `main`, Vercel, Sites가 같은 커밋을 가리키는지 확인하세요. Sites 주소는 private 배포이므로 비인증 `401`은 정상입니다.
 
@@ -253,7 +253,7 @@ git diff --check
 git status --short
 ```
 
-애플리케이션 코드를 바꿨다면 아래 전체 검증을 실행합니다. 현재 기대 결과는 네 테스트 파일 합계 90개 통과입니다.
+애플리케이션 코드를 바꿨다면 아래 전체 검증을 실행합니다. 현재 기대 결과는 일곱 테스트 파일 합계 110개 통과입니다.
 
 ```powershell
 node node_modules/typescript/bin/tsc --noEmit --incremental false
