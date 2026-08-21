@@ -11,6 +11,7 @@ import type { ConsultationRecord, SermonRecord } from "../_lib/data";
 
 type LoadState = "loading" | "ready" | "error";
 type SubmitState = "idle" | "submitting" | "success" | "error";
+type DeleteState = "idle" | "deleting" | "success" | "error";
 
 const STATUS_LABEL: Record<ConsultationRecord["status"], string> = {
   waiting: "배정 대기",
@@ -37,6 +38,9 @@ export function ConsultClient({ signedIn }: { signedIn: boolean }) {
   const [reason, setReason] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [message, setMessage] = useState("");
+  const [selectedConsultationIds, setSelectedConsultationIds] = useState<string[]>([]);
+  const [deleteState, setDeleteState] = useState<DeleteState>("idle");
+  const [deleteMessage, setDeleteMessage] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -72,6 +76,8 @@ export function ConsultClient({ signedIn }: { signedIn: boolean }) {
     () => consultations.filter((item) => item.status !== "completed").length,
     [consultations],
   );
+  const allConsultationsSelected =
+    consultations.length > 0 && selectedConsultationIds.length === consultations.length;
 
   const agentRegistration = useMemo<AiAgentPageRegistration>(() => {
     const visibleSermons = sermons.slice(0, 20);
@@ -184,6 +190,56 @@ export function ConsultClient({ signedIn }: { signedIn: boolean }) {
     }
   }
 
+  function toggleConsultation(id: string) {
+    setSelectedConsultationIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+    setDeleteState("idle");
+    setDeleteMessage("");
+  }
+
+  async function deleteSelectedConsultations() {
+    const ids = selectedConsultationIds.filter((id) =>
+      consultations.some((item) => item.id === id),
+    );
+    if (ids.length === 0 || deleteState === "deleting") return;
+    const confirmed = window.confirm(
+      `선택한 피드백 ${ids.length}건과 대화 내용이 함께 삭제됩니다. 삭제 후에는 복구할 수 없습니다. 계속할까요?`,
+    );
+    if (!confirmed) return;
+
+    setDeleteState("deleting");
+    setDeleteMessage("");
+    const deletedIds = new Set<string>();
+    try {
+      for (let index = 0; index < ids.length; index += 50) {
+        const response = await fetch("/api/consultations", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: ids.slice(index, index + 50) }),
+        });
+        const payload = (await response.json()) as { deletedIds?: string[]; error?: string };
+        if (!response.ok || !Array.isArray(payload.deletedIds)) {
+          throw new Error(payload.error || "선택한 피드백을 삭제하지 못했습니다.");
+        }
+        payload.deletedIds.forEach((id) => deletedIds.add(id));
+      }
+      setConsultations((current) => current.filter((item) => !deletedIds.has(item.id)));
+      setSelectedConsultationIds([]);
+      setDeleteState("success");
+      setDeleteMessage(`피드백 ${deletedIds.size}건을 삭제했습니다.`);
+    } catch (error) {
+      if (deletedIds.size > 0) {
+        setConsultations((current) => current.filter((item) => !deletedIds.has(item.id)));
+        setSelectedConsultationIds((current) => current.filter((id) => !deletedIds.has(id)));
+      }
+      setDeleteState("error");
+      setDeleteMessage(
+        `${deletedIds.size > 0 ? `${deletedIds.size}건은 삭제됐지만 나머지는 처리하지 못했습니다. ` : ""}${error instanceof Error ? error.message : "선택한 피드백을 삭제하지 못했습니다."}`,
+      );
+    }
+  }
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-8 lg:px-12 lg:py-11">
       <AppPageHeading
@@ -227,6 +283,45 @@ export function ConsultClient({ signedIn }: { signedIn: boolean }) {
             <span className="text-xs font-semibold text-[#818984]">총 {consultations.length}건</span>
           </div>
 
+          {loadState === "ready" && consultations.length > 0 ? (
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e3ddd4] bg-[#f7f5f0] px-3 py-2.5">
+              <label className="inline-flex min-h-11 cursor-pointer items-center gap-2.5 px-1 text-xs font-bold text-[#4c5c54]">
+                <input
+                  type="checkbox"
+                  className="size-5 accent-[#a44836]"
+                  checked={allConsultationsSelected}
+                  onChange={(event) => {
+                    setSelectedConsultationIds(
+                      event.target.checked ? consultations.map((item) => item.id) : [],
+                    );
+                    setDeleteState("idle");
+                    setDeleteMessage("");
+                  }}
+                />
+                전체 선택
+              </label>
+              <button
+                type="button"
+                onClick={() => void deleteSelectedConsultations()}
+                disabled={selectedConsultationIds.length === 0 || deleteState === "deleting"}
+                className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[#c88778] bg-white px-4 text-xs font-extrabold text-[#8b3e32] transition hover:bg-[#fff1ee] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {deleteState === "deleting"
+                  ? "삭제하는 중…"
+                  : `선택 삭제${selectedConsultationIds.length ? ` (${selectedConsultationIds.length})` : ""}`}
+              </button>
+            </div>
+          ) : null}
+
+          {deleteMessage ? (
+            <p
+              className={`mt-3 rounded-xl border px-4 py-3 text-xs font-semibold leading-5 ${deleteState === "error" ? "border-[#e2b8ae] bg-[#fff1ee] text-[#7b352b]" : "border-[#b8d3be] bg-[#eef7ef] text-[#285239]"}`}
+              role={deleteState === "error" ? "alert" : "status"}
+            >
+              {deleteMessage}
+            </p>
+          ) : null}
+
           {loadState === "loading" ? (
             <div className="mt-5 space-y-3" aria-busy="true" aria-label="피드백 내역을 불러오는 중">
               {[0, 1].map((item) => <div key={item} className="h-32 animate-pulse rounded-2xl bg-[#f1efe9]" />)}
@@ -244,8 +339,17 @@ export function ConsultClient({ signedIn }: { signedIn: boolean }) {
           ) : (
             <ul className="mt-5 space-y-3">
               {consultations.map((item) => (
-                <li key={item.id}>
-                  <a href={`/consult/${encodeURIComponent(item.id)}`} className="group block rounded-2xl border border-[#e0dbd2] bg-[#fbfaf7] p-5 transition hover:-translate-y-0.5 hover:border-[#c7b79f] hover:bg-white hover:shadow-[0_14px_30px_rgba(40,55,47,.07)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">
+                <li key={item.id} className="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-2">
+                  <label className="grid min-h-11 cursor-pointer place-items-center rounded-xl border border-transparent hover:bg-[#f3eee5]" title={`${item.sermonTitle} 선택`}>
+                    <span className="sr-only">{item.sermonTitle} 피드백 선택</span>
+                    <input
+                      type="checkbox"
+                      className="size-5 accent-[#a44836]"
+                      checked={selectedConsultationIds.includes(item.id)}
+                      onChange={() => toggleConsultation(item.id)}
+                    />
+                  </label>
+                  <a href={`/consult/${encodeURIComponent(item.id)}`} className={`group block rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:border-[#c7b79f] hover:bg-white hover:shadow-[0_14px_30px_rgba(40,55,47,.07)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] ${selectedConsultationIds.includes(item.id) ? "border-[#c98b78] bg-[#fff7f3]" : "border-[#e0dbd2] bg-[#fbfaf7]"}`}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <span className={`rounded-full px-3 py-1 text-[10px] font-extrabold ${item.status === "completed" ? "bg-[#e7ebe8] text-[#65736c]" : item.status === "waiting" ? "bg-[#f6e7d4] text-[#8c5c32]" : "bg-[#dfece4] text-[#315746]"}`}>
                         {STATUS_LABEL[item.status]}

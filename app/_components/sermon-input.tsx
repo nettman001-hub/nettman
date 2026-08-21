@@ -85,6 +85,8 @@ export function SermonInput() {
   const [error, setError] = useState("");
   const [fileError, setFileError] = useState("");
   const hydratedId = useRef<string | null>(null);
+  const scriptureConfirmationDialogRef = useRef<HTMLDivElement>(null);
+  const scriptureConfirmationButtonRef = useRef<HTMLButtonElement>(null);
   const [runState, setRunState] = useState<SermonGenerationRunState | null>(
     () => getSermonGenerationRunState(),
   );
@@ -96,6 +98,45 @@ export function SermonInput() {
     setScripture(draft.scripture);
     setReference(draft.reference);
   }, [draft]);
+
+  useEffect(() => {
+    if (!pendingScriptureConfirmation) return;
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    scriptureConfirmationButtonRef.current?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !generating) {
+        event.preventDefault();
+        setPendingScriptureConfirmation(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = scriptureConfirmationDialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, [generating, pendingScriptureConfirmation]);
 
   // The generation run lives in a module singleton so leaving this page (or
   // visiting another menu) no longer aborts it; this page only mirrors it.
@@ -623,14 +664,71 @@ export function SermonInput() {
       </section>
 
       {pendingScriptureConfirmation ? (
-        <div className="sermon-inline-alert" role="status">
-          <div>
-            <strong>AI가 인식한 본문 범위를 확인해 주세요</strong>
-            <p>
-              입력: {pendingScriptureConfirmation.input} · 인식 결과:{" "}
-              {pendingScriptureConfirmation.canonical}
+        <div className="fixed inset-0 z-[90] grid place-items-center p-4 sm:p-6">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default bg-[#102d24]/65 backdrop-blur-[2px]"
+            aria-label="본문 범위 확인창 닫기"
+            onClick={() => {
+              if (!generating) setPendingScriptureConfirmation(null);
+            }}
+          />
+          <div
+            ref={scriptureConfirmationDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scripture-confirmation-title"
+            aria-describedby="scripture-confirmation-description"
+            className="relative w-full max-w-md rounded-[1.5rem] border border-[#dfd3bf] bg-[#fffdf8] p-5 shadow-[0_28px_80px_rgba(13,39,31,.32)] sm:p-6"
+          >
+            <p className="text-[10px] font-extrabold tracking-[0.16em] text-[#9a632f] uppercase">
+              본문 확인
             </p>
-            <p>범위가 맞으면 아래 버튼을 한 번 더 눌러 설교 생성을 시작합니다.</p>
+            <h2
+              id="scripture-confirmation-title"
+              className="mt-2 font-serif text-xl font-bold leading-snug text-[#254238] sm:text-2xl"
+            >
+              AI가 인식한 본문 범위를 확인해 주세요
+            </h2>
+            <p
+              id="scripture-confirmation-description"
+              className="mt-2 text-sm leading-6 text-[#68746e]"
+            >
+              두 범위가 맞는지 비교해 주세요. 다르면 창을 닫고 본문을 다시 입력할 수 있습니다.
+            </p>
+            <dl className="mt-5 grid gap-3">
+              <div className="rounded-xl border border-[#e5dfd5] bg-white px-4 py-3">
+                <dt className="text-[10px] font-extrabold text-[#858d88]">입력한 본문</dt>
+                <dd className="mt-1 text-sm font-bold text-[#34483f]">
+                  {pendingScriptureConfirmation.input}
+                </dd>
+              </div>
+              <div className="rounded-xl border border-[#c9d9cf] bg-[#edf5ef] px-4 py-3">
+                <dt className="text-[10px] font-extrabold text-[#557063]">AI가 인식한 본문</dt>
+                <dd className="mt-1 text-base font-extrabold text-[#285343]">
+                  {pendingScriptureConfirmation.canonical}
+                </dd>
+              </div>
+            </dl>
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                className="inline-flex min-h-12 items-center justify-center rounded-xl border border-[#cfc7ba] bg-white px-4 text-sm font-extrabold text-[#536158] hover:bg-[#f6f2eb] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
+                onClick={() => setPendingScriptureConfirmation(null)}
+                disabled={generating}
+              >
+                다시 입력
+              </button>
+              <button
+                ref={scriptureConfirmationButtonRef}
+                type="button"
+                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#285343] px-4 text-sm font-extrabold text-white hover:bg-[#204739] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] focus-visible:ring-offset-2 disabled:opacity-55"
+                onClick={() => void generate()}
+                disabled={generating}
+              >
+                {generating ? "생성 준비 중…" : "이 범위로 생성"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

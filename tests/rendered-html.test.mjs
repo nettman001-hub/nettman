@@ -3318,7 +3318,15 @@ test("accepts natural scripture notation and normalizes it before creating a gen
     /canonicalScripture !== scriptureInput[\s\S]*setPendingScriptureConfirmation\(normalizationCandidate\)[\s\S]*return;/,
   );
   assert.match(input, /AI가 인식한 본문 범위를 확인해 주세요/);
-  assert.match(input, /확인한 본문으로 생성/);
+  assert.match(input, /role="dialog"/);
+  assert.match(input, /aria-modal="true"/);
+  assert.match(input, /scriptureConfirmationButtonRef\.current\?\.focus\(\)/);
+  assert.match(input, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(input, /이 범위로 생성/);
+  assert.doesNotMatch(
+    input,
+    /className="sermon-inline-alert" role="status"[\s\S]{0,500}AI가 인식한 본문 범위를 확인해 주세요/,
+  );
   assert.match(input, /confirmedByUserAt/);
   assert.match(store, /requireUserConfirmation && !normalization\.confirmedByUserAt/);
   assert.match(providerGrant, /GRANT_VERSION = 2/);
@@ -3352,6 +3360,26 @@ test("accepts natural scripture notation and normalizes it before creating a gen
     store,
     /selected\.scripture === draft\.scripture[\s\S]*\? draft\.scripture[\s\S]*: selected\.scripture/,
   );
+});
+
+test("lets preachers select and delete their feedback history", async () => {
+  const [client, route] = await Promise.all([
+    readFile(new URL("../app/consult/consult-client.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/consultations/route.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(client, /selectedConsultationIds/);
+  assert.match(client, /전체 선택/);
+  assert.match(client, /선택 삭제/);
+  assert.match(client, /method: "DELETE"/);
+  assert.match(client, /삭제 후에는 복구할 수 없습니다/);
+  assert.match(route, /export async function DELETE/);
+  assert.match(route, /sameOriginRequest\(request\)/);
+  assert.match(route, /user\.role !== "preacher"/);
+  assert.match(route, /WHERE user_id = \? AND id IN/);
+  assert.match(route, /DELETE FROM consultation_messages/);
+  assert.match(route, /DELETE FROM consultations/);
+  assert.match(route, /await db\.batch/);
 });
 
 test("allows AI generation providers up to 220 seconds end to end", async () => {

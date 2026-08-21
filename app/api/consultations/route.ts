@@ -6,6 +6,7 @@ import {
   serviceUnavailableResponse,
   unauthorizedResponse,
 } from "../../_lib/auth-user";
+import { getSiteOrigin } from "../../_lib/supabase/config";
 
 type ConsultationRow = Record<string, string | number | null>;
 
@@ -38,6 +39,54 @@ function toConsultation(row: ConsultationRow) {
 
 function wantsExpertDemo(request: Request): boolean {
   return new URL(request.url).searchParams.get("scope") === "expert";
+}
+
+const MAX_DELETE_COUNT = 50;
+const MAX_DELETE_REQUEST_BYTES = 8_192;
+
+function sameOriginRequest(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  const fetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
+  if (!origin || (fetchSite && fetchSite !== "same-origin")) return false;
+  try {
+    const allowed = new Set([
+      new URL(request.url).origin,
+      getSiteOrigin(request.url),
+    ]);
+    return allowed.has(new URL(origin).origin);
+  } catch {
+    return false;
+  }
+}
+
+async function readDeleteIds(request: Request): Promise<string[]> {
+  if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+    throw new TypeError("content type");
+  }
+  const raw = await request.text();
+  if (new TextEncoder().encode(raw).byteLength > MAX_DELETE_REQUEST_BYTES) {
+    throw new RangeError("request too large");
+  }
+  const payload = JSON.parse(raw) as { ids?: unknown };
+  if (!Array.isArray(payload.ids) || payload.ids.length < 1 || payload.ids.length > MAX_DELETE_COUNT) {
+    throw new SyntaxError("invalid ids");
+  }
+  const ids = [...new Set(payload.ids.map((value) =>
+    typeof value === "string" ? value.trim() : "",
+  ))];
+  if (
+    ids.length < 1 ||
+    ids.some((id) =>
+      id.length > 120 ||
+      Array.from(id).some((character) => {
+        const code = character.charCodeAt(0);
+        return code <= 31 || code === 127;
+      }),
+    )
+  ) {
+    throw new SyntaxError("invalid ids");
+  }
+  return ids;
 }
 
 export async function GET(request: Request) {
@@ -168,4 +217,66 @@ export async function POST(request: Request) {
     .run();
 
   return Response.json({ item }, { status: 201 });
+}
+
+export async function DELETE(request: Request) {
+  if (!sameOriginRequest(request)) {
+    return Response.json({ error: "허용되지 않은 요청입니다." }, { status: 403 });
+  }
+
+  let ids: string[];
+  try {
+    ids = await readDeleteIds(request);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return Response.json({ error: "JSON 형식으로 요청해 주세요." }, { status: 415 });
+    }
+    if (error instanceof RangeError) {
+      return Response.json({ error: "한 번에 삭제할 수 있는 요청 크기를 초과했습니다." }, { status: 413 });
+    }
+    return Response.json(
+      { error: `삭제할 피드백을 1~${MAX_DELETE_COUNT}개 선택해 주세요.` },
+      { status: 400 },
+    );
+  }
+
+  const auth = await resolveRequestUserResponse(request);
+  if ("response" in auth) return auth.response;
+  const { user } = auth;
+  if (!user) return unauthorizedResponse();
+  if (user.role !== "preacher") {
+    return forbiddenResponse("본인이 요청한 피드백만 삭제할 수 있습니다.");
+  }
+
+  const db = getD1();
+  if (!db) {
+    if (!user.isDemo) return serviceUnavailableResponse();
+    return Response.json({ deletedIds: ids, demo: true });
+  }
+
+  await ensureDatabase(db);
+  const placeholders = ids.map(() => "?").join(", ");
+  const ownedRows = await db
+    .prepare(
+      `SELECT id FROM consultations
+       WHERE user_id = ? AND id IN (${placeholders})`,
+    )
+    .bind(user.id, ...ids)
+    .all<{ id: string }>();
+  const ownedIds = ownedRows.results.map((row) => String(row.id));
+  if (ownedIds.length === 0) return Response.json({ deletedIds: [] });
+
+  const ownedPlaceholders = ownedIds.map(() => "?").join(", ");
+  await db.batch([
+    db.prepare(
+      `DELETE FROM consultation_messages
+       WHERE consultation_id IN (${ownedPlaceholders})`,
+    ).bind(...ownedIds),
+    db.prepare(
+      `DELETE FROM consultations
+       WHERE user_id = ? AND id IN (${ownedPlaceholders})`,
+    ).bind(user.id, ...ownedIds),
+  ]);
+
+  return Response.json({ deletedIds: ownedIds });
 }
