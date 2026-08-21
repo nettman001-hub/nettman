@@ -165,6 +165,25 @@ test("links study and ministry tools from navigation, home, and saved sermons", 
   assert.match(complete, /`\/ministry\?sermonId=\$\{encodeURIComponent\(draft\.savedSermonId\)\}`/);
 });
 
+test("adds a detailed customer guide to the top-right account menu", async () => {
+  const [shell, guide] = await Promise.all([
+    readFile(new URL("../app/_components/app-shell.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/guide/page.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(shell, /label: "사용자 설명서", href: "\/guide"/);
+  assert.match(shell, /guide: \{ title: "사용자 설명서", surface: "account" \}/);
+  assert.match(guide, /requirePageUser\("\/guide"\)/);
+  assert.match(guide, /설교 준비 방식 선택/);
+  assert.match(guide, /설교도우미 사용법/);
+  assert.match(guide, /AI 다섯 초안 만들기/);
+  assert.match(guide, /스터디·비평·사역 활용/);
+  assert.match(guide, /토큰과 충전/);
+  assert.match(guide, /문제 해결/);
+  assert.match(guide, /href="\/privacy"/);
+  assert.match(guide, /href="\/terms"/);
+});
+
 test("enforces bounded, token-free fair use for study and ministry resources", async () => {
   const [database, schema, route, resource, tool, auth, secureTables, terms] = await Promise.all([
     readFile(new URL("../db/index.ts", import.meta.url), "utf8"),

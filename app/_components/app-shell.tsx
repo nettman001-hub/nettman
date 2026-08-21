@@ -32,7 +32,7 @@ import {
 export type AppSection =
   | "home" | "sermon-helper" | "sermon" | "history" | "consult" | "expert" | "study"
   | "ministry" | "critique" | "tokens" | "my" | "notifications"
-  | "admin-members" | "admin-ai";
+  | "guide" | "admin-members" | "admin-ai";
 
 type AppShellUser = {
   id: string;
@@ -69,6 +69,7 @@ const PRIMARY_NAV: NavItem[] = [
 ];
 
 const ACCOUNT_NAV = [
+  { label: "사용자 설명서", href: "/guide" },
   { label: "계정 설정", href: "/my" },
   { label: "알림 설정", href: "/notifications" },
   { label: "토큰 충전", href: "/tokens" },
@@ -87,6 +88,7 @@ const SECTION_META: Record<AppSection, { title: string; surface: AiAgentSurface 
   tokens: { title: "토큰 충전", surface: "tokens" },
   my: { title: "계정 설정", surface: "account" },
   notifications: { title: "알림 설정", surface: "notifications" },
+  guide: { title: "사용자 설명서", surface: "account" },
   "admin-members": { title: "회원 관리", surface: "admin" },
   "admin-ai": { title: "AI 엔진 관리", surface: "admin" },
 };
