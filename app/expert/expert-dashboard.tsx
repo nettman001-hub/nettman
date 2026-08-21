@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppPageHeading } from "../_components/app-page-heading";
+import {
+  useRegisterAiAgentPage,
+  type AiAgentPageRegistration,
+} from "../_components/ai-agent-provider";
 import type { ConsultationRecord } from "../_lib/data";
 
 type ExpertConsultation = ConsultationRecord & { requesterName?: string | null };
@@ -22,6 +27,7 @@ async function responseError(response: Response): Promise<string> {
 }
 
 export function ExpertDashboard() {
+  const router = useRouter();
   const [items, setItems] = useState<ExpertConsultation[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -88,6 +94,54 @@ export function ExpertDashboard() {
     (item) => item.status === "assigned" || item.status === "in_progress",
   ).length;
   const completed = items.filter((item) => item.status === "completed").length;
+
+  const agentRegistration = useMemo<AiAgentPageRegistration>(() => {
+    const visibleItems = filtered.slice(0, 30);
+    return {
+      surface: "expert",
+      title: "설교 피드백실",
+      snapshot: {
+        filters: {
+          selected: filter,
+          loadState: state,
+          waiting,
+          ongoing,
+          completed,
+        },
+        experts: visibleItems.map((item) => ({
+          id: item.id,
+          sermonId: item.sermonId,
+          sermonTitle: item.sermonTitle,
+          status: item.status,
+          reason: item.reason.slice(0, 500),
+          updatedAt: item.updatedAt,
+        })),
+        selectedExpert: null,
+      },
+      capabilities: ["navigate"],
+      suggestions: [
+        "현재 피드백 목록의 우선 검토 순서를 정리해줘",
+        "표시된 요청들의 공통 검토 주제를 알려줘",
+        "검토할 피드백 대화 화면을 열어줘",
+      ],
+      executeAction: async (proposal) => {
+        if (proposal.capability !== "navigate") {
+          throw new Error("전문가 화면에서는 피드백 내역 열기만 지원합니다.");
+        }
+        const href = proposal.args.href;
+        const allowedHrefs = new Set(
+          visibleItems.map((item) => `/expert/${encodeURIComponent(item.id)}`),
+        );
+        if (typeof href !== "string" || !allowedHrefs.has(href)) {
+          throw new Error("현재 표시된 피드백 내역 중에서 다시 선택해 주세요.");
+        }
+        router.push(href);
+        return { message: "선택한 피드백 대화 화면을 열었습니다." };
+      },
+    };
+  }, [completed, filter, filtered, ongoing, router, state, waiting]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-8 lg:px-12 lg:py-11">

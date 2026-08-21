@@ -491,7 +491,7 @@
 .sermon-revision-meter i { width: 1.1rem; height: 0.25rem; border-radius: 99rem; background: #d5d9d6; }
 .sermon-revision-meter i.is-available { background: #6d9077; }
 .sermon-editor-grid { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 1rem; align-items: start; }
-.sermon-editor-tools { position: sticky; top: 2rem; display: grid; gap: 1rem; }
+.sermon-editor-tools { position: sticky; top: calc(var(--app-topbar-height, 0px) + 2rem); display: grid; gap: 1rem; }
 .sermon-editor-tools > nav,
 .sermon-revision-history { border: 1px solid var(--sermon-line); border-radius: 1rem; background: var(--sermon-paper); padding: 1rem; }
 .sermon-editor-tools h3 { margin: 0 0 0.75rem; font-family: var(--font-serif); font-size: 1rem; }

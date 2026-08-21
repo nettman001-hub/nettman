@@ -15,6 +15,7 @@ import {
   SermonStateCard,
   useSermonWorkflow,
 } from "./sermon-workflow";
+import { useRegisterAiAgentPage } from "./ai-agent-provider";
 
 function Paragraphs({ text }: { text: string }) {
   return (
@@ -41,6 +42,40 @@ export function SermonComplete() {
       null
     );
   }, [draft]);
+
+  const agentRegistration = useMemo(() => {
+    if (!ready || !draft || !sermon) return null;
+    return {
+      surface: "sermon.complete" as const,
+      title: "완성 설교 활용",
+      resourceId: draft.savedSermonId ?? draft.id,
+      version: draft.updatedAt,
+      snapshot: {
+        draftId: draft.id,
+        sermon: {
+          title: sermon.title,
+          summary: sermon.summary,
+          scripture: sermon.scripture,
+          introduction: sermon.sections.introduction.slice(0, 3_000),
+          points: sermon.sections.points.map((point) => ({
+            title: point.heading,
+            content: point.content.slice(0, 3_000),
+          })),
+          conclusion: sermon.sections.conclusion.slice(0, 3_000),
+          application: sermon.sections.application.slice(0, 3_000),
+        },
+        options: draft.options,
+      },
+      capabilities: ["navigate"] as Array<"navigate">,
+      suggestions: [
+        "완성 원고의 핵심 메시지를 요약해줘",
+        "이 설교를 사역 현장에서 활용할 방법을 알려줘",
+        "최종 점검할 항목을 알려줘",
+      ],
+    };
+  }, [draft, ready, sermon]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   if (!ready) return <SermonLoading />;
   if (!draft) {

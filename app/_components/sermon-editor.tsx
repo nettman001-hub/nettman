@@ -19,6 +19,7 @@ import {
   SermonStateCard,
   useSermonWorkflow,
 } from "./sermon-workflow";
+import { useRegisterAiAgentPage } from "./ai-agent-provider";
 
 const SECTION_OPTIONS: Array<{
   value: SermonRevision["section"];
@@ -74,6 +75,100 @@ export function SermonEditor() {
   }, [draft]);
   const previous = draft && draft.versions.length > 1 ? draft.versions.at(-2)?.sermon : null;
   const displayed = view === "previous" && previous ? previous : selected;
+  const remaining = Math.max(0, 3 - (draft?.revisionCount ?? 0));
+  const instructionValid = instruction.trim().length >= 10;
+
+  const agentRegistration = useMemo(() => {
+    if (!ready || !draft || !selected) return null;
+    return {
+      surface: "sermon.edit" as const,
+      title: "설교 원고 검토와 수정",
+      resourceId: draft.id,
+      version: draft.updatedAt,
+      snapshot: {
+        draftId: draft.id,
+        sermon: {
+          id: selected.id,
+          title: selected.title,
+          summary: selected.summary,
+          scripture: selected.scripture,
+          introduction: selected.sections.introduction.slice(0, 3_000),
+          points: selected.sections.points.map((point) => ({
+            title: point.heading,
+            content: point.content.slice(0, 3_000),
+          })),
+          conclusion: selected.sections.conclusion.slice(0, 3_000),
+          application: selected.sections.application.slice(0, 3_000),
+        },
+        options: draft.options,
+        revisionCount: draft.revisionCount,
+        selectedSection: section,
+        generationStatus: revising ? "revising" : "idle",
+      },
+      capabilities: ["navigate", "sermon.revision.prepare"] as Array<
+        "navigate" | "sermon.revision.prepare"
+      >,
+      suggestions: [
+        "현재 원고의 강점과 보완점을 진단해줘",
+        "선택한 부분을 더 선명하게 다듬는 수정 지시를 제안해줘",
+        "본문과 적용이 자연스럽게 이어지는지 검토해줘",
+      ],
+      executeAction: async (proposal: {
+        capability: string;
+        args: Record<string, unknown>;
+      }) => {
+        if (proposal.capability !== "sermon.revision.prepare") {
+          throw new Error("현재 화면에서는 이 작업을 적용할 수 없습니다.");
+        }
+        if (revising || completing) {
+          throw new Error("현재 진행 중인 작업이 끝난 뒤 수정 지시를 준비해 주세요.");
+        }
+        if (remaining === 0) {
+          throw new Error("사용 가능한 AI 수정 횟수를 모두 사용했습니다.");
+        }
+        const nextSection = proposal.args.section;
+        const nextInstruction = proposal.args.instruction;
+        const nextTone = proposal.args.toneAdjustment;
+        if (
+          typeof nextSection !== "string" ||
+          !SECTION_OPTIONS.some((item) => item.value === nextSection)
+        ) {
+          throw new Error("수정할 부분을 도입, 본론, 결론, 적용 중에서 선택해 주세요.");
+        }
+        if (
+          typeof nextInstruction !== "string" ||
+          nextInstruction.trim().length < 10 ||
+          nextInstruction.length > 1_000
+        ) {
+          throw new Error("수정 지시는 10자 이상 1,000자 이하로 입력해 주세요.");
+        }
+        const allowedTones = [
+          "",
+          "더 부드럽게",
+          "더 도전적으로",
+          "더 간결하게",
+          "더 구체적으로",
+        ];
+        if (
+          nextTone !== undefined &&
+          (typeof nextTone !== "string" || !allowedTones.includes(nextTone))
+        ) {
+          throw new Error("감정선 조정값을 화면에서 제공하는 항목 중 선택해 주세요.");
+        }
+        setSection(nextSection as SermonRevision["section"]);
+        setInstruction(nextInstruction.trim());
+        setToneAdjustment(typeof nextTone === "string" ? nextTone : "");
+        setError("");
+        setNotice("");
+        return {
+          message:
+            "수정 지시를 입력란에 준비했습니다. 내용을 확인한 뒤 ‘AI로 수정하기’를 눌러 주세요.",
+        };
+      },
+    };
+  }, [completing, draft, ready, remaining, revising, section, selected]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   if (!ready) return <SermonLoading />;
   if (!draft) {
@@ -97,9 +192,6 @@ export function SermonEditor() {
       />
     );
   }
-
-  const remaining = Math.max(0, 3 - draft.revisionCount);
-  const instructionValid = instruction.trim().length >= 10;
 
   const revise = async () => {
     setError("");

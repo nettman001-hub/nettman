@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
+  useRegisterAiAgentPage,
+  type AiAgentPageRegistration,
+} from "@/app/_components/ai-agent-provider";
+import {
   DENOMINATION_OPTIONS,
   MINISTRY_ROLE_OPTIONS,
   isDenomination,
@@ -200,6 +204,44 @@ export function ProfileForm({ initialName, email, signedIn, userScope }: Profile
     () => theologyOptionsForDenomination(values.denomination),
     [values.denomination],
   );
+
+  const agentRegistration = useMemo<AiAgentPageRegistration>(() => {
+    const completionFields = [
+      ["이름", values.displayName.trim().length >= 2],
+      ["사역 역할", Boolean(values.ministryRole.trim())],
+      ["교단", Boolean(values.denomination.trim())],
+      ["신학 설정", Boolean(values.theology.trim())],
+      ["교회", Boolean(values.church.trim())],
+      ["연락처", Boolean(values.phone.trim())],
+    ] as const;
+    const completedFields = completionFields.filter(([, complete]) => complete).length;
+    return {
+      surface: "account",
+      title: "계정 설정",
+      snapshot: {
+        profileCompletion: {
+          loadState: loading ? "loading" : "ready",
+          storageMode: signedIn ? "account" : "device",
+          completedFields,
+          totalFields: completionFields.length,
+          missingFields: completionFields
+            .filter(([, complete]) => !complete)
+            .map(([label]) => label),
+          ministryRole: values.ministryRole,
+          denomination: values.denomination,
+          theology: values.theology,
+        },
+      },
+      capabilities: ["navigate"],
+      suggestions: [
+        "프로필 완성도와 빠진 항목을 점검해줘",
+        "현재 교단과 신학 설정의 관계를 설명해줘",
+        "이 화면에서 직접 확인해야 할 저장 항목을 알려줘",
+      ],
+    };
+  }, [loading, signedIn, values]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   function updateField<Key extends keyof ProfileValues>(
     key: Key,

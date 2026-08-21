@@ -21,7 +21,17 @@ export function GenerationStatusPill() {
   useEffect(() => subscribeSermonGenerationRun(setRunState), []);
 
   if (!runState || runState.status !== "running") return null;
-  if (pathname?.startsWith("/sermon")) return null;
+  // AppShell surfaces show this state in the sticky top bar, where it cannot
+  // collide with the AI composer. Keep the floating fallback only on public
+  // pages that do not render AppShell.
+  if (
+    pathname &&
+    /^(?:\/(?:home|sermon|history|consult|expert|study|ministry|critique|tokens|my|notifications|admin))(?:\/|$)/.test(
+      pathname,
+    )
+  ) {
+    return null;
+  }
 
   const target = sermonDraftUrl(
     runState.mode === "regenerate" ? "/sermon/alternatives" : "/sermon/input",

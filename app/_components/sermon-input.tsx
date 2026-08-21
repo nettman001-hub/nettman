@@ -35,6 +35,7 @@ import {
   SermonStateCard,
   useSermonWorkflow,
 } from "./sermon-workflow";
+import { useRegisterAiAgentPage } from "./ai-agent-provider";
 
 const SUPPORTED_EXTENSIONS = ["pdf", "docx", "txt"];
 
@@ -51,6 +52,10 @@ function validUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 export function SermonInput() {
@@ -134,6 +139,123 @@ export function SermonInput() {
   );
   const urlValid = validUrl(reference.url);
   const canGenerate = scriptureValid && urlValid && !generating;
+
+  const agentRegistration = useMemo(() => {
+    if (!ready || !draft) return null;
+    const runActive =
+      runState?.draftId === draft.id && runState.status === "running";
+    return {
+      surface: "sermon.input" as const,
+      title: "설교 본문과 참고 자료 입력",
+      resourceId: draft.id,
+      version: draft.updatedAt,
+      snapshot: {
+        draftId: draft.id,
+        topic: draft.options.topic,
+        scripture,
+        notes: {
+          url: reference.url,
+          notes: reference.notes.slice(0, 8_000),
+          hasFile: Boolean(reference.file),
+        },
+        options: draft.options,
+        generationStatus: {
+          status: runActive ? "running" : draft.generation ? "paused" : "idle",
+          completedCount: generationProgress,
+          step: generationStep,
+        },
+      },
+      capabilities: [
+        "navigate",
+        "sermon.input.patch",
+        "sermon.generation.stop",
+      ] as Array<
+        "navigate" | "sermon.input.patch" | "sermon.generation.stop"
+      >,
+      suggestions: runActive
+        ? [
+            "현재 설교 생성 진행 상태를 설명해줘",
+            "생성을 중지하면 어떤 결과가 보존되는지 알려줘",
+          ]
+        : [
+            "입력한 본문 범위와 참고 메모를 점검해줘",
+            "이 본문으로 설교를 준비할 때 보완할 메모를 제안해줘",
+            "현재 옵션과 본문이 잘 맞는지 확인해줘",
+          ],
+      executeAction: async (proposal: {
+        capability: string;
+        args: Record<string, unknown>;
+      }) => {
+        if (proposal.capability === "sermon.generation.stop") {
+          if (!isSermonGenerationRunActive(draft.id)) {
+            throw new Error("현재 이 설교에서 진행 중인 생성 작업이 없습니다.");
+          }
+          setStopping(true);
+          stopSermonGenerationRun();
+          return {
+            message:
+              "설교 생성을 중지했습니다. 이미 완성된 초안은 보존되며 나중에 이어서 만들 수 있습니다.",
+          };
+        }
+        if (proposal.capability !== "sermon.input.patch") {
+          throw new Error("현재 화면에서는 이 작업을 적용할 수 없습니다.");
+        }
+        if (isSermonGenerationRunActive(draft.id)) {
+          throw new Error("설교 생성 중에는 본문과 참고 메모를 변경할 수 없습니다.");
+        }
+        const patch = proposal.args.patch;
+        if (!isRecord(patch)) {
+          throw new Error("변경할 본문 입력 형식을 확인해 주세요.");
+        }
+        let applied = false;
+        if (patch.scripture !== undefined) {
+          if (typeof patch.scripture !== "string" || !validScriptureInput(patch.scripture)) {
+            throw new Error("성경 본문은 2자 이상 120자 이하로 입력해 주세요.");
+          }
+          setScripture(patch.scripture.trim());
+          setPendingScriptureConfirmation(null);
+          applied = true;
+        }
+        if (patch.notes !== undefined) {
+          if (typeof patch.notes !== "string" || patch.notes.length > 20_000) {
+            throw new Error("참고 메모는 20,000자 이하로 입력해 주세요.");
+          }
+          setReference((current) => ({ ...current, notes: patch.notes as string }));
+          applied = true;
+        }
+        if (patch.url !== undefined) {
+          if (
+            typeof patch.url !== "string" ||
+            patch.url.length > 2_048 ||
+            !validUrl(patch.url)
+          ) {
+            throw new Error("참고 URL은 올바른 HTTP 또는 HTTPS 주소로 입력해 주세요.");
+          }
+          setReference((current) => ({ ...current, url: (patch.url as string).trim() }));
+          applied = true;
+        }
+        if (!applied) throw new Error("적용할 수 있는 본문 변경이 없습니다.");
+        setSubmitted(false);
+        setError("");
+        return {
+          message:
+            "제안한 내용을 입력란에 반영했습니다. 확인한 뒤 기존 AI 설교 생성 버튼을 눌러 주세요.",
+        };
+      },
+    };
+  }, [
+    draft,
+    generationProgress,
+    generationStep,
+    ready,
+    reference.file,
+    reference.notes,
+    reference.url,
+    runState,
+    scripture,
+  ]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   if (!ready) return <SermonLoading />;
   if (!draft) {

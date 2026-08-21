@@ -1,24 +1,24 @@
 # 로고스AI 개발·운영 인수인계
 
-최종 정리일: 2026-08-19 (Asia/Seoul)
+최종 정리일: 2026-08-21 (Asia/Seoul)
 
-이 문서는 다음 담당자가 현재 기능을 훼손하지 않고 개발, 검증, 배포를 바로 이어가기 위한 기준 문서입니다. 기능 설명은 `README.md`, 최초 요구사항은 `설계.json`, 실제 동작의 최종 기준은 원격 `main`의 추적 소스와 세 회귀 테스트(`rendered-html`, `auth-member-security`, `admin-members-security`)입니다.
+이 문서는 다음 담당자가 현재 기능을 훼손하지 않고 개발, 검증, 배포를 바로 이어가기 위한 기준 문서입니다. 기능 설명은 `README.md`, 최초 요구사항은 `설계.json`, 실제 동작의 최종 기준은 원격 `main`의 추적 소스와 네 회귀 테스트(`rendered-html`, `auth-member-security`, `admin-members-security`, `ai-agent-security`)입니다.
 
 ## 0. 가장 먼저 확인할 것
 
-> **권위 원본은 Sites 소스 저장소의 `main`입니다.** 2026-08-19 운영 기능 기준 커밋은 `721a98cf8b97eb9e74a1316e843f6b84919b5cc4`이며, 이 문서를 갱신한 후속 커밋은 문서만 바꿉니다. 새 컴퓨터에서는 문서에 적힌 과거 SHA로 되돌리지 말고 원격 `main`의 최신 HEAD에서 시작하세요.
+> **권위 원본은 GitHub [`nettman001-hub/sermon`](https://github.com/nettman001-hub/sermon)의 최신 `main`입니다.** 2026-08-21부터 Vercel 자동 배포와 후속 개발은 이 저장소를 기준으로 합니다. Sites는 같은 커밋으로 별도 배포하되, GitHub보다 앞선 소스를 기준선으로 삼지 않습니다.
 
-- 현재 Google Drive 작업 폴더의 `.git`은 `.git-failed-import-20260818`을 가리키는 비정상 복구용 gitfile입니다. 이 Git 메타데이터와 `origin/main` 로컬 캐시는 다른 컴퓨터로 가져가면 안 됩니다.
-- 현재 컴퓨터의 `git branch -vv`에 표시되는 `origin/main`은 낡을 수 있습니다. 강제 reset·checkout·merge로 맞추지 말고, 단기 Sites 자격으로 원격 `main`을 직접 확인하거나 새로 clone하세요.
-- 현재 컴퓨터에서는 `git reset --hard`, `git gc`, `git prune`, 손상 ref 수리, `.git-failed-*`·`.git-unborn-*` 삭제를 실행하지 않습니다. 소스 전달은 Git 메타데이터 수리가 아니라 fresh clone으로 해결합니다.
+- 새 컴퓨터에서는 Google Drive의 과거 `.git`이나 로컬 캐시를 복사하지 말고 GitHub `main`을 짧은 로컬 경로에 fresh clone하세요.
+- 작업 전 `git fetch origin`과 `git status`로 원격 기준선을 확인하고, 다른 컴퓨터의 변경을 강제 reset으로 덮지 않습니다.
+- 기능 작업은 `codex/` 브랜치에서 검증한 뒤 `main`에 반영하며 Vercel 배포 상태와 운영 별칭을 확인합니다.
 - `.env*`, `.vercel/`, `node_modules/`, `.next/`, `.vinext/`, `dist/`, API 키와 인증 토큰은 복사·커밋·메신저 전송 금지입니다.
 - `AI_SETTINGS_ENCRYPTION_KEY`를 바꾸면 DB에 저장된 기존 AI 공급자 키를 복호화할 수 없고, 이 값에 폴백한 최대 24시간짜리 성경 본문 정규화 승인도 무효화될 수 있습니다. 회전 전 공급자 키 재입력·재암호화, 별도 `SCRIPTURE_NORMALIZATION_SECRET`, 환경 폴백을 준비하세요.
 
 ### 새 컴퓨터 권장 시작 순서
 
 1. Git과 Node.js 22.13 이상을 설치하고, Google Drive 밖의 짧은 로컬 경로(예: `C:\src\logos-ai`)를 준비합니다.
-2. Codex에 `.openai/hosting.json`의 기존 Sites 프로젝트 ID `appgprj_6a76c13012188191a30b9235f13dd1fe`로 **소스 저장소 단기 쓰기 자격을 발급하고 `main`을 fresh clone**해 달라고 요청합니다. 원격은 현재 Git 설정의 `https://git.chatgpt-team.site/7ec72fcc-7c16-4a43-a492-8096977c110b/appgprj_6a76c13012188191a30b9235f13dd1fe.git`이며, 토큰은 명령 1회용 헤더로만 사용하고 URL이나 Git 설정에 저장하지 않습니다.
-3. clone 직후 `git status`, `git log -5 --oneline`, `git remote -v`를 확인합니다. 작업 트리는 clean이어야 하고 `721a98c`가 최신 HEAD의 조상이어야 합니다.
+2. `git clone https://github.com/nettman001-hub/sermon.git C:\src\logos-ai`로 GitHub `main`을 fresh clone합니다. Sites 프로젝트 ID `appgprj_6a76c13012188191a30b9235f13dd1fe`는 `.openai/hosting.json`에 유지됩니다.
+3. clone 직후 `git status`, `git log -5 --oneline`, `git remote -v`를 확인합니다. 작업 트리는 clean이어야 하고 원격 `main`과 일치해야 합니다.
 4. `npm ci`로 lockfile 그대로 설치합니다. Google Drive의 기존 `node_modules`나 빌드 산출물을 복사하지 않습니다.
 5. Vercel 권한이 있는 계정으로 기존 프로젝트 `sermon-guide-studio-kr`를 link합니다. `.vercel/project.json`은 Git에서 제외되므로 새 컴퓨터마다 다시 연결해야 합니다.
 6. `.env.example`을 계약으로 삼아 승인된 비밀 저장소 또는 Vercel development 환경에서 `.env.local`을 복원합니다. 운영 비밀값을 문서·채팅·Git에 붙이지 말고, 로컬 콜백을 쓸 때 `NEXT_PUBLIC_SITE_URL=http://localhost:3000`과 Supabase Redirect URL을 함께 확인합니다.
@@ -46,10 +46,10 @@ npm run dev
 | 런타임 | Node.js 22.13 이상, Next.js 16.3, React 19.2 |
 | 주 데이터베이스 | Supabase PostgreSQL (`POSTGRES_URL` 또는 `POSTGRES_URL_NON_POOLING`) |
 | 인증 | Supabase Auth 이메일/비밀번호 + Google OAuth |
-| 배포 기준 | 기능 커밋 `721a98c`, Sites 기능 버전 32, Vercel·Sites 동시 배포 완료(2026-08-19) |
-| 최종 검증 | 테스트 79개 통과, ESLint·TypeScript·Next.js·vinext 프로덕션 빌드 통과 |
+| 배포 기준 | GitHub `main` 최신 HEAD를 Vercel과 Sites에 동일하게 배포 |
+| 최종 검증 | 테스트 90개 통과, ESLint·TypeScript·Next.js Webpack·vinext 프로덕션 빌드 통과 |
 
-대표 운영 주소와 Sites 배포본은 2026-08-19에 같은 기능 소스로 배포했습니다. 기능 수정 후에는 원격 `main`, Vercel, Sites가 같은 커밋을 가리키는지 확인하세요. Sites 주소는 private 배포이므로 비인증 `401`은 정상입니다.
+대표 운영 주소와 Sites 배포본은 GitHub `main`의 같은 기능 소스로 배포합니다. 기능 수정 후에는 원격 `main`, Vercel, Sites가 같은 커밋을 가리키는지 확인하세요. Sites 주소는 private 배포이므로 비인증 `401`은 정상입니다.
 
 ## 2. 사용자 핵심 흐름
 
@@ -66,7 +66,8 @@ npm run dev
 
 - `/history`: 저장 설교 열람, 인쇄, Word 내보내기
 - `/consult`, `/expert`: 설교 피드백 요청 및 전문가 응답
-- `/study`: 저장 설교의 원문·배경·구조 스터디 생성
+- `/study`: 직접 입력한 성경 본문의 원문·배경·구조 스터디 생성
+- `/critique`: 직접 입력한 설교 원고의 설교학 루브릭 비평
 - `/ministry`: 소그룹 질문지, 주보 요약문, 숏폼 문구 생성
 - `/tokens`: 토큰 잔액과 충전
 - `/notifications`: 알림 수신 설정
@@ -78,6 +79,16 @@ npm run dev
 
 ## 3. 최근 완료한 중요 변경
 
+### 공통 상단바와 화면 문맥형 AI 에이전트 (2026-08-21)
+
+- 토큰, 계정·알림 설정과 조건부 관리자 메뉴를 좌측 하단에서 공통 상단바 우측 계정 메뉴로 옮겼습니다. 좌측 메뉴는 설교 준비 업무 메뉴만 유지합니다.
+- `AI 에이전트` 버튼은 다시 누르거나 닫기·Escape로 닫힙니다. 1,800px 이상에서는 23.5rem 우측 고정 패널, 그 아래에서는 포커스 트랩과 배경 비활성화를 갖춘 드로어로 동작합니다. 패널을 닫아도 진행 중인 설교 생성은 계속됩니다.
+- 설교 옵션·본문 입력·초안 비교·원고 수정·완성, 내 설교 목록·상세, `/study`·`/critique`·`/ministry`가 화면별 제한 문맥과 허용 액션을 등록합니다. 에이전트는 기존 설교 runner와 자료 생성 함수를 재사용하며 별도 생성 API를 복제하지 않습니다.
+- 모델의 작업 응답은 바로 실행하지 않고 서버 allowlist와 화면 ID를 다시 검증한 제안으로 표시합니다. 사용자가 `적용`을 누른 뒤에만 입력 변경·초안 선택·수정 지시 준비·자료 생성·화면 이동·명시적 생성 중지가 실행됩니다.
+- `/api/ai-agent`는 로그인·동일 출처·요청/응답 크기·관리형 엔진 경계를 강제합니다. 결제·충전·관리자·회원·삭제·외부 전송은 capability에 없고 안전하지 않은 경로도 거절합니다.
+- 에이전트 메시지는 기본/고급/고급 추론 각각 1/2/4토큰입니다. `agent:<sessionId>:<messageId>` 참조로 원자 차감하며 동일 메시지 중복 차감을 막고 공급자 실패·사용자 중단은 1회만 자동 환불합니다. 사용자별 동시 1건·하루 60회이며 실패와 중단도 일일 사용량에는 포함됩니다.
+- 에이전트에는 공식 관리형 엔진만 허용합니다. 개인 `custom` OpenAI 호환 연결은 기존 설교 생성에서 계속 사용할 수 있지만, 넓은 화면 문맥을 전달하는 에이전트에서는 안전한 DNS 고정 프록시가 없어 차감 전에 거절합니다. 사용량 임대와 제한은 `ai_agent_usage` 및 `drizzle/0015_absent_titania.sql`에 저장됩니다.
+
 ### 로고스AI 개편과 설교 준비 확장
 
 - 사용자 노출 서비스명을 `로고스AI`로 통일하고 메타데이터와 OG 이미지를 갱신했습니다. 저장 키·쿠키·배포 프로젝트명은 기존 사용자 호환을 위해 유지합니다.
@@ -85,7 +96,7 @@ npm run dev
 - 설교 옵션을 제목, 10·15·20·25·30분, 유형, 1포인트·2~4대지, 대상, 청중 상황, 감정선으로 개편했습니다.
 - 교단·신학·사역 역할·교회는 서버가 인증 프로필에서 직접 읽어 설교 생성·수정의 참고 문맥으로 주입합니다. 이메일과 연락처는 AI에 보내지 않습니다.
 - `전문가 상담` 사용자 문구를 `설교 피드백`으로 바꾸되 기존 URL과 DB 계약은 유지합니다.
-- `/study`와 `/ministry`를 추가했습니다. 두 기능은 저장한 완성 설교를 사용하며 설교 토큰 차감 없이 계정당 하루 20회·동시 1건의 공정 이용 한도를 적용합니다.
+- `/study`, `/critique`, `/ministry`를 추가했습니다. 스터디는 직접 입력한 본문, 비평은 직접 입력한 원고, 사역 활용은 저장한 완성 설교를 사용하며 설교 토큰 차감 없이 계정당 하루 20회·동시 1건의 공정 이용 한도를 적용합니다.
 
 ### 단일 AI 엔진 선택과 안정적인 생성
 
@@ -149,7 +160,7 @@ npm run dev
 | 설교 타입·호환 변환 | `app/_lib/sermon-types.ts` | `SermonOptions`, 단일 엔진 미러, 사용자 감정선 검증 |
 | 브라우저 초안 저장 | `app/_lib/sermon-store.ts` | localStorage 저장, 이전 초안 마이그레이션 |
 | 설교 옵션 UI | `app/_components/sermon-options.tsx` | 기본·구성 옵션, 기타 감정선, 단일 엔진 라디오 |
-| 설교 생성 클라이언트 | `app/_lib/sermon-client.ts` | 다섯 초안 순차 요청과 재개 |
+| 설교 생성 실행기 | `app/_lib/sermon-generation-runner.ts`, `app/_lib/sermon-client.ts` | 화면 이동을 견디는 실행 상태, 다섯 초안 순차 요청과 재개 |
 | 설교 생성 서버 | `app/api/sermons/generate/route.ts` | 검증, 생성 방식 협상, 서명, 차감, 저장 |
 | 설교자 문맥 | `app/_lib/sermon-preacher-context.ts` | 인증 프로필의 비연락 신학·사역 문맥만 서버에서 조회 |
 | 프로필 옵션 | `app/_lib/profile-options.ts`, `app/my/profile-form.tsx` | 교단·신학 종속 선택과 개인 설정 |
@@ -228,17 +239,17 @@ git diff --check
 git status --short
 ```
 
-애플리케이션 코드를 바꿨다면 아래 전체 검증을 실행합니다. 현재 기대 결과는 세 테스트 파일 합계 79개 통과입니다.
+애플리케이션 코드를 바꿨다면 아래 전체 검증을 실행합니다. 현재 기대 결과는 네 테스트 파일 합계 90개 통과입니다.
 
 ```powershell
 node node_modules/typescript/bin/tsc --noEmit --incremental false
-node --test tests/auth-member-security.test.mjs tests/admin-members-security.test.mjs tests/rendered-html.test.mjs
+node --test tests/auth-member-security.test.mjs tests/admin-members-security.test.mjs tests/rendered-html.test.mjs tests/ai-agent-security.test.mjs
 npm run lint
 npm run build
 npx vinext build
 ```
 
-`npm test`는 Next.js 빌드와 `rendered-html`만 실행하므로 관리자 인증·회원관리 보안 테스트까지 포함한 전체 검증의 대체물이 아닙니다. `npm run build`는 DB URL이 있으면 `scripts/secure-supabase-tables.mjs`를 먼저 실행해 앱 테이블의 RLS를 확인·적용합니다. 운영 DB를 대상으로 빌드할 때는 의도한 프로젝트인지 먼저 확인하세요.
+`npm test`는 Next.js 빌드와 `rendered-html`만 실행하므로 관리자 인증·회원관리·AI 에이전트 보안 테스트까지 포함한 전체 검증의 대체물이 아닙니다. `npm run build`는 DB URL이 있으면 `scripts/secure-supabase-tables.mjs`를 먼저 실행해 앱 테이블의 RLS를 확인·적용합니다. 운영 DB를 대상으로 빌드할 때는 의도한 프로젝트인지 먼저 확인하세요.
 
 ### DB 스키마를 바꿀 때 반드시 함께 수정할 곳
 
@@ -264,7 +275,7 @@ npx vinext build
 
 ## 7. 배포 절차
 
-배포 전 `git status --short`가 비어 있어야 하며, 검증한 HEAD를 먼저 Sites 소스 저장소 `main`에 푸시합니다. 단기 자격은 per-command HTTP 헤더로만 사용하고 원격 URL·credential helper·파일에 남기지 않습니다. Vercel과 Sites에는 반드시 같은 HEAD를 배포합니다.
+배포 전 검증이 끝난 변경만 명시적으로 stage·commit하고 GitHub `main`에 먼저 반영합니다. Vercel Git 연동의 Ready 배포를 확인한 뒤 같은 HEAD의 빌드 archive를 Sites에 배포합니다. 단기 자격은 per-command HTTP 헤더로만 사용하고 원격 URL·credential helper·파일에 남기지 않습니다. Vercel과 Sites에는 반드시 같은 HEAD를 배포합니다.
 
 ### Vercel / 대표 도메인
 
@@ -381,4 +392,4 @@ Sites는 소스·빌드 호환 확인용 private 보조 배포이며 현재 운�
 - 원격 `main`, Vercel, Sites가 가리키는 동일한 HEAD SHA
 - `git status --short`가 빈 clean 작업 트리인지 여부
 
-현재 인수인계 시점에는 미커밋 애플리케이션 변경이 없고, 운영 기능 기준 `721a98c`에서 관리자 AI 설정 무한 로딩 수정까지 배포됐습니다. 이 문서와 `.env.example`을 갱신하는 후속 커밋은 실행 동작을 바꾸지 않습니다. 새 담당자는 원격 `main` 최신 HEAD를 clone한 뒤 이 문서의 새 컴퓨터 체크리스트부터 진행하세요.
+현재 운영과 후속 개발의 유일한 기준선은 GitHub `main` 최신 HEAD입니다. 새 담당자는 원격 `main`을 fresh clone한 뒤 이 문서의 새 컴퓨터 체크리스트부터 진행하고, Vercel과 Sites가 같은 소스를 가리키는지 먼저 확인하세요.

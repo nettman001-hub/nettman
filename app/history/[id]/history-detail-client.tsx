@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppNotice } from "../../_components/app-notice";
+import { useRegisterAiAgentPage } from "../../_components/ai-agent-provider";
 import type { SermonRecord } from "../../_lib/data";
 import { downloadSermonDocx } from "../../_lib/sermon-download";
 import { loadLocalSermonRecords } from "../../_lib/sermon-store";
@@ -38,6 +39,50 @@ export function HistoryDetailClient({ id }: { id: string }) {
     });
     return () => { active = false; };
   }, [id]);
+  const agentRegistration = useMemo(() => {
+    if (!sermon) return null;
+    const current = alternatives.find((item) => item.id === viewingId) ?? sermon;
+    return {
+      surface: "history.detail" as const,
+      title: "저장 설교 상세",
+      resourceId: sermon.id,
+      version: sermon.updatedAt,
+      snapshot: {
+        sermonId: sermon.id,
+        sermon: {
+          title: current.title,
+          scripture: current.scripture,
+          sermonType: sermon.sermonType,
+          audience: sermon.audience,
+          duration: sermon.duration,
+          introduction: current.sections.introduction.slice(0, 3_000),
+          points: current.sections.body.map((point) => ({
+            heading: point.heading,
+            content: point.content.slice(0, 3_000),
+          })),
+          conclusion: current.sections.conclusion.slice(0, 3_000),
+          application: current.sections.application.slice(0, 3_000),
+        },
+        alternatives: alternatives.map((item) => ({
+          id: item.id,
+          position: item.position,
+          title: item.title,
+          scripture: item.scripture,
+          selected: item.selected,
+        })),
+        selectedAlternativeId: viewingId,
+      },
+      capabilities: ["navigate"] as Array<"navigate">,
+      suggestions: [
+        "이 설교의 핵심 메시지를 요약해줘",
+        "본문과 적용의 연결을 검토해줘",
+        "이 설교로 만들 만한 사역 자료를 추천해줘",
+      ],
+    };
+  }, [alternatives, sermon, viewingId]);
+
+  useRegisterAiAgentPage(agentRegistration);
+
   if (error) return <div className="mx-auto max-w-4xl px-4 py-12"><AppNotice tone="error" title="설교를 열 수 없습니다.">{error} <a className="underline" href="/history">목록으로 돌아가기</a></AppNotice></div>;
   if (!sermon) return <div className="grid min-h-[70vh] place-items-center" role="status"><div className="text-center"><div className="mx-auto size-12 animate-spin rounded-full border-2 border-[#d5cfc4] border-t-[#315647]" /><p className="mt-4 text-sm text-[#6c7872]">설교 원고를 펼치고 있습니다.</p></div></div>;
   const viewing = alternatives.find((item) => item.id === viewingId) ?? null;
@@ -66,7 +111,7 @@ export function HistoryDetailClient({ id }: { id: string }) {
           <SermonSection label="결론" content={(viewing ?? sermon).sections.conclusion} />
           <SermonSection label="적용과 결단" content={(viewing ?? sermon).sections.application} accent />
         </article>
-        <aside className="space-y-4 lg:sticky lg:top-6">
+        <aside className="space-y-4 lg:sticky lg:top-[calc(var(--app-topbar-height,0px)+1.5rem)]">
           {otherDrafts.length > 0 ? (
             <div className="rounded-2xl border border-[#d8d2c7] bg-white p-5">
               <p className="text-xs font-extrabold tracking-[.14em] text-[#9b6332]">DRAFTS</p>

@@ -1,32 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { SecureSignoutButton } from "@/app/_components/secure-signout-link";
 import {
-  TOKEN_WALLET_CHANGED_EVENT,
-  type TokenWalletEventDetail,
-} from "@/app/_lib/token-wallet-events";
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { AiAgentPanel } from "@/app/_components/ai-agent-panel";
+import {
+  useAiAgent,
+  useRegisterAiAgentPage,
+  useRegisterAiAgentWorkspace,
+  type AiAgentPageRegistration,
+} from "@/app/_components/ai-agent-provider";
+import { SecureSignoutButton } from "@/app/_components/secure-signout-link";
+import type { AiAgentSurface } from "@/app/_lib/ai-agent-contract";
 import {
   subscribeSermonGenerationRun,
   type SermonGenerationRunState,
 } from "@/app/_lib/sermon-generation-runner";
 import { sermonDraftUrl } from "@/app/_lib/sermon-store";
+import {
+  TOKEN_WALLET_CHANGED_EVENT,
+  type TokenWalletEventDetail,
+} from "@/app/_lib/token-wallet-events";
 
 export type AppSection =
-  | "home"
-  | "sermon"
-  | "history"
-  | "consult"
-  | "expert"
-  | "study"
-  | "ministry"
-  | "critique"
-  | "tokens"
-  | "my"
-  | "notifications"
-  | "admin-members"
-  | "admin-ai";
+  | "home" | "sermon" | "history" | "consult" | "expert" | "study"
+  | "ministry" | "critique" | "tokens" | "my" | "notifications"
+  | "admin-members" | "admin-ai";
 
 type AppShellUser = {
   id: string;
@@ -48,10 +54,7 @@ type NavItem = {
   marker: string;
 };
 
-type TokenSummary = {
-  total: number;
-  remaining: number;
-};
+type TokenSummary = { total: number; remaining: number };
 
 const PRIMARY_NAV: NavItem[] = [
   { id: "home", label: "홈", href: "/home", marker: "홈" },
@@ -64,34 +67,35 @@ const PRIMARY_NAV: NavItem[] = [
   { id: "expert", label: "설교 피드백실", href: "/expert", marker: "실" },
 ];
 
-const SETTINGS_NAV: NavItem[] = [
-  { id: "tokens", label: "토큰 충전", href: "/tokens", marker: "충" },
-  { id: "my", label: "계정 설정", href: "/my", marker: "나" },
-  {
-    id: "notifications",
-    label: "알림 설정",
-    href: "/notifications",
-    marker: "알",
-  },
-];
+const ACCOUNT_NAV = [
+  { label: "계정 설정", href: "/my" },
+  { label: "알림 설정", href: "/notifications" },
+  { label: "토큰 충전", href: "/tokens" },
+] as const;
 
-const ADMIN_NAV: NavItem[] = [
-  { id: "admin-members", label: "회원 관리", href: "/admin/members", marker: "회" },
-  { id: "admin-ai", label: "AI 엔진 관리", href: "/admin/ai", marker: "관" },
-];
+const SECTION_META: Record<AppSection, { title: string; surface: AiAgentSurface }> = {
+  home: { title: "홈", surface: "home" },
+  sermon: { title: "설교 제작", surface: "sermon" },
+  history: { title: "내 설교", surface: "history" },
+  consult: { title: "설교 피드백", surface: "consult" },
+  expert: { title: "설교 피드백실", surface: "expert" },
+  study: { title: "스터디", surface: "study" },
+  ministry: { title: "사역 활용", surface: "ministry" },
+  critique: { title: "설교 비평", surface: "critique" },
+  tokens: { title: "토큰 충전", surface: "tokens" },
+  my: { title: "계정 설정", surface: "account" },
+  notifications: { title: "알림 설정", surface: "notifications" },
+  "admin-members": { title: "회원 관리", surface: "admin" },
+  "admin-ai": { title: "AI 엔진 관리", surface: "admin" },
+};
 
 function initials(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return "로";
   const parts = trimmed.split(/\s+/);
-  if (parts.length > 1) {
-    return parts
-      .slice(0, 2)
-      .map((part) => part.charAt(0))
-      .join("")
-      .toUpperCase();
-  }
-  return trimmed.slice(0, 2);
+  return parts.length > 1
+    ? parts.slice(0, 2).map((part) => part.charAt(0)).join("").toUpperCase()
+    : trimmed.slice(0, 2);
 }
 
 function tokenSummary(wallet: TokenWalletEventDetail): TokenSummary | null {
@@ -100,44 +104,34 @@ function tokenSummary(wallet: TokenWalletEventDetail): TokenSummary | null {
     !Number.isSafeInteger(wallet.lifetimeSpent) ||
     wallet.balance < 0 ||
     wallet.lifetimeSpent < 0
-  ) {
-    return null;
-  }
-  return {
-    total: wallet.balance + wallet.lifetimeSpent,
-    remaining: wallet.balance,
-  };
+  ) return null;
+  return { total: wallet.balance + wallet.lifetimeSpent, remaining: wallet.balance };
 }
 
 function formatTokens(value: number): string {
   return value.toLocaleString("ko-KR");
 }
 
-function formatCompactTokens(value: number): string {
-  return new Intl.NumberFormat("ko-KR", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
-}
-
-function Brand() {
+function Brand({ dark = true }: { dark?: boolean }) {
   return (
     <Link
       href="/home"
-      className="group inline-flex items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#c7894a] focus-visible:ring-offset-4 focus-visible:ring-offset-[#172b24]"
+      className="group inline-flex items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#c7894a]"
       aria-label="로고스AI 홈"
     >
       <span
         aria-hidden="true"
-        className="grid size-10 place-items-center rounded-[14px] bg-[#f1d4a9] font-serif text-lg font-bold text-[#263d34] shadow-[inset_0_0_0_1px_rgba(255,255,255,.35)] transition-transform group-hover:-rotate-3"
+        className={`grid size-10 place-items-center rounded-[14px] font-serif text-lg font-bold transition-transform group-hover:-rotate-3 ${
+          dark ? "bg-[#f1d4a9] text-[#263d34]" : "bg-[#315647] text-white"
+        }`}
       >
         로
       </span>
-      <span>
-        <span className="block font-serif text-lg font-bold tracking-[-0.02em] text-white">
+      <span className="max-[440px]:hidden">
+        <span className={`block font-serif text-lg font-bold tracking-[-0.02em] ${dark ? "text-white" : "text-[#1f382f]"}`}>
           로고스AI
         </span>
-        <span className="block text-[10px] font-semibold tracking-[0.18em] text-white">
+        <span className={`block text-[10px] font-semibold tracking-[0.18em] ${dark ? "text-white/75" : "text-[#6c7a74]"}`}>
           LOGOS AI
         </span>
       </span>
@@ -147,18 +141,16 @@ function Brand() {
 
 function NavList({
   active,
-  items,
   onNavigate,
   generatingTarget,
 }: {
   active: AppSection;
-  items: NavItem[];
   onNavigate?: () => void;
   generatingTarget?: string | null;
 }) {
   return (
     <ul className="space-y-1.5">
-      {items.map((item) => {
+      {PRIMARY_NAV.map((item) => {
         const selected = item.id === active;
         const generating = item.id === "sermon" && Boolean(generatingTarget);
         const href = generating && generatingTarget ? generatingTarget : item.href;
@@ -171,15 +163,13 @@ function NavList({
               className={`group flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e] ${
                 selected
                   ? "bg-white/12 text-white shadow-[inset_3px_0_0_#e0ad6e]"
-                  : "text-white hover:bg-white/7"
+                  : "text-white/90 hover:bg-white/7 hover:text-white"
               }`}
             >
               <span
                 aria-hidden="true"
                 className={`grid size-7 place-items-center rounded-lg text-[10px] font-bold ${
-                  selected
-                    ? "bg-[#e8c28d] text-[#263d34]"
-                    : "bg-white/8 text-white group-hover:bg-white/12"
+                  selected ? "bg-[#e8c28d] text-[#263d34]" : "bg-white/8 text-white group-hover:bg-white/12"
                 }`}
               >
                 {item.marker}
@@ -187,10 +177,7 @@ function NavList({
               <span>{item.label}</span>
               {generating ? (
                 <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-[#e8c28d]/20 px-2 py-0.5 text-[10px] font-extrabold text-[#f2c98e]">
-                  <span
-                    aria-hidden="true"
-                    className="size-1.5 animate-pulse rounded-full bg-[#f2c98e]"
-                  />
+                  <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-[#f2c98e]" />
                   생성 중
                 </span>
               ) : null}
@@ -202,148 +189,18 @@ function NavList({
   );
 }
 
-function UserSummary({ user }: { user: AppShellUser | null }) {
-  if (!user) {
-    return (
-      <div className="rounded-2xl border border-white/10 bg-white/6 p-3.5">
-        <p className="text-xs leading-5 text-white">
-          로그인하면 설교와 설정을 안전하게 이어서 사용할 수 있습니다.
-        </p>
-        <a
-          href="/login?return_to=%2Fhome"
-          className="mt-3 inline-flex min-h-10 w-full items-center justify-center rounded-xl bg-[#f0d09f] px-3 text-xs font-bold text-[#21372e] transition-colors hover:bg-[#f6ddba] focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-        >
-          이메일 또는 Google로 로그인
-        </a>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/6 p-3">
-      <span
-        aria-hidden="true"
-        className="grid size-10 shrink-0 place-items-center rounded-full bg-[#d7e5dc] text-xs font-bold text-[#264237]"
-      >
-        {initials(user.displayName)}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-bold text-white">
-          {user.displayName}
-        </span>
-        <span className="block truncate text-[11px] text-white">
-          {user.email}
-        </span>
-      </span>
-      <SecureSignoutButton
-        returnTo="/"
-        className="shrink-0 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-white hover:bg-white/8 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e]"
-      >
-        로그아웃
-      </SecureSignoutButton>
-    </div>
-  );
-}
-
-function TokenSummaryLink({
-  summary,
-  compact = false,
-}: {
-  summary: TokenSummary | null;
-  compact?: boolean;
-}) {
-  const total = summary
-    ? compact
-      ? formatCompactTokens(summary.total)
-      : formatTokens(summary.total)
-    : "—";
-  const remaining = summary
-    ? compact
-      ? formatCompactTokens(summary.remaining)
-      : formatTokens(summary.remaining)
-    : "—";
-
-  if (compact) {
-    return (
-      <Link
-        href="/tokens"
-        className="ml-auto grid min-w-[7rem] grid-cols-2 gap-1 rounded-xl border border-[#d4cec2] bg-white px-2 py-1.5 text-center shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
-        aria-label={
-          summary
-            ? `총 토큰 ${formatTokens(summary.total)}, 남은 토큰 ${formatTokens(summary.remaining)}`
-            : "토큰 현황 불러오는 중"
-        }
-      >
-        <span>
-          <span className="block text-[9px] font-bold text-[#7b837f]">총</span>
-          <strong className="block text-[11px] font-black tabular-nums text-[#34483f]">
-            {total}
-          </strong>
-        </span>
-        <span className="border-l border-[#e5e0d8]">
-          <span className="block text-[9px] font-bold text-[#9b6238]">남음</span>
-          <strong className="block text-[11px] font-black tabular-nums text-[#a05235]">
-            {remaining}
-          </strong>
-        </span>
-      </Link>
-    );
-  }
-
-  return (
-    <Link
-      href="/tokens"
-      className="block rounded-2xl border border-white/10 bg-white/7 p-3.5 text-white transition-colors hover:bg-white/11 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e]"
-      aria-label={
-        summary
-          ? `총 토큰 ${total}, 남은 토큰 ${remaining}. 토큰 충전 페이지로 이동`
-          : "토큰 현황 불러오는 중. 토큰 충전 페이지로 이동"
-      }
-    >
-      <span className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-bold tracking-[0.14em] text-[#e5c79e]">
-          TOKEN WALLET
-        </span>
-        <span className="text-[10px] font-semibold text-white/75">충전하기</span>
-      </span>
-      <span className="mt-3 grid grid-cols-2 gap-3">
-        <span>
-          <span className="block text-[10px] font-semibold text-white/75">총 토큰</span>
-          <strong className="mt-1 block text-lg font-black tabular-nums text-white">
-            {total}
-          </strong>
-        </span>
-        <span className="border-l border-white/15 pl-3">
-          <span className="block text-[10px] font-semibold text-white/75">남은 토큰</span>
-          <strong className="mt-1 block text-lg font-black tabular-nums text-[#f2c98e]">
-            {remaining}
-          </strong>
-        </span>
-      </span>
-    </Link>
-  );
-}
-
 function Sidebar({
   active,
-  user,
-  tokenWallet,
   onNavigate,
   generatingTarget,
 }: {
   active: AppSection;
-  user: AppShellUser | null;
-  tokenWallet: TokenSummary | null;
   onNavigate?: () => void;
   generatingTarget?: string | null;
 }) {
-  const adminNav = user?.isAdmin ? ADMIN_NAV : [];
   return (
     <div className="flex h-full flex-col overflow-y-auto px-4 py-5 sm:px-5 sm:py-6">
-      <div className="px-2">
-        <Brand />
-      </div>
-
+      <div className="px-2"><Brand /></div>
       <Link
         href={generatingTarget ?? "/sermon/options"}
         onClick={onNavigate}
@@ -352,118 +209,314 @@ function Sidebar({
         {generatingTarget ? (
           <>
             <span className="inline-flex items-center gap-2">
-              <span
-                aria-hidden="true"
-                className="size-2 animate-pulse rounded-full bg-[#1d372d]"
-              />
+              <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-[#1d372d]" />
               설교 생성 중 · 보러 가기
             </span>
-            <span aria-hidden="true" className="text-lg font-normal">
-              →
-            </span>
+            <span aria-hidden="true">→</span>
           </>
         ) : (
-          <>
-            <span>새 설교 시작</span>
-            <span aria-hidden="true" className="text-xl font-normal">
-              +
-            </span>
-          </>
+          <><span>새 설교 시작</span><span aria-hidden="true" className="text-xl">+</span></>
         )}
       </Link>
-
-      <nav className="mt-7" aria-label="주요 메뉴">
-        <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white">
-          WORKSPACE
-        </p>
-        <NavList
-          active={active}
-          items={PRIMARY_NAV}
-          onNavigate={onNavigate}
-          generatingTarget={generatingTarget}
-        />
+      <nav className="mt-7" aria-label="업무 메뉴">
+        <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white/65">WORKSPACE</p>
+        <NavList active={active} onNavigate={onNavigate} generatingTarget={generatingTarget} />
       </nav>
-
-      <nav className="mt-7" aria-label="설정 메뉴">
-        <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white">
-          PREFERENCES
-        </p>
-        <NavList active={active} items={SETTINGS_NAV} onNavigate={onNavigate} />
-      </nav>
-
-      {adminNav.length ? (
-        <nav className="mt-7" aria-label="관리 메뉴">
-          <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white">
-            ADMINISTRATION
-          </p>
-          <NavList active={active} items={adminNav} onNavigate={onNavigate} />
-        </nav>
-      ) : null}
-
-      <div className="mt-auto pt-6">
-        {user ? <TokenSummaryLink summary={tokenWallet} /> : null}
-        <div className={user ? "mt-3" : undefined}>
-        <UserSummary user={user} />
-        </div>
-      </div>
+      <p className="mt-auto px-3 pt-8 text-[10px] leading-5 text-white/45">
+        설교 준비에 필요한 업무 메뉴입니다.<br />
+        계정과 토큰은 우측 상단에서 관리하세요.
+      </p>
     </div>
   );
 }
 
+function RemainingTokenChip({ summary }: { summary: TokenSummary | null }) {
+  return (
+    <Link
+      href="/tokens"
+      className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-[#d7d2c8] bg-white px-3 text-sm font-extrabold text-[#34483f] shadow-sm hover:bg-[#faf8f3] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] max-[520px]:px-2.5"
+      aria-label={
+        summary
+          ? `남은 토큰 ${formatTokens(summary.remaining)}. 토큰 충전 페이지로 이동`
+          : "남은 토큰을 불러오는 중. 토큰 충전 페이지로 이동"
+      }
+    >
+      <span aria-hidden="true" className="text-[#a56836]">◆</span>
+      <span className="max-[520px]:sr-only">남은 토큰</span>
+      <strong className="tabular-nums text-[#8d542f] max-[520px]:sr-only">{summary ? formatTokens(summary.remaining) : "—"}</strong>
+    </Link>
+  );
+}
+
+function GenerationChip({ run, target }: { run: SermonGenerationRunState; target: string }) {
+  return (
+    <Link
+      href={target}
+      className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-[#bdd1c5] bg-[#eaf2ed] px-3 text-xs font-extrabold text-[#315246] hover:bg-[#e0ece5] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5f826f] max-[720px]:size-11 max-[720px]:justify-center max-[720px]:px-0"
+      aria-label={`설교 생성 중 ${run.completedCount}/${run.expectedCount}. 진행 화면 보기`}
+    >
+      <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-[#3c735c]" />
+      <span className="max-[720px]:sr-only">생성 중 {run.completedCount}/{run.expectedCount}</span>
+    </Link>
+  );
+}
+
+function AccountMenu({
+  user,
+  tokenWallet,
+  open,
+  onToggle,
+  onClose,
+  buttonRef,
+  containerRef,
+}: {
+  user: AppShellUser | null;
+  tokenWallet: TokenSummary | null;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  buttonRef: RefObject<HTMLButtonElement | null>;
+  containerRef: RefObject<HTMLDivElement | null>;
+}) {
+  const menuLink = "flex min-h-11 items-center rounded-xl px-3 text-sm font-bold hover:bg-[#f2efe8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]";
+  return (
+    <div ref={containerRef} className="relative shrink-0">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls="account-menu"
+        className={`inline-flex min-h-11 items-center gap-2 rounded-xl border px-2.5 text-sm font-bold shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] ${
+          open ? "border-[#9d8669] bg-[#f1e7d8] text-[#2b443a]" : "border-[#d7d2c8] bg-white text-[#34483f] hover:bg-[#faf8f3]"
+        }`}
+        aria-label={user ? `${user.displayName} 계정 메뉴` : "로그인 메뉴"}
+      >
+        <span aria-hidden="true" className="grid size-7 place-items-center rounded-full bg-[#dce8e0] text-[10px] font-black text-[#294a3d]">
+          {user ? initials(user.displayName) : "나"}
+        </span>
+        <span className="max-xl:sr-only">{user ? "계정" : "로그인"}</span>
+        <span aria-hidden="true" className="text-[10px] max-xl:hidden">⌄</span>
+      </button>
+      {open ? (
+        <section
+          id="account-menu"
+          className="absolute right-0 top-[calc(100%+.65rem)] z-[70] w-[min(21rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-[#d5cfc4] bg-white text-[#253b32] shadow-[0_24px_70px_rgba(24,42,34,.22)]"
+          aria-label="계정 메뉴"
+        >
+          {user ? (
+            <>
+              <div className="border-b border-[#e5e0d7] bg-[#f8f5ee] p-4">
+                <div className="flex items-center gap-3">
+                  <span aria-hidden="true" className="grid size-11 shrink-0 place-items-center rounded-full bg-[#315647] text-xs font-black text-white">
+                    {initials(user.displayName)}
+                  </span>
+                  <span className="min-w-0">
+                    <strong className="block truncate text-sm font-extrabold">{user.displayName}</strong>
+                    <span className="mt-0.5 block truncate text-xs text-[#65736d]">{user.email}</span>
+                  </span>
+                </div>
+                <Link href="/tokens" onClick={onClose} className="mt-3 flex min-h-11 items-center justify-between rounded-xl border border-[#ddd6ca] bg-white px-3 text-xs font-bold hover:bg-[#fbfaf6] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">
+                  <span>
+                    <span className="block">남은 토큰</span>
+                    <span className="mt-0.5 block text-[10px] font-semibold text-[#7b847f]">
+                      총 토큰 {tokenWallet ? formatTokens(tokenWallet.total) : "—"}
+                    </span>
+                  </span>
+                  <strong className="text-sm tabular-nums text-[#965b32]">{tokenWallet ? `${formatTokens(tokenWallet.remaining)}토큰` : "불러오는 중"}</strong>
+                </Link>
+              </div>
+              <nav className="p-2" aria-label="계정 설정">
+                {ACCOUNT_NAV.map((item) => (
+                  <Link key={item.href} href={item.href} onClick={onClose} className={menuLink}>{item.label}</Link>
+                ))}
+                {user.isAdmin ? (
+                  <>
+                    <div className="my-2 border-t border-[#e5e0d7]" />
+                    <p className="px-3 pb-1 pt-2 text-[10px] font-extrabold tracking-[0.15em] text-[#8a6a4d] uppercase">관리자</p>
+                    <Link href="/admin/members" onClick={onClose} className={menuLink}>회원 관리</Link>
+                    <Link href="/admin/ai" onClick={onClose} className={menuLink}>AI 엔진 관리</Link>
+                  </>
+                ) : null}
+              </nav>
+              <div className="border-t border-[#e5e0d7] p-2">
+                <SecureSignoutButton
+                  returnTo="/"
+                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-bold text-[#a44836] hover:bg-[#faece8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
+                >
+                  로그아웃
+                </SecureSignoutButton>
+              </div>
+            </>
+          ) : (
+            <div className="p-4">
+              <p className="text-sm leading-6 text-[#5d6c65]">
+                로그인하면 설교와 토큰, 계정 설정을 안전하게 이어서 사용할 수 있습니다.
+              </p>
+              <Link href="/login?return_to=%2Fhome" onClick={onClose} className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-[#315647] px-4 text-sm font-extrabold text-white hover:bg-[#25483a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">
+                로그인하기
+              </Link>
+            </div>
+          )}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function trapFocus(event: KeyboardEvent, container: HTMLElement | null) {
+  if (event.key !== "Tab" || !container) return;
+  const elements = Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => element.getClientRects().length > 0);
+  const first = elements[0];
+  const last = elements.at(-1);
+  if (!first || !last) return;
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 export function AppShell({ active, children, user }: AppShellProps) {
+  const aiAgent = useAiAgent();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [agentDocked, setAgentDocked] = useState(false);
   const [tokenWallet, setTokenWallet] = useState<TokenSummary | null>(null);
   const [generationRun, setGenerationRun] = useState<SermonGenerationRunState | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuPanelRef = useRef<HTMLElement>(null);
+  const accountButtonRef = useRef<HTMLButtonElement>(null);
+  const accountContainerRef = useRef<HTMLDivElement>(null);
+  const agentButtonRef = useRef<HTMLButtonElement>(null);
+  const skipLinkRef = useRef<HTMLAnchorElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const mainContentRef = useRef<HTMLElement>(null);
+  const headerIdentityRef = useRef<HTMLDivElement>(null);
+  const headerStatusRef = useRef<HTMLDivElement>(null);
+  const headerUtilitiesRef = useRef<HTMLDivElement>(null);
+  const section = SECTION_META[active];
+
+  const workspaceRegistration = useMemo(
+    () => ({ authenticated: Boolean(user), userScope: user?.id }),
+    [user],
+  );
+  useRegisterAiAgentWorkspace(workspaceRegistration);
+
+  const basicPageRegistration = useMemo<AiAgentPageRegistration>(
+    () => {
+      if (section.surface === "tokens") {
+        return {
+          surface: section.surface,
+          title: section.title,
+          snapshot: {
+            summary: {
+              mode: "read-only",
+              remaining: tokenWallet?.remaining ?? "unavailable",
+              used: tokenWallet ? tokenWallet.total - tokenWallet.remaining : "unavailable",
+              restriction: "AI 에이전트는 결제나 토큰 충전을 제안하거나 실행하지 않습니다.",
+            },
+          },
+          capabilities: [],
+          suggestions: ["현재 토큰 현황과 설교 생성 차감 원칙을 설명해줘"],
+        };
+      }
+      if (section.surface === "admin") {
+        return {
+          surface: section.surface,
+          title: section.title,
+          snapshot: {
+            summary: {
+              mode: "read-only",
+              restriction:
+                "AI 에이전트는 관리자 권한이나 설정 변경, 회원 조치, 삭제를 제안하거나 실행하지 않습니다.",
+            },
+          },
+          capabilities: [],
+          suggestions: ["이 관리 화면에서 AI 에이전트가 지원하지 않는 작업을 알려줘"],
+        };
+      }
+      return {
+        surface: section.surface,
+        title: section.title,
+        snapshot: {},
+        capabilities: ["navigate"],
+      };
+    },
+    [section.surface, section.title, tokenWallet],
+  );
+  useRegisterAiAgentPage(basicPageRegistration);
 
   useEffect(() => subscribeSermonGenerationRun(setGenerationRun), []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1800px)");
+    const sync = () => setAgentDocked(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    const shouldInert = aiAgent.isOpen && !agentDocked;
+    // Keep only the AI trigger and dialog operable while the overlay is modal.
+    // The trigger deliberately remains active so pressing it again closes the
+    // panel, while every other workspace/header control leaves the focus tree.
+    const targets = [
+      skipLinkRef.current,
+      sidebarRef.current,
+      mainContentRef.current,
+      headerIdentityRef.current,
+      headerStatusRef.current,
+      headerUtilitiesRef.current,
+    ].filter(
+      (target): target is HTMLElement => Boolean(target),
+    );
+    for (const target of targets) target.inert = shouldInert;
+    return () => {
+      for (const target of targets) target.inert = false;
+    };
+  }, [agentDocked, aiAgent.isOpen]);
 
   useEffect(() => {
     if (!user) {
       setTokenWallet(null);
       return;
     }
-
     let cancelled = false;
     let refreshing = false;
     const controller = new AbortController();
-
     async function refreshTokenWallet() {
-      // Focus and visibilitychange both fire on tab return; collapse the
-      // duplicate into one in-flight request so sibling API calls do not
-      // contend for the same server database connections.
       if (refreshing) return;
       refreshing = true;
       try {
-        const response = await fetch("/api/tokens", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        const response = await fetch("/api/tokens", { cache: "no-store", signal: controller.signal });
         if (!response.ok) return;
-        const body = (await response.json()) as {
-          wallet?: TokenWalletEventDetail;
-        };
+        const body = (await response.json()) as { wallet?: TokenWalletEventDetail };
         const next = body.wallet ? tokenSummary(body.wallet) : null;
         if (!cancelled && next) setTokenWallet(next);
       } catch {
-        // Keep the last known token values during temporary network failures.
+        // Preserve the last value during a temporary request failure.
       } finally {
         refreshing = false;
       }
     }
-
     function handleWalletChanged(event: Event) {
-      const detail = (event as CustomEvent<TokenWalletEventDetail | undefined>)
-        .detail;
+      const detail = (event as CustomEvent<TokenWalletEventDetail | undefined>).detail;
       const next = detail ? tokenSummary(detail) : null;
       if (next) setTokenWallet(next);
       else void refreshTokenWallet();
     }
-
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") void refreshTokenWallet();
     }
-
     void refreshTokenWallet();
     window.addEventListener(TOKEN_WALLET_CHANGED_EVENT, handleWalletChanged);
     window.addEventListener("focus", refreshTokenWallet);
@@ -478,132 +531,156 @@ export function AppShell({ active, children, user }: AppShellProps) {
   }, [user]);
 
   useEffect(() => {
+    if (!accountOpen) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (!accountContainerRef.current?.contains(event.target as Node)) setAccountOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setAccountOpen(false);
+        accountButtonRef.current?.focus();
+      }
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [accountOpen]);
+
+  useEffect(() => {
     if (!menuOpen) return;
-
-    const previouslyFocused = document.activeElement;
     const previousOverflow = document.body.style.overflow;
+    const mainContent = mainContentRef.current;
+    const menuTrigger = menuTriggerRef.current;
     document.body.style.overflow = "hidden";
+    if (mainContent) mainContent.inert = true;
     closeButtonRef.current?.focus();
-
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") setMenuOpen(false);
+      else trapFocus(event, menuPanelRef.current);
     }
-
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = previousOverflow;
-      if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
+      if (mainContent) mainContent.inert = false;
+      menuTrigger?.focus();
     };
   }, [menuOpen]);
 
   const generatingTarget =
-    generationRun && generationRun.status === "running"
+    generationRun?.status === "running"
       ? sermonDraftUrl(
-          generationRun.mode === "regenerate"
-            ? "/sermon/alternatives"
-            : "/sermon/input",
+          generationRun.mode === "regenerate" ? "/sermon/alternatives" : "/sermon/input",
           generationRun.draftId,
         )
       : null;
+  const shellStyle = { "--app-topbar-height": "4.5rem" } as CSSProperties;
 
   return (
-    <div className="min-h-screen bg-[#f4f1ea] text-[#1d2c25]">
-      <a
-        href="#main-content"
-        className="fixed left-3 top-3 z-[70] -translate-y-24 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#183128] shadow-xl transition-transform focus:translate-y-0"
-      >
+    <div className="min-h-screen bg-[#f4f1ea] text-[#1d2c25]" style={shellStyle}>
+      <a ref={skipLinkRef} href="#main-content" className="fixed left-3 top-3 z-[90] -translate-y-24 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#183128] shadow-xl transition-transform focus:translate-y-0">
         본문으로 건너뛰기
       </a>
-
       <div className="lg:grid lg:min-h-screen lg:grid-cols-[17.5rem_minmax(0,1fr)]">
-        <aside className="hidden bg-[#172b24] lg:sticky lg:top-0 lg:block lg:h-screen">
-          <Sidebar
-            active={active}
-            user={user}
-            tokenWallet={tokenWallet}
-            generatingTarget={generatingTarget}
-          />
+        <aside ref={sidebarRef} className="hidden bg-[#172b24] lg:sticky lg:top-0 lg:block lg:h-screen">
+          <Sidebar active={active} generatingTarget={generatingTarget} />
         </aside>
-
         <div className="min-w-0">
-          <header className="sticky top-0 z-40 flex h-[4.5rem] items-center justify-between gap-2 border-b border-[#d9d5cb] bg-[#f4f1ea]/95 px-4 backdrop-blur sm:px-6 lg:hidden">
-            <div className="[&>a>span:last-child_span:first-child]:!text-[#1f382f] [&>a>span:last-child_span:last-child]:!text-[#6c7a74]">
-              <a
-                href="/home"
-                className="inline-flex items-center gap-2.5 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
-                aria-label="로고스AI 홈"
-              >
-                <span
-                  aria-hidden="true"
-                  className="grid size-9 place-items-center rounded-xl bg-[#315647] font-serif text-sm font-bold text-white"
-                >
-                  로
-                </span>
-                <span className="max-[360px]:hidden">
-                  <span className="block font-serif text-base font-bold tracking-tight text-[#1f382f]">
-                    로고스AI
-                  </span>
-                  <span className="block text-[9px] font-semibold tracking-[0.14em] text-[#6c7a74]">
-                    LOGOS AI
-                  </span>
-                </span>
-              </a>
+          <header className="sticky top-0 z-[60] flex h-[var(--app-topbar-height)] items-center justify-between gap-3 border-b border-[#d9d5cb] bg-[#fffdf9]/95 px-3 backdrop-blur sm:px-5 lg:px-6">
+            <div ref={headerIdentityRef} className="min-w-0">
+              <div className="lg:hidden"><Brand dark={false} /></div>
+              <div className="hidden min-w-0 lg:block">
+                <p className="text-[10px] font-extrabold tracking-[0.16em] text-[#9b6a42] uppercase">Workspace</p>
+                <p className="truncate text-base font-extrabold text-[#253e34]">{section.title}</p>
+              </div>
             </div>
-            {user ? <TokenSummaryLink summary={tokenWallet} compact /> : null}
-            <button
-              type="button"
-              aria-expanded={menuOpen}
-              aria-controls="mobile-navigation"
-              onClick={() => setMenuOpen(true)}
-              className="grid size-11 place-items-center rounded-xl border border-[#cec8bc] bg-white text-[#244237] shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
-            >
-              <span className="sr-only">메뉴 열기</span>
-              <span aria-hidden="true" className="space-y-1.5">
-                <span className="block h-0.5 w-5 rounded bg-current" />
-                <span className="block h-0.5 w-5 rounded bg-current" />
-                <span className="block h-0.5 w-5 rounded bg-current" />
-              </span>
-            </button>
+            <div className="ml-auto flex min-w-0 items-center gap-2">
+              <div ref={headerStatusRef} className="contents">
+                {generationRun?.status === "running" && generatingTarget ? (
+                  <GenerationChip run={generationRun} target={generatingTarget} />
+                ) : null}
+                {user ? <RemainingTokenChip summary={tokenWallet} /> : null}
+              </div>
+              <button
+                ref={agentButtonRef}
+                type="button"
+                aria-expanded={aiAgent.isOpen}
+                aria-controls="ai-agent-panel"
+                onClick={() => {
+                  setAccountOpen(false);
+                  setMenuOpen(false);
+                  aiAgent.toggle();
+                }}
+                className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-extrabold shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6a59e5] max-[620px]:size-11 max-[620px]:justify-center max-[620px]:px-0 ${
+                  aiAgent.isOpen
+                    ? "border-[#5d50d7] bg-[#6458df] text-white"
+                    : "border-[#d2cdc3] bg-white text-[#30483e] hover:border-[#9389e5] hover:bg-[#f5f3ff]"
+                }`}
+              >
+                <span aria-hidden="true" className="text-base">✦</span>
+                <span className="max-[620px]:sr-only">AI 에이전트</span>
+              </button>
+              <div ref={headerUtilitiesRef} className="contents">
+                <AccountMenu
+                  user={user}
+                  tokenWallet={tokenWallet}
+                  open={accountOpen}
+                  onToggle={() => {
+                    aiAgent.close();
+                    setMenuOpen(false);
+                    setAccountOpen((current) => !current);
+                  }}
+                  onClose={() => setAccountOpen(false)}
+                  buttonRef={accountButtonRef}
+                  containerRef={accountContainerRef}
+                />
+                <button
+                  ref={menuTriggerRef}
+                  type="button"
+                  aria-expanded={menuOpen}
+                  aria-controls="mobile-navigation"
+                  onClick={() => {
+                    aiAgent.close();
+                    setAccountOpen(false);
+                    setMenuOpen(true);
+                  }}
+                  className="grid size-11 shrink-0 place-items-center rounded-xl border border-[#cec8bc] bg-white text-[#244237] shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] lg:hidden"
+                >
+                  <span className="sr-only">업무 메뉴 열기</span>
+                  <span aria-hidden="true" className="space-y-1.5">
+                    <span className="block h-0.5 w-5 rounded bg-current" />
+                    <span className="block h-0.5 w-5 rounded bg-current" />
+                    <span className="block h-0.5 w-5 rounded bg-current" />
+                  </span>
+                </button>
+              </div>
+            </div>
           </header>
-
-          <main id="main-content" className="min-h-screen">
-            {children}
-          </main>
+          <div className={aiAgent.isOpen ? "min-[1800px]:grid min-[1800px]:grid-cols-[minmax(0,1fr)_23.5rem]" : undefined}>
+            <main ref={mainContentRef} id="main-content" className="min-h-[calc(100vh-var(--app-topbar-height))] min-w-0">
+              {children}
+            </main>
+            <AiAgentPanel triggerRef={agentButtonRef} />
+          </div>
         </div>
       </div>
-
       {menuOpen ? (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <button
-            type="button"
-            aria-label="메뉴 닫기"
-            className="absolute inset-0 bg-[#0b1712]/60 backdrop-blur-sm"
-            onClick={() => setMenuOpen(false)}
-          />
+        <div className="fixed inset-0 z-[80] lg:hidden">
+          <button type="button" aria-label="업무 메뉴 닫기" className="absolute inset-0 bg-[#0b1712]/60 backdrop-blur-sm" onClick={() => setMenuOpen(false)} />
           <aside
+            ref={menuPanelRef}
+            tabIndex={-1}
             id="mobile-navigation"
             className="absolute inset-y-0 right-0 w-[min(88vw,21rem)] bg-[#172b24] shadow-[-24px_0_60px_rgba(0,0,0,.24)]"
-            aria-label="모바일 메뉴"
+            aria-label="모바일 업무 메뉴"
             aria-modal="true"
             role="dialog"
           >
-            <button
-              ref={closeButtonRef}
-              type="button"
-              onClick={() => setMenuOpen(false)}
-              className="absolute right-4 top-4 z-10 grid size-10 place-items-center rounded-xl bg-white/8 text-xl text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e]"
-              aria-label="메뉴 닫기"
-            >
-              ×
-            </button>
-            <Sidebar
-              active={active}
-              user={user}
-              tokenWallet={tokenWallet}
-              onNavigate={() => setMenuOpen(false)}
-              generatingTarget={generatingTarget}
-            />
+            <button ref={closeButtonRef} type="button" onClick={() => setMenuOpen(false)} className="absolute right-4 top-4 z-10 grid size-11 place-items-center rounded-xl bg-white/8 text-2xl text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e]" aria-label="업무 메뉴 닫기">×</button>
+            <Sidebar active={active} onNavigate={() => setMenuOpen(false)} generatingTarget={generatingTarget} />
           </aside>
         </div>
       ) : null}

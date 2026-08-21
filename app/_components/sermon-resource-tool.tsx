@@ -1,17 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
+  isAiEngineTier,
   type AiEngineTier,
 } from "@/app/_lib/ai-engine-tiers";
 import {
   MINISTRY_OUTPUT_TYPES,
   STUDY_GROUPS,
+  STUDY_OPTIONS,
   type SermonResourceMode,
   type SermonResourceResult,
 } from "@/app/_lib/sermon-resources";
+import { useRegisterAiAgentPage } from "./ai-agent-provider";
 
 type SermonItem = {
   id: string;
@@ -32,6 +35,13 @@ type FairUseStatus = {
   dailyLimit: number;
 };
 
+// The agent contract accepts a maximum 28k-character snapshot. Keep enough
+// headroom for form fields, source metadata, section headings, and JSON keys
+// even when a critique includes a long manuscript and twelve result sections.
+const AI_AGENT_RESOURCE_MANUSCRIPT_LIMIT = 10_000;
+const AI_AGENT_RESOURCE_SUMMARY_LIMIT = 1_000;
+const AI_AGENT_RESOURCE_SECTION_LIMIT = 900;
+
 function isSermonItem(value: unknown): value is SermonItem {
   return Boolean(
     value &&
@@ -47,6 +57,10 @@ function resultPlainText(result: SermonResourceResult): string {
     result.summary,
     ...result.sections.map((section) => `${section.heading}\n${section.content}`),
   ].join("\n\n");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 export function SermonResourceTool({ mode }: ToolProps) {
@@ -163,7 +177,7 @@ export function SermonResourceTool({ mode }: ToolProps) {
         ? scriptureInput.trim().length > 0 && selections.length > 0
         : manuscriptInput.trim().length >= 300;
 
-  async function generate() {
+  const generate = useCallback(async () => {
     if (!canGenerate || requestState === "loading") return;
     setRequestState("loading");
     setError("");
@@ -222,7 +236,17 @@ export function SermonResourceTool({ mode }: ToolProps) {
     } finally {
       window.clearTimeout(timeout);
     }
-  }
+  }, [
+    aiTier,
+    canGenerate,
+    manuscriptInput,
+    mode,
+    notesInput,
+    requestState,
+    scriptureInput,
+    selections,
+    sermonId,
+  ]);
 
   async function copyResult() {
     if (!result) return;
@@ -234,6 +258,219 @@ export function SermonResourceTool({ mode }: ToolProps) {
       setCopied(false);
     }
   }
+
+  const agentRegistration = useMemo(() => {
+    const surface = mode as "study" | "critique" | "ministry";
+    const compactResult = result
+      ? {
+          title: result.title.slice(0, 120),
+          summary: result.summary.slice(0, AI_AGENT_RESOURCE_SUMMARY_LIMIT),
+          summaryTruncated:
+            result.summary.length > AI_AGENT_RESOURCE_SUMMARY_LIMIT,
+          sections: result.sections.slice(0, 12).map((section) => ({
+            heading: section.heading.slice(0, 120),
+            content: section.content.slice(0, AI_AGENT_RESOURCE_SECTION_LIMIT),
+            contentTruncated:
+              section.content.length > AI_AGENT_RESOURCE_SECTION_LIMIT,
+          })),
+        }
+      : null;
+    const compactSource = source
+      ? {
+          title: source.title.slice(0, 120),
+          scripture: source.scripture.slice(0, 200),
+        }
+      : null;
+    return {
+      surface,
+      title:
+        mode === "study"
+          ? "성경 본문 연구"
+          : mode === "critique"
+            ? "설교 원고 비평"
+            : "사역 자료 생성",
+      ...(mode === "ministry" && sermonId ? { resourceId: sermonId } : {}),
+      snapshot: {
+        form:
+          mode === "ministry"
+            ? {
+                sermonId,
+                availableSermons: sermons.slice(0, 20).map((item) => ({
+                  id: item.id,
+                  title: item.title.slice(0, 120),
+                  scripture: (item.scripture ?? item.passage ?? "").slice(0, 200),
+                })),
+                aiTier,
+              }
+            : mode === "study"
+              ? { scripture: scriptureInput, notes: notesInput, aiTier }
+              : {
+                  scripture: scriptureInput,
+                  manuscript: manuscriptInput.slice(
+                    0,
+                    AI_AGENT_RESOURCE_MANUSCRIPT_LIMIT,
+                  ),
+                  manuscriptTruncated:
+                    manuscriptInput.length > AI_AGENT_RESOURCE_MANUSCRIPT_LIMIT,
+                  aiTier,
+                },
+        source: compactSource,
+        result: compactResult,
+        selection: selections,
+        generationStatus: requestState,
+      },
+      capabilities: ["navigate", "resource.form.patch", "resource.generate"] as Array<
+        "navigate" | "resource.form.patch" | "resource.generate"
+      >,
+      suggestions:
+        mode === "study"
+          ? [
+              "현재 연구 범위에서 보완할 항목을 알려줘",
+              "입력한 본문에 어울리는 연구 범위를 제안해줘",
+              "연구 결과의 핵심을 정리해줘",
+            ]
+          : mode === "critique"
+            ? [
+                "이 원고에서 먼저 점검할 부분을 알려줘",
+                "비평 결과의 우선순위를 정리해줘",
+                "원고 입력이 충분한지 확인해줘",
+              ]
+            : [
+                "선택한 설교에 어울리는 사역 자료를 추천해줘",
+                "현재 선택 항목을 점검해줘",
+                "생성된 자료의 활용 방법을 알려줘",
+              ],
+      executeAction: async (proposal: {
+        capability: string;
+        args: Record<string, unknown>;
+      }) => {
+        if (proposal.capability === "resource.generate") {
+          if (requestState === "loading") {
+            throw new Error("현재 자료를 생성하고 있습니다.");
+          }
+          if (!canGenerate) {
+            throw new Error("자료 생성에 필요한 입력과 선택 항목을 먼저 채워 주세요.");
+          }
+          await generate();
+          return { message: "기존 화면의 생성 절차로 자료 생성을 요청했습니다." };
+        }
+        if (proposal.capability !== "resource.form.patch") {
+          throw new Error("현재 화면에서는 이 작업을 적용할 수 없습니다.");
+        }
+        if (requestState === "loading") {
+          throw new Error("자료 생성 중에는 입력값을 변경할 수 없습니다.");
+        }
+        const patch = proposal.args.patch;
+        if (!isRecord(patch)) throw new Error("변경할 입력값 형식을 확인해 주세요.");
+        let applied = false;
+        if (patch.aiTier !== undefined) {
+          if (!isAiEngineTier(patch.aiTier)) {
+            throw new Error("AI 엔진 등급을 다시 선택해 주세요.");
+          }
+          setAiTier(patch.aiTier);
+          applied = true;
+        }
+        if (mode === "study") {
+          if (patch.scripture !== undefined) {
+            if (typeof patch.scripture !== "string" || patch.scripture.trim().length === 0 || patch.scripture.length > 120) {
+              throw new Error("성경 본문은 120자 이하로 입력해 주세요.");
+            }
+            setScriptureInput(patch.scripture.trim());
+            applied = true;
+          }
+          if (patch.notes !== undefined) {
+            if (typeof patch.notes !== "string" || patch.notes.length > 2_000) {
+              throw new Error("기타 필요사항은 2,000자 이하로 입력해 주세요.");
+            }
+            setNotesInput(patch.notes);
+            applied = true;
+          }
+          if (patch.selections !== undefined) {
+            if (
+              !Array.isArray(patch.selections) ||
+              patch.selections.length === 0 ||
+              patch.selections.some(
+                (item) =>
+                  typeof item !== "string" ||
+                  !STUDY_OPTIONS.some((option) => option === item),
+              )
+            ) {
+              throw new Error("연구 범위는 화면에서 제공하는 항목만 선택할 수 있습니다.");
+            }
+            setSelections([...new Set(patch.selections as string[])]);
+            applied = true;
+          }
+        } else if (mode === "critique") {
+          if (patch.manuscript !== undefined) {
+            if (typeof patch.manuscript !== "string" || patch.manuscript.length > 60_000) {
+              throw new Error("설교 원고는 60,000자 이하로 입력해 주세요.");
+            }
+            setManuscriptInput(patch.manuscript);
+            applied = true;
+          }
+          if (patch.scripture !== undefined) {
+            if (typeof patch.scripture !== "string" || patch.scripture.length > 120) {
+              throw new Error("성경 본문은 120자 이하로 입력해 주세요.");
+            }
+            setScriptureInput(patch.scripture.trim());
+            applied = true;
+          }
+        } else {
+          if (patch.sermonId !== undefined) {
+            if (
+              typeof patch.sermonId !== "string" ||
+              !sermons.some((item) => item.id === patch.sermonId)
+            ) {
+              throw new Error("현재 목록에 있는 저장 설교를 선택해 주세요.");
+            }
+            setSermonId(patch.sermonId);
+            applied = true;
+          }
+          if (patch.selections !== undefined) {
+            if (
+              !Array.isArray(patch.selections) ||
+              patch.selections.length === 0 ||
+              patch.selections.some(
+                (item) =>
+                  typeof item !== "string" ||
+                  !MINISTRY_OUTPUT_TYPES.some((type) => type === item),
+              )
+            ) {
+              throw new Error("사역 자료는 화면에서 제공하는 항목만 선택할 수 있습니다.");
+            }
+            setSelections([...new Set(patch.selections as string[])]);
+            applied = true;
+          }
+        }
+        if (!applied) throw new Error("적용할 수 있는 입력값 변경이 없습니다.");
+        setResult(null);
+        setSource(null);
+        setError("");
+        setFairUse(null);
+        setRequestState("idle");
+        return {
+          message:
+            "제안한 내용을 입력란에 반영했습니다. 확인한 뒤 기존 생성 버튼을 눌러 주세요.",
+        };
+      },
+    };
+  }, [
+    aiTier,
+    canGenerate,
+    generate,
+    manuscriptInput,
+    mode,
+    notesInput,
+    requestState,
+    result,
+    scriptureInput,
+    selections,
+    sermonId,
+    sermons,
+    source,
+  ]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   return (
     <div className="mt-7 grid gap-6 xl:grid-cols-[minmax(19rem,.72fr)_minmax(0,1.28fr)]">

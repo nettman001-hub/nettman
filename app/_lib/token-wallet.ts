@@ -186,6 +186,197 @@ export type TokenCharge = {
   charged: boolean;
 };
 
+export type TokenWalletCharge = TokenCharge & {
+  /** True only when this exact idempotency key was already refunded. */
+  refunded: boolean;
+};
+
+function assertTokenTransactionInput(args: {
+  referenceId: string;
+  kind: string;
+  cost: number;
+  description: string;
+}): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{7,199}$/.test(args.referenceId)) {
+    throw new Error("토큰 사용 식별자 형식을 확인해 주세요.");
+  }
+  if (!/^[a-z][a-z0-9_-]{1,31}$/.test(args.kind)) {
+    throw new Error("토큰 사용 유형 형식을 확인해 주세요.");
+  }
+  if (!Number.isSafeInteger(args.cost) || args.cost < 1 || args.cost > 10_000) {
+    throw new Error("차감할 토큰 수를 확인해 주세요.");
+  }
+  if (!args.description.trim() || args.description.length > 160) {
+    throw new Error("토큰 사용 설명을 확인해 주세요.");
+  }
+}
+
+/**
+ * General idempotent wallet debit. The globally unique reference is both the
+ * advisory-lock key and the transaction uniqueness key, so concurrent retries
+ * cannot debit twice.
+ */
+export async function chargeTokenWallet(args: {
+  db: AppDatabase;
+  userId: string;
+  referenceId: string;
+  kind: string;
+  cost: number;
+  description: string;
+  metadata?: Record<string, unknown>;
+}): Promise<TokenWalletCharge> {
+  const { db, userId, referenceId, kind, cost, description } = args;
+  assertTokenTransactionInput({ referenceId, kind, cost, description });
+  await ensureTokenWallet(db, userId);
+  const existing = await db
+    .prepare(
+      `SELECT charge.amount, charge.balance_after,
+              CASE WHEN refund.reference_id IS NULL THEN 0 ELSE 1 END AS refunded
+       FROM token_transactions charge
+       LEFT JOIN token_transactions refund
+         ON refund.reference_id = 'refund:' || charge.reference_id
+       WHERE charge.user_id = ? AND charge.reference_id = ? AND charge.kind = ?
+         AND charge.amount < 0
+       LIMIT 1`,
+    )
+    .bind(userId, referenceId, kind)
+    .first<{ amount: number; balance_after: number; refunded: number }>();
+  if (existing) {
+    const wallet = await getTokenWallet(db, userId);
+    return {
+      referenceId,
+      cost: Math.abs(integer(existing.amount)),
+      balance: wallet.balance,
+      charged: false,
+      refunded: integer(existing.refunded) === 1,
+    };
+  }
+
+  const now = new Date().toISOString();
+  const metadataJson = JSON.stringify(args.metadata ?? {});
+  if (metadataJson.length > 2_000) {
+    throw new Error("토큰 사용 부가 정보가 너무 큽니다.");
+  }
+  const results = await db.batch<{ balance_after: number }>([
+    db.prepare("SELECT pg_advisory_xact_lock(?)").bind(advisoryKey(referenceId)),
+    db.prepare(
+      `WITH debited AS (
+         UPDATE token_wallets
+         SET balance = balance - ?, lifetime_spent = lifetime_spent + ?, updated_at = ?
+         WHERE user_id = ? AND balance >= ?
+           AND NOT EXISTS (
+             SELECT 1 FROM token_transactions WHERE reference_id = ?
+           )
+         RETURNING balance
+       )
+       INSERT INTO token_transactions
+         (id, user_id, kind, amount, balance_after, reference_id, description, metadata_json, created_at)
+       SELECT ?, ?, ?, ?, balance, ?, ?, ?, ? FROM debited
+       ON CONFLICT(reference_id) DO NOTHING
+       RETURNING balance_after`,
+    ).bind(
+      cost,
+      cost,
+      now,
+      userId,
+      cost,
+      referenceId,
+      crypto.randomUUID(),
+      userId,
+      kind,
+      -cost,
+      referenceId,
+      description.trim(),
+      metadataJson,
+      now,
+    ),
+  ]);
+  const inserted = results[1]?.results[0];
+  if (inserted) {
+    return {
+      referenceId,
+      cost,
+      balance: integer(inserted.balance_after),
+      charged: true,
+      refunded: false,
+    };
+  }
+
+  const raced = await db
+    .prepare(
+      `SELECT amount, balance_after FROM token_transactions
+       WHERE user_id = ? AND reference_id = ? AND kind = ? AND amount < 0`,
+    )
+    .bind(userId, referenceId, kind)
+    .first<{ amount: number; balance_after: number }>();
+  if (raced) {
+    return {
+      referenceId,
+      cost: Math.abs(integer(raced.amount)),
+      balance: integer(raced.balance_after),
+      charged: false,
+      refunded: false,
+    };
+  }
+  const wallet = await getTokenWallet(db, userId);
+  throw new InsufficientTokensError(wallet.balance, cost);
+}
+
+/** Credits an earlier generic debit once; duplicate refunds are harmless. */
+export async function refundTokenWalletCharge(args: {
+  db: AppDatabase;
+  userId: string;
+  chargeReferenceId: string;
+  sourceKind: string;
+  reason: string;
+  description?: string;
+}): Promise<boolean> {
+  const { db, userId, chargeReferenceId, sourceKind, reason } = args;
+  if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{7,199}$/.test(chargeReferenceId)) return false;
+  if (!/^[a-z][a-z0-9_-]{1,31}$/.test(sourceKind)) return false;
+  const referenceId = `refund:${chargeReferenceId}`;
+  const now = new Date().toISOString();
+  const results = await db.batch<{ balance_after: number }>([
+    db.prepare("SELECT pg_advisory_xact_lock(?)").bind(advisoryKey(referenceId)),
+    db.prepare(
+      `WITH source AS (
+         SELECT user_id, -amount AS refund_amount
+         FROM token_transactions
+         WHERE user_id = ? AND reference_id = ? AND kind = ? AND amount < 0
+       ), credited AS (
+         UPDATE token_wallets w
+         SET balance = w.balance + source.refund_amount,
+             lifetime_spent = GREATEST(0, w.lifetime_spent - source.refund_amount),
+             updated_at = ?
+         FROM source
+         WHERE w.user_id = source.user_id
+           AND NOT EXISTS (
+             SELECT 1 FROM token_transactions WHERE reference_id = ?
+           )
+         RETURNING w.balance, source.refund_amount
+       )
+       INSERT INTO token_transactions
+         (id, user_id, kind, amount, balance_after, reference_id, description, metadata_json, created_at)
+       SELECT ?, ?, 'refund', refund_amount, balance, ?, ?, ?, ? FROM credited
+       ON CONFLICT(reference_id) DO NOTHING
+       RETURNING balance_after`,
+    ).bind(
+      userId,
+      chargeReferenceId,
+      sourceKind,
+      now,
+      referenceId,
+      crypto.randomUUID(),
+      userId,
+      referenceId,
+      (args.description ?? "AI 작업 실패 자동 환불").slice(0, 160),
+      JSON.stringify({ chargeReferenceId, reason: reason.slice(0, 300) }),
+      now,
+    ),
+  ]);
+  return Boolean(results[1]?.results[0]);
+}
+
 export async function chargeSermonTokens(args: {
   db: AppDatabase;
   userId: string;
@@ -294,47 +485,14 @@ export async function refundTokenCharge(args: {
   chargeReferenceId: string;
   reason: string;
 }): Promise<boolean> {
-  const { db, userId, chargeReferenceId, reason } = args;
-  const referenceId = `refund:${chargeReferenceId}`;
-  const now = new Date().toISOString();
-  const results = await db.batch<{ balance_after: number }>([
-    db.prepare("SELECT pg_advisory_xact_lock(?)").bind(advisoryKey(referenceId)),
-    db.prepare(
-      `WITH source AS (
-         SELECT user_id, -amount AS refund_amount
-         FROM token_transactions
-         WHERE user_id = ? AND reference_id = ? AND kind = 'generation' AND amount < 0
-       ), credited AS (
-         UPDATE token_wallets w
-         SET balance = w.balance + source.refund_amount,
-             lifetime_spent = GREATEST(0, w.lifetime_spent - source.refund_amount),
-             updated_at = ?
-         FROM source
-         WHERE w.user_id = source.user_id
-           AND NOT EXISTS (
-             SELECT 1 FROM token_transactions WHERE reference_id = ?
-           )
-         RETURNING w.balance, source.refund_amount
-       )
-       INSERT INTO token_transactions
-         (id, user_id, kind, amount, balance_after, reference_id, description, metadata_json, created_at)
-       SELECT ?, ?, 'refund', refund_amount, balance, ?, ?, ?, ? FROM credited
-       ON CONFLICT(reference_id) DO NOTHING
-       RETURNING balance_after`,
-    ).bind(
-      userId,
-      chargeReferenceId,
-      now,
-      referenceId,
-      crypto.randomUUID(),
-      userId,
-      referenceId,
-      "설교 생성 실패 자동 환불",
-      JSON.stringify({ chargeReferenceId, reason: reason.slice(0, 300) }),
-      now,
-    ),
-  ]);
-  return Boolean(results[1]?.results[0]);
+  return refundTokenWalletCharge({
+    db: args.db,
+    userId: args.userId,
+    chargeReferenceId: args.chargeReferenceId,
+    sourceKind: "generation",
+    reason: args.reason,
+    description: "설교 생성 실패 자동 환불",
+  });
 }
 
 export async function completeTokenTopup(args: {

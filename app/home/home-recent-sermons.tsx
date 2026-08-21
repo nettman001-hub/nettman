@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  useRegisterAiAgentPage,
+  type AiAgentPageRegistration,
+} from "../_components/ai-agent-provider";
 import { loadLocalSermonRecords } from "../_lib/sermon-store";
 
 type RecentSermon = {
@@ -12,6 +17,15 @@ type RecentSermon = {
 };
 
 const STORAGE_KEY = "sermon-guide.recent-sermons.v1";
+const HOME_AGENT_DESTINATIONS = new Set([
+  "/home",
+  "/sermon/options",
+  "/history",
+  "/study",
+  "/critique",
+  "/ministry",
+  "/consult",
+]);
 
 function isRecentSermon(value: unknown): value is RecentSermon {
   if (!value || typeof value !== "object") return false;
@@ -48,6 +62,7 @@ function readLocalSermons(): RecentSermon[] {
 }
 
 export function HomeRecentSermons() {
+  const router = useRouter();
   const [items, setItems] = useState<RecentSermon[]>([]);
   const [state, setState] = useState<"loading" | "synced" | "local">("loading");
 
@@ -87,6 +102,69 @@ export function HomeRecentSermons() {
     void load();
     return () => controller.abort();
   }, []);
+
+  const agentRegistration = useMemo<AiAgentPageRegistration>(
+    () => ({
+      surface: "home",
+      title: "홈 · 최근 설교",
+      snapshot: {
+        summary: {
+          loadState: state,
+          recentCount: items.length,
+          completeCount: items.filter((item) => item.status === "complete").length,
+          draftCount: items.filter((item) => item.status === "draft").length,
+        },
+        recentSermons: items.map((item) => ({
+          id: item.id,
+          title: item.title,
+          scripture: item.passage,
+          updatedAt: item.updatedAt,
+          status: item.status,
+        })),
+      },
+      capabilities: ["navigate", "history.open"],
+      suggestions: [
+        "최근 설교를 보고 다음 작업을 추천해줘",
+        "최근 완성 설교 중 다시 살펴볼 원고를 골라줘",
+        "작성 중인 설교가 있으면 이어서 여는 방법을 알려줘",
+      ],
+      executeAction: async (proposal) => {
+        if (proposal.capability === "history.open") {
+          const sermonId = proposal.args.sermonId;
+          if (
+            typeof sermonId !== "string" ||
+            !items.some((item) => item.id === sermonId && item.status === "complete")
+          ) {
+            throw new Error("현재 표시된 완성 설교 중에서 다시 선택해 주세요.");
+          }
+          router.push(`/history/${encodeURIComponent(sermonId)}`);
+          return { message: "선택한 최근 설교를 열었습니다." };
+        }
+        if (proposal.capability === "navigate") {
+          const href = proposal.args.href;
+          const recentHrefs = new Set(
+            items.map((item) =>
+              item.status === "complete"
+                ? `/history/${encodeURIComponent(item.id)}`
+                : `/sermon/edit?draftId=${encodeURIComponent(item.id)}`,
+            ),
+          );
+          if (
+            typeof href !== "string" ||
+            (!HOME_AGENT_DESTINATIONS.has(href) && !recentHrefs.has(href))
+          ) {
+            throw new Error("홈에서 확인할 수 있는 작업이나 최근 설교를 선택해 주세요.");
+          }
+          router.push(href);
+          return { message: "요청한 화면으로 이동했습니다." };
+        }
+        throw new Error("홈에서는 이 작업을 적용할 수 없습니다.");
+      },
+    }),
+    [items, router, state],
+  );
+
+  useRegisterAiAgentPage(agentRegistration);
 
   if (state === "loading") {
     return (

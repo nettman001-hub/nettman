@@ -268,9 +268,11 @@ test("keeps the administrator member directory responsive and server-backed", as
       ),
     ]);
 
-  assert.match(shell, /ADMINISTRATION/);
-  assert.match(shell, /href: "\/admin\/members"/);
-  assert.match(shell, /href: "\/admin\/ai"/);
+  assert.doesNotMatch(shell, /ADMINISTRATION/);
+  assert.match(shell, /user\.isAdmin/);
+  assert.match(shell, /href="\/admin\/members"/);
+  assert.match(shell, /href="\/admin\/ai"/);
+  assert.match(shell, /계정과 토큰은 우측 상단에서 관리하세요/);
   assert.match(listPage, /requirePageUser\("\/admin\/members"\)/);
   assert.match(listPage, /if \(!user\.isAdmin\) redirect\("\/home"\)/);
   assert.match(detailPage, /if \(!user\.isAdmin\) redirect\("\/home"\)/);
@@ -4581,4 +4583,35 @@ test("keeps text white and AA-readable on dark surfaces", async () => {
       (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
     assert.ok(ratio >= 4.5, `${foreground} on ${background} was ${ratio.toFixed(2)}:1`);
   }
+});
+
+test("keeps the persistent AI agent and account controls in the responsive top bar", async () => {
+  const [layout, shell, provider, panel, generationPill] = await Promise.all([
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/_components/app-shell.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/_components/ai-agent-provider.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/_components/ai-agent-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/_components/generation-status-pill.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(layout, /<AiAgentProvider>/);
+  assert.match(shell, /--app-topbar-height/);
+  assert.match(shell, /min-\[1800px\]:grid-cols-\[minmax\(0,1fr\)_23\.5rem\]/);
+  assert.match(shell, /RemainingTokenChip/);
+  assert.match(shell, /AccountMenu/);
+  assert.match(shell, /AI 에이전트/);
+  assert.match(shell, /user\.isAdmin/);
+  assert.match(shell, /method="post"|SecureSignoutButton/);
+  assert.doesNotMatch(shell, /PREFERENCES/);
+
+  assert.match(provider, /useRegisterAiAgentPage/);
+  assert.match(provider, /\/api\/ai-agent/);
+  assert.match(provider, /contextSignature/);
+  assert.match(panel, /AI_AGENT_MESSAGE_COSTS/);
+  assert.match(panel, /nativeEvent\.isComposing/);
+  assert.match(panel, /stopResponse/);
+  assert.match(panel, /로그인하고 AI 에이전트를 사용하세요/);
+  assert.match(panel, /aria-modal/);
+  assert.match(panel, /event\.key === "Escape"/);
+  assert.match(generationPill, /AppShell surfaces show this state in the sticky top bar/);
 });

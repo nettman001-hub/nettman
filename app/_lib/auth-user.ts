@@ -69,6 +69,7 @@ const USER_OWNER_COLUMNS = [
   ["user_ai_preferences", "user_id"],
   ["global_ai_settings", "updated_by"],
   ["managed_ai_usage", "user_id"],
+  ["ai_agent_usage", "user_id"],
   ["sermon_resource_usage", "user_id"],
   ["user_auth_sessions", "user_id"],
   ["user_auth_sessions", "revoked_by"],

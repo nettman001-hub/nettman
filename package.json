@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/secure-supabase-tables.mjs && next build",
+    "build": "node scripts/secure-supabase-tables.mjs && next build --webpack",
     "start": "next start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint app db worker scripts tests vite.config.ts next.config.ts drizzle.config.ts",

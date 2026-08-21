@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  useRegisterAiAgentPage,
+  type AiAgentPageRegistration,
+} from "@/app/_components/ai-agent-provider";
 
 type Preferences = {
   emailEnabled: boolean;
@@ -272,6 +276,32 @@ export function NotificationPreferencesForm({
           : permission === "default"
             ? "권한 확인 필요"
             : "권한 확인 중";
+
+  const agentRegistration = useMemo<AiAgentPageRegistration>(
+    () => ({
+      surface: "notifications",
+      title: "알림 설정",
+      snapshot: {
+        preferences: {
+          loadState: loading ? "loading" : "ready",
+          storageMode: signedIn ? "account" : "device",
+          verifiedDeliveryAvailable: emailVerified,
+          mailDeliveryEnabled: preferences.emailEnabled,
+          browserDeliveryEnabled: preferences.pushEnabled,
+          browserPermission: permission,
+        },
+      },
+      capabilities: ["navigate"],
+      suggestions: [
+        "현재 알림 설정 상태를 설명해줘",
+        "브라우저 알림을 켜기 전에 확인할 점을 알려줘",
+        "내 설정에서 사용할 수 없는 알림 채널이 있는지 알려줘",
+      ],
+    }),
+    [emailVerified, loading, permission, preferences, signedIn],
+  );
+
+  useRegisterAiAgentPage(agentRegistration);
 
   const statusClass =
     status.kind === "success"

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   requestScriptureNormalization,
@@ -29,6 +29,7 @@ import {
   SermonStateCard,
   useSermonWorkflow,
 } from "./sermon-workflow";
+import { useRegisterAiAgentPage } from "./ai-agent-provider";
 
 function excerpt(value: string): string {
   const sentences = value.match(/[^.!?。]+[.!?。]?/g) ?? [value];
@@ -91,6 +92,95 @@ export function SermonAlternatives() {
       updateDraft((current) => ({ ...current, stage: "alternatives" }));
     }
   }, [draft, isGuest, updateDraft]);
+
+  const agentRegistration = useMemo(() => {
+    if (!ready || !draft) return null;
+    const runActive =
+      runState?.draftId === draft.id && runState.status === "running";
+    return {
+      surface: "sermon.alternatives" as const,
+      title: "설교 초안 비교와 선택",
+      resourceId: draft.id,
+      version: draft.updatedAt,
+      snapshot: {
+        draftId: draft.id,
+        options: draft.options,
+        alternatives: draft.alternatives.map((alternative, index) => ({
+          id: alternative.id,
+          position: index + 1,
+          title: alternative.title,
+          summary: alternative.summary,
+          scripture: alternative.scripture,
+          introduction: excerpt(alternative.sections.introduction).slice(0, 1_200),
+          pointTitles: alternative.sections.points.map((point) => point.heading),
+        })),
+        selectedAlternativeId: selectedId,
+        generationStatus: {
+          status: runActive ? "running" : draft.generation ? "paused" : "idle",
+          completedCount: generationProgress,
+          step: generationStep,
+        },
+      },
+      capabilities: [
+        "navigate",
+        "sermon.alternative.select",
+        "sermon.generation.stop",
+      ] as Array<
+        "navigate" | "sermon.alternative.select" | "sermon.generation.stop"
+      >,
+      suggestions: runActive
+        ? [
+            "새 초안 생성 진행 상태를 알려줘",
+            "현재까지 완성된 초안의 차이를 설명해줘",
+          ]
+        : [
+            "다섯 초안의 핵심 차이를 비교해줘",
+            "현재 옵션과 본문에 가장 잘 맞는 초안을 추천해줘",
+            "각 초안의 강점과 보완점을 알려줘",
+          ],
+      executeAction: async (proposal: {
+        capability: string;
+        args: Record<string, unknown>;
+      }) => {
+        if (proposal.capability === "sermon.generation.stop") {
+          if (!isSermonGenerationRunActive(draft.id)) {
+            throw new Error("현재 이 설교에서 진행 중인 생성 작업이 없습니다.");
+          }
+          setStopping(true);
+          stopSermonGenerationRun();
+          return {
+            message:
+              "새 초안 생성을 중지했습니다. 이미 완성된 결과는 보존되며 나중에 이어서 만들 수 있습니다.",
+          };
+        }
+        if (proposal.capability !== "sermon.alternative.select") {
+          throw new Error("현재 화면에서는 이 작업을 적용할 수 없습니다.");
+        }
+        const alternativeId = proposal.args.alternativeId;
+        if (
+          typeof alternativeId !== "string" ||
+          !draft.alternatives.some((item) => item.id === alternativeId)
+        ) {
+          throw new Error("현재 표시된 설교 초안 중에서 다시 선택해 주세요.");
+        }
+        setSelectedId(alternativeId);
+        setGuestMessage(false);
+        return {
+          message:
+            "추천 초안을 선택했습니다. 내용을 확인한 뒤 ‘이 설교로 계속하기’를 눌러 주세요.",
+        };
+      },
+    };
+  }, [
+    draft,
+    generationProgress,
+    generationStep,
+    ready,
+    runState,
+    selectedId,
+  ]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   if (!ready) return <SermonLoading />;
   if (!draft) {

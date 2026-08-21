@@ -1,8 +1,10 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppPageHeading } from "../_components/app-page-heading";
 import { AppNotice } from "../_components/app-notice";
+import { useRegisterAiAgentPage } from "../_components/ai-agent-provider";
 import type { SermonRecord } from "../_lib/data";
 import { loadLocalSermonRecords } from "../_lib/sermon-store";
 
@@ -11,6 +13,7 @@ type HistoryResponse = { items: SermonRecord[]; total: number; page: number; lim
 const formatter = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric" });
 
 export function HistoryClient() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -61,6 +64,54 @@ export function HistoryClient() {
   }
 
   const pageCount = Math.max(1, Math.ceil(data.total / data.limit));
+  const agentRegistration = useMemo(
+    () => ({
+      surface: "history" as const,
+      title: "내 설교 목록",
+      snapshot: {
+        query,
+        filters: { submittedQuery, page, pageCount, total: data.total },
+        sermons: data.items.map((sermon) => ({
+          id: sermon.id,
+          title: sermon.title,
+          scripture: sermon.scripture,
+          sermonType: sermon.sermonType,
+          audience: sermon.audience,
+          duration: sermon.duration,
+          updatedAt: sermon.updatedAt,
+          introduction: sermon.sections.introduction.slice(0, 700),
+        })),
+      },
+      capabilities: ["navigate", "history.open"] as Array<
+        "navigate" | "history.open"
+      >,
+      suggestions: [
+        "현재 설교 목록을 주제별로 정리해줘",
+        "최근 설교 중 다시 활용할 만한 원고를 찾아줘",
+        "검색 결과의 공통 주제를 알려줘",
+      ],
+      executeAction: async (proposal: {
+        capability: string;
+        args: Record<string, unknown>;
+      }) => {
+        if (proposal.capability !== "history.open") {
+          throw new Error("현재 화면에서는 이 작업을 적용할 수 없습니다.");
+        }
+        const sermonId = proposal.args.sermonId;
+        if (
+          typeof sermonId !== "string" ||
+          !data.items.some((sermon) => sermon.id === sermonId)
+        ) {
+          throw new Error("현재 표시된 설교 중에서 다시 선택해 주세요.");
+        }
+        router.push(`/history/${encodeURIComponent(sermonId)}`);
+        return { message: "선택한 설교 상세 화면으로 이동했습니다." };
+      },
+    }),
+    [data.items, data.total, page, pageCount, query, router, submittedQuery],
+  );
+
+  useRegisterAiAgentPage(agentRegistration);
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-7 sm:py-10 lg:px-10 lg:py-12">

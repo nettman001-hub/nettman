@@ -99,6 +99,17 @@ export const managedAiUsage = sqliteTable("managed_ai_usage", {
   uniqueIndex("idx_managed_ai_usage_user_date").on(table.userId, table.usageDate),
 ]);
 
+export const aiAgentUsage = sqliteTable("ai_agent_usage", {
+  userId: text("user_id").notNull(),
+  usageDate: text("usage_date").notNull(),
+  requestCount: integer("request_count").notNull().default(0),
+  activeRequestId: text("active_request_id"),
+  activeStartedAt: text("active_started_at"),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("idx_ai_agent_usage_user_date").on(table.userId, table.usageDate),
+]);
+
 export const sermonResourceUsage = sqliteTable("sermon_resource_usage", {
   userId: text("user_id").notNull(),
   usageDate: text("usage_date").notNull(),
@@ -123,7 +134,7 @@ export const tokenTransactions = sqliteTable("token_transactions", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
   kind: text("kind", {
-    enum: ["welcome", "topup", "generation", "refund", "admin_adjustment"],
+    enum: ["welcome", "topup", "generation", "agent", "refund", "admin_adjustment"],
   }).notNull(),
   amount: integer("amount").notNull(),
   balanceAfter: integer("balance_after").notNull(),

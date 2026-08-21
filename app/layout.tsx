@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { AiAgentProvider } from "@/app/_components/ai-agent-provider";
 import { GenerationStatusPill } from "@/app/_components/generation-status-pill";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
@@ -51,10 +52,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="ko">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        {children}
-        <Suspense fallback={null}>
-          <GenerationStatusPill />
-        </Suspense>
+        <AiAgentProvider>
+          {children}
+          <Suspense fallback={null}>
+            <GenerationStatusPill />
+          </Suspense>
+        </AiAgentProvider>
       </body>
     </html>
   );

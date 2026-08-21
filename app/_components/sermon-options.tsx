@@ -6,6 +6,7 @@ import { sermonDraftUrl } from "@/app/_lib/sermon-store";
 import {
   AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
+  isAiEngineTier,
   type AiEngineTier,
 } from "@/app/_lib/ai-engine-tiers";
 import {
@@ -35,6 +36,7 @@ import {
   type SermonTone,
 } from "@/app/_lib/sermon-types";
 import { SermonLoading, useSermonWorkflow } from "./sermon-workflow";
+import { useRegisterAiAgentPage } from "./ai-agent-provider";
 
 type ChoiceProps<T extends string | number> = {
   legend: string;
@@ -99,6 +101,10 @@ function normalizedOptions(value: SermonOptionsValue): SermonOptionsValue {
       ? durationToTargetCharacters(value.duration)
       : null,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 export function SermonOptions() {
@@ -187,6 +193,124 @@ export function SermonOptions() {
     form.duration && form.pointCount
       ? sermonGenerationTokenCost(form.aiTier, form.duration, form.pointCount)
       : null;
+
+  const agentRegistration = useMemo(() => {
+    if (!ready || !draft) return null;
+    return {
+      surface: "sermon.options" as const,
+      title: "설교 기본·구성 옵션",
+      resourceId: draft.id,
+      version: draft.updatedAt,
+      snapshot: {
+        draftId: draft.id,
+        options: form,
+        completion: { complete: valid, dirty },
+        validation: errors,
+        generationStatus: draft.generation ? "paused" : "idle",
+      },
+      capabilities: ["navigate", "sermon.options.patch"] as const,
+      suggestions: [
+        "현재 옵션에서 빠진 항목을 확인해줘",
+        "이 설교 주제에 어울리는 구성을 제안해줘",
+        "청중과 감정선을 더 선명하게 다듬어줘",
+      ],
+      executeAction: async (proposal: {
+        capability: string;
+        args: Record<string, unknown>;
+      }) => {
+        if (proposal.capability !== "sermon.options.patch") {
+          throw new Error("현재 화면에서는 이 작업을 적용할 수 없습니다.");
+        }
+        const patch = proposal.args.patch;
+        if (!isRecord(patch)) {
+          throw new Error("변경할 설교 옵션 형식을 확인해 주세요.");
+        }
+
+        const next: Partial<SermonOptionsValue> = {};
+        if (patch.topic !== undefined) {
+          if (!isSermonTitleValue(patch.topic)) throw new Error(errors.topic);
+          next.topic = patch.topic.trim();
+        }
+        if (patch.duration !== undefined) {
+          if (!SERMON_DURATIONS.some((value) => value === patch.duration)) {
+            throw new Error("설교 분량은 화면에서 제공하는 값만 선택할 수 있습니다.");
+          }
+          next.duration = patch.duration as SermonOptionsValue["duration"];
+        }
+        if (patch.sermonType !== undefined) {
+          if (!SERMON_TYPES.some((value) => value === patch.sermonType)) {
+            throw new Error("설교 유형은 화면에서 제공하는 값만 선택할 수 있습니다.");
+          }
+          next.sermonType = patch.sermonType as SermonOptionsValue["sermonType"];
+        }
+        if (patch.worshipType !== undefined) {
+          if (!SERMON_WORSHIP_TYPES.some((value) => value === patch.worshipType)) {
+            throw new Error("예배 유형은 화면에서 제공하는 값만 선택할 수 있습니다.");
+          }
+          next.worshipType = patch.worshipType as string;
+        }
+        if (patch.pointCount !== undefined) {
+          if (!SERMON_POINT_COUNTS.some((value) => value === patch.pointCount)) {
+            throw new Error("대지 수는 1개부터 4개까지만 선택할 수 있습니다.");
+          }
+          next.pointCount = patch.pointCount as SermonOptionsValue["pointCount"];
+        }
+        if (patch.audience !== undefined) {
+          if (!SERMON_AUDIENCES.some((value) => value === patch.audience)) {
+            throw new Error("설교 대상은 화면에서 제공하는 값만 선택할 수 있습니다.");
+          }
+          next.audience = patch.audience as SermonOptionsValue["audience"];
+        }
+        if (patch.audienceSituation !== undefined) {
+          if (!isSermonAudienceSituationValue(patch.audienceSituation)) {
+            throw new Error(errors.audienceSituation);
+          }
+          next.audienceSituation = patch.audienceSituation.trim();
+        }
+        if (patch.tone !== undefined) {
+          if (!isSermonToneValue(patch.tone)) throw new Error(errors.tone);
+          next.tone = patch.tone.trim();
+        }
+        if (patch.referenceMode !== undefined) {
+          if (patch.referenceMode !== "auto" && patch.referenceMode !== "manual") {
+            throw new Error("참고 자료 방식은 자동 또는 직접 입력만 선택할 수 있습니다.");
+          }
+          next.referenceMode = patch.referenceMode;
+        }
+        if (patch.aiTier !== undefined) {
+          if (!isAiEngineTier(patch.aiTier)) {
+            throw new Error("AI 엔진 등급을 다시 선택해 주세요.");
+          }
+          next.aiTier = patch.aiTier;
+          next.aiTiers = normalizeSermonAiTiers({ aiTier: patch.aiTier });
+        }
+        if (Object.keys(next).length === 0) {
+          throw new Error("적용할 수 있는 옵션 변경이 없습니다.");
+        }
+        setForm((current) => ({ ...current, ...next }));
+        if (typeof next.audienceSituation === "string") {
+          setCustomAudienceSituationSelected(
+            !SERMON_AUDIENCE_SITUATIONS.some(
+              (value) => value === next.audienceSituation,
+            ),
+          );
+        }
+        if (typeof next.tone === "string") {
+          setCustomToneSelected(
+            !SERMON_TONES.some((value) => value === next.tone),
+          );
+        }
+        setDirty(true);
+        setSavedMessage("");
+        return {
+          message:
+            "제안한 옵션을 입력란에 반영했습니다. 내용을 확인한 뒤 저장하거나 다음 단계로 이동해 주세요.",
+        };
+      },
+    };
+  }, [dirty, draft, errors, form, ready, valid]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   if (!ready || !draft) return <SermonLoading label="옵션 입력란을 준비하는 중입니다" />;
 

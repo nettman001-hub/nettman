@@ -808,7 +808,7 @@ export function MemberDetailClient({ memberId, returnTo }: MemberDetailClientPro
           </SectionCard>
         </div>
 
-        <aside id="member-actions" className="scroll-mt-24 space-y-4 xl:sticky xl:top-8" aria-label="회원 관리 작업">
+        <aside id="member-actions" className="scroll-mt-24 space-y-4 xl:sticky xl:top-[calc(var(--app-topbar-height,0px)+2rem)]" aria-label="회원 관리 작업">
           <section className="rounded-[1.6rem] border border-[#d2c6b5] bg-[#eee5d8] p-5 shadow-[0_16px_42px_rgba(39,50,44,.06)]">
             <p className="text-[10px] font-extrabold uppercase tracking-[.17em] text-[#8d5a2e]">Member actions</p>
             <h2 className="mt-1.5 font-serif text-2xl font-bold text-[#294238]">관리 작업</h2>

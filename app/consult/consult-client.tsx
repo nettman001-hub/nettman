@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { AppPageHeading } from "../_components/app-page-heading";
+import {
+  useRegisterAiAgentPage,
+  type AiAgentPageRegistration,
+} from "../_components/ai-agent-provider";
 import type { ConsultationRecord, SermonRecord } from "../_lib/data";
 
 type LoadState = "loading" | "ready" | "error";
@@ -24,6 +29,7 @@ function formatDate(value: string) {
 }
 
 export function ConsultClient({ signedIn }: { signedIn: boolean }) {
+  const router = useRouter();
   const [sermons, setSermons] = useState<SermonRecord[]>([]);
   const [consultations, setConsultations] = useState<ConsultationRecord[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -66,6 +72,83 @@ export function ConsultClient({ signedIn }: { signedIn: boolean }) {
     () => consultations.filter((item) => item.status !== "completed").length,
     [consultations],
   );
+
+  const agentRegistration = useMemo<AiAgentPageRegistration>(() => {
+    const visibleSermons = sermons.slice(0, 20);
+    const visibleConsultations = consultations.slice(0, 20);
+    const selectedSermon = visibleSermons.find((item) => item.id === sermonId);
+    return {
+      surface: "consult",
+      title: "설교 피드백",
+      snapshot: {
+        form: {
+          loadState,
+          selectedSermon: selectedSermon
+            ? {
+                id: selectedSermon.id,
+                title: selectedSermon.title,
+                scripture: selectedSermon.scripture,
+              }
+            : null,
+          availableSermons: visibleSermons.map((item) => ({
+            id: item.id,
+            title: item.title,
+            scripture: item.scripture,
+          })),
+          requestDraft: reason.slice(0, 1_000),
+          requestLength: reason.length,
+          requestReady: Boolean(sermonId && reason.trim().length >= 10),
+        },
+        consultations: visibleConsultations.map((item) => ({
+          id: item.id,
+          sermonId: item.sermonId,
+          sermonTitle: item.sermonTitle,
+          status: item.status,
+          reason: item.reason.slice(0, 500),
+          queuePosition: item.queuePosition,
+          updatedAt: item.updatedAt,
+        })),
+        selectedConsultation: null,
+      },
+      capabilities: ["navigate", "history.open"],
+      suggestions: [
+        "작성 중인 피드백 요청 내용을 검토해줘",
+        "현재 피드백 내역의 진행 상태를 정리해줘",
+        "선택한 설교 원고를 열어줘",
+      ],
+      executeAction: async (proposal) => {
+        if (proposal.capability === "history.open") {
+          const requestedId = proposal.args.sermonId;
+          if (
+            typeof requestedId !== "string" ||
+            !visibleSermons.some((item) => item.id === requestedId)
+          ) {
+            throw new Error("현재 피드백 양식에 표시된 설교 중에서 다시 선택해 주세요.");
+          }
+          router.push(`/history/${encodeURIComponent(requestedId)}`);
+          return { message: "선택한 설교 원고를 열었습니다." };
+        }
+        if (proposal.capability === "navigate") {
+          const href = proposal.args.href;
+          const allowedConsultationHrefs = new Set(
+            visibleConsultations.map((item) => `/consult/${encodeURIComponent(item.id)}`),
+          );
+          if (
+            typeof href !== "string" ||
+            (!["/consult", "/history", "/sermon/options"].includes(href) &&
+              !allowedConsultationHrefs.has(href))
+          ) {
+            throw new Error("현재 표시된 피드백 내역이나 안전한 설교 화면을 선택해 주세요.");
+          }
+          router.push(href);
+          return { message: "요청한 화면으로 이동했습니다." };
+        }
+        throw new Error("피드백 화면에서는 이 작업을 적용할 수 없습니다.");
+      },
+    };
+  }, [consultations, loadState, reason, router, sermonId, sermons]);
+
+  useRegisterAiAgentPage(agentRegistration);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -182,7 +265,7 @@ export function ConsultClient({ signedIn }: { signedIn: boolean }) {
           )}
         </section>
 
-        <section id="request-consultation" className="self-start rounded-[1.65rem] border border-[#d2c6b5] bg-[#eee5d8] p-5 sm:p-7 lg:sticky lg:top-8" aria-labelledby="request-title">
+        <section id="request-consultation" className="self-start rounded-[1.65rem] border border-[#d2c6b5] bg-[#eee5d8] p-5 sm:p-7 lg:sticky lg:top-[calc(var(--app-topbar-height,0px)+2rem)]" aria-labelledby="request-title">
           <p className="text-[10px] font-extrabold tracking-[0.17em] text-[#8d5a2e] uppercase">New request</p>
           <h2 id="request-title" className="mt-1.5 font-serif text-2xl font-bold text-[#294238]">새 피드백 요청</h2>
           <p className="mt-2 text-sm leading-6 text-[#66716c]">완성된 원고와 특히 점검받고 싶은 부분을 알려주세요.</p>

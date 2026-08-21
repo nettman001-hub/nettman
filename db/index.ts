@@ -352,6 +352,7 @@ const protectedTableNames = [
   "user_ai_preferences",
   "global_ai_settings",
   "managed_ai_usage",
+  "ai_agent_usage",
   "sermon_resource_usage",
   "token_wallets",
   "token_transactions",
@@ -456,6 +457,13 @@ const schemaStatements = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_managed_ai_usage_user_date
     ON managed_ai_usage(user_id, usage_date)`,
+  `CREATE TABLE IF NOT EXISTS ai_agent_usage (
+    user_id TEXT NOT NULL, usage_date TEXT NOT NULL,
+    request_count INTEGER NOT NULL DEFAULT 0,
+    active_request_id TEXT, active_started_at TEXT, updated_at TEXT NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_agent_usage_user_date
+    ON ai_agent_usage(user_id, usage_date)`,
   `CREATE TABLE IF NOT EXISTS sermon_resource_usage (
     user_id TEXT NOT NULL, usage_date TEXT NOT NULL,
     request_count INTEGER NOT NULL DEFAULT 0,
@@ -638,6 +646,8 @@ const requiredSchemaColumns = [
   ["user_ai_preferences", "engine"],
   ["global_ai_settings", "api_key_encrypted"],
   ["global_ai_settings", "max_output_tokens"],
+  ["ai_agent_usage", "active_request_id"],
+  ["ai_agent_usage", "active_started_at"],
   ["sermon_drafts", "active_generation_id"],
   ["sermon_drafts", "audience_situation"],
   ["sermons", "audience_situation"],
@@ -649,6 +659,7 @@ const requiredUniqueIndexNames = [
   "idx_user_auth_sessions_user_session",
   "idx_admin_audit_logs_request",
   "idx_managed_ai_usage_user_date",
+  "idx_ai_agent_usage_user_date",
   "idx_sermon_resource_usage_user_date",
   "idx_token_transactions_reference",
   "idx_token_adjustments_idempotency",
@@ -841,6 +852,32 @@ export async function claimManagedAiQuota(
 export const SERMON_RESOURCE_DAILY_LIMIT = 20;
 const SERMON_RESOURCE_RESERVATION_LEASE_MS = 3 * 60 * 1_000;
 
+export const AI_AGENT_DAILY_LIMIT = 60;
+const AI_AGENT_RESERVATION_LEASE_MS = 2 * 60 * 1_000;
+
+export type AiAgentUsageReservation =
+  | {
+      ok: true;
+      userId: string;
+      requestId: string;
+      usageDate: string;
+      dailyLimit: number;
+      remainingToday: number;
+    }
+  | {
+      ok: false;
+      reason: "daily_limit" | "concurrent";
+      usageDate: string;
+      dailyLimit: number;
+      remainingToday: number;
+    };
+
+type AiAgentUsageRow = {
+  request_count: number;
+  active_request_id: string | null;
+  active_started_at: string | null;
+};
+
 export type SermonResourceReservation =
   | {
       ok: true;
@@ -866,6 +903,95 @@ type SermonResourceUsageRow = {
 
 function seoulUsageDate(now: Date): string {
   return new Date(now.getTime() + 9 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Counts every provider-bound attempt, including failed or cancelled ones, and
+ * grants one concurrent agent slot per user. A killed function cannot hold the
+ * slot forever because a later request may replace an expired lease, but that
+ * replacement still consumes a new daily use.
+ */
+export async function reserveAiAgentUsage(
+  db: D1Database,
+  userId: string,
+  dailyLimit = AI_AGENT_DAILY_LIMIT,
+): Promise<AiAgentUsageReservation> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const usageDate = seoulUsageDate(now);
+  const requestId = crypto.randomUUID();
+  const staleBefore = new Date(
+    now.getTime() - AI_AGENT_RESERVATION_LEASE_MS,
+  ).toISOString();
+  const result = await db
+    .prepare(
+      `INSERT INTO ai_agent_usage (
+         user_id, usage_date, request_count, active_request_id, active_started_at, updated_at
+       ) VALUES (?, ?, 1, ?, ?, ?)
+       ON CONFLICT(user_id, usage_date) DO UPDATE SET
+         request_count = ai_agent_usage.request_count + 1,
+         active_request_id = excluded.active_request_id,
+         active_started_at = excluded.active_started_at,
+         updated_at = excluded.updated_at
+       WHERE ai_agent_usage.request_count < ?
+         AND (
+           ai_agent_usage.active_request_id IS NULL
+           OR ai_agent_usage.active_started_at < ?
+         )`,
+    )
+    .bind(
+      userId,
+      usageDate,
+      requestId,
+      nowIso,
+      nowIso,
+      dailyLimit,
+      staleBefore,
+    )
+    .run();
+
+  const row = await db
+    .prepare(
+      `SELECT request_count, active_request_id, active_started_at
+       FROM ai_agent_usage WHERE user_id = ? AND usage_date = ?`,
+    )
+    .bind(userId, usageDate)
+    .first<AiAgentUsageRow>();
+  const requestCount = Math.max(0, Number(row?.request_count ?? 0));
+  const remainingToday = Math.max(0, dailyLimit - requestCount);
+
+  if ((result.meta.changes ?? 0) > 0 && row?.active_request_id === requestId) {
+    return { userId, requestId, usageDate, dailyLimit, remainingToday, ok: true };
+  }
+  return {
+    ok: false,
+    reason: requestCount >= dailyLimit ? "daily_limit" : "concurrent",
+    usageDate,
+    dailyLimit,
+    remainingToday,
+  };
+}
+
+/** Releases only the matching lease. Daily usage is intentionally never refunded. */
+export async function finishAiAgentUsage(
+  db: D1Database,
+  reservation: Extract<AiAgentUsageReservation, { ok: true }>,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE ai_agent_usage SET
+         active_request_id = NULL,
+         active_started_at = NULL,
+         updated_at = ?
+       WHERE user_id = ? AND usage_date = ? AND active_request_id = ?`,
+    )
+    .bind(
+      new Date().toISOString(),
+      reservation.userId,
+      reservation.usageDate,
+      reservation.requestId,
+    )
+    .run();
 }
 
 /**
