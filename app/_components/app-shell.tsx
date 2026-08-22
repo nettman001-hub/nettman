@@ -278,10 +278,10 @@ function GenerationChip({ run, target }: { run: SermonGenerationRunState; target
     <Link
       href={target}
       className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-[#bdd1c5] bg-[#eaf2ed] px-3 text-xs font-extrabold text-[#315246] hover:bg-[#e0ece5] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5f826f] max-[720px]:size-11 max-[720px]:justify-center max-[720px]:px-0"
-      aria-label={`설교 생성 중 ${run.completedCount}/${run.expectedCount}. 진행 화면 보기`}
+      aria-label={`새설교 생성 중 ${run.completedCount}/${run.expectedCount}. 진행 화면 보기`}
     >
       <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-[#3c735c]" />
-      <span className="max-[720px]:sr-only">생성 중 {run.completedCount}/{run.expectedCount}</span>
+      <span className="max-[720px]:sr-only">새설교 생성 중 {run.completedCount}/{run.expectedCount}</span>
     </Link>
   );
 }
