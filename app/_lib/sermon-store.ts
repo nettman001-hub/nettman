@@ -289,8 +289,55 @@ export function loadSermonDraft(id: string): SermonDraft | null {
 
 export function loadActiveSermonDraft(): SermonDraft | null {
   if (typeof window === "undefined") return null;
-  const id = window.localStorage.getItem(SERMON_ACTIVE_DRAFT_KEY);
-  return id ? loadSermonDraft(id) : null;
+  try {
+    const id = window.localStorage.getItem(SERMON_ACTIVE_DRAFT_KEY);
+    return id ? loadSermonDraft(id) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the safest screen for continuing an existing sermon draft.
+ * The navigation shell uses this instead of always sending users back to
+ * options, so leaving the sermon workspace does not make completed work look
+ * as if it disappeared.
+ */
+export function sermonDraftResumePath(draft: SermonDraft | null): string {
+  if (!draft) return "/sermon/options";
+
+  const selectedAlternativeExists = Boolean(
+    draft.selectedAlternativeId &&
+      draft.alternatives.some(
+        (alternative) => alternative.id === draft.selectedAlternativeId,
+      ),
+  );
+
+  if (
+    draft.stage === "completed" &&
+    (selectedAlternativeExists || draft.versions.length > 0)
+  ) {
+    return "/sermon/complete";
+  }
+  if (draft.stage === "editing" && selectedAlternativeExists) {
+    return "/sermon/edit";
+  }
+  if (draft.alternatives.length > 0) {
+    return "/sermon/alternatives";
+  }
+  if (
+    draft.stage === "input" ||
+    draft.stage === "generating" ||
+    draft.generation
+  ) {
+    return "/sermon/input";
+  }
+  return "/sermon/options";
+}
+
+export function sermonDraftResumeUrl(draft: SermonDraft | null): string {
+  const path = sermonDraftResumePath(draft);
+  return draft ? sermonDraftUrl(path, draft.id) : path;
 }
 
 export function persistSermonDraft(draft: SermonDraft): SermonDraft {

@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { sermonDraftUrl } from "@/app/_lib/sermon-store";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  sermonDraftResumePath,
+  sermonDraftResumeUrl,
+  sermonDraftUrl,
+} from "@/app/_lib/sermon-store";
 import {
   AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
@@ -109,6 +113,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function SermonOptions() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryDraftId = searchParams.get("draftId");
   const { draft, ready, isGuest, createDraft, updateDraft } = useSermonWorkflow();
   const {
     engineAvailability,
@@ -145,6 +151,12 @@ export function SermonOptions() {
     const next = createDraft();
     router.replace(sermonDraftUrl("/sermon/options", next.id));
   }, [createDraft, draft, ready, router]);
+
+  useEffect(() => {
+    if (!ready || !draft || queryDraftId) return;
+    if (sermonDraftResumePath(draft) === "/sermon/options") return;
+    router.replace(sermonDraftResumeUrl(draft));
+  }, [draft, queryDraftId, ready, router]);
 
   useEffect(() => {
     if (!draft || dirty) return;

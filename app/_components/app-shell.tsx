@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useEffect,
   useMemo,
@@ -28,7 +29,11 @@ import {
   subscribeSermonGenerationRun,
   type SermonGenerationRunState,
 } from "@/app/_lib/sermon-generation-runner";
-import { sermonDraftUrl } from "@/app/_lib/sermon-store";
+import {
+  loadActiveSermonDraft,
+  sermonDraftResumeUrl,
+  sermonDraftUrl,
+} from "@/app/_lib/sermon-store";
 import {
   TOKEN_WALLET_CHANGED_EVENT,
   type TokenWalletEventDetail,
@@ -152,13 +157,16 @@ function NavList({
   active,
   onNavigate,
   generatingTarget,
+  sermonResumeTarget,
   backgroundRun,
 }: {
   active: AppSection;
   onNavigate?: () => void;
   generatingTarget?: string | null;
+  sermonResumeTarget: string;
   backgroundRun?: BackgroundAiRunState | null;
 }) {
+  const router = useRouter();
   return (
     <ul className="space-y-1.5">
       {PRIMARY_NAV.map((item) => {
@@ -171,12 +179,21 @@ function NavList({
           ? generatingTarget
           : backgroundRunning
             ? backgroundRun.targetHref
-            : item.href;
+            : item.id === "sermon"
+              ? sermonResumeTarget
+              : item.href;
         return (
           <li key={item.id}>
             <Link
               href={href}
-              onClick={onNavigate}
+              onClick={(event) => {
+                onNavigate?.();
+                if (item.id !== "sermon" || generatingTarget) return;
+                const latestTarget = sermonDraftResumeUrl(loadActiveSermonDraft());
+                if (latestTarget === href) return;
+                event.preventDefault();
+                router.push(latestTarget);
+              }}
               aria-current={selected ? "page" : undefined}
               className={`group flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e] ${
                 selected
@@ -211,11 +228,13 @@ function Sidebar({
   active,
   onNavigate,
   generatingTarget,
+  sermonResumeTarget,
   backgroundRun,
 }: {
   active: AppSection;
   onNavigate?: () => void;
   generatingTarget?: string | null;
+  sermonResumeTarget: string;
   backgroundRun?: BackgroundAiRunState | null;
 }) {
   return (
@@ -244,6 +263,7 @@ function Sidebar({
           active={active}
           onNavigate={onNavigate}
           generatingTarget={generatingTarget}
+          sermonResumeTarget={sermonResumeTarget}
           backgroundRun={backgroundRun}
         />
       </nav>
@@ -439,6 +459,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
   const [tokenWallet, setTokenWallet] = useState<TokenSummary | null>(null);
   const [generationRun, setGenerationRun] = useState<SermonGenerationRunState | null>(null);
   const [backgroundRun, setBackgroundRun] = useState<BackgroundAiRunState | null>(null);
+  const [sermonResumeTarget, setSermonResumeTarget] = useState("/sermon/options");
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLElement>(null);
@@ -505,6 +526,17 @@ export function AppShell({ active, children, user }: AppShellProps) {
 
   useEffect(() => subscribeSermonGenerationRun(setGenerationRun), []);
   useEffect(() => subscribeBackgroundAiRun(setBackgroundRun), []);
+  useEffect(() => {
+    const refresh = () =>
+      setSermonResumeTarget(sermonDraftResumeUrl(loadActiveSermonDraft()));
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, [active, generationRun?.completedCount, generationRun?.status]);
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1800px)");
@@ -639,6 +671,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
           <Sidebar
             active={active}
             generatingTarget={generatingTarget}
+            sermonResumeTarget={sermonResumeTarget}
             backgroundRun={backgroundRun}
           />
         </aside>
@@ -741,6 +774,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
               active={active}
               onNavigate={() => setMenuOpen(false)}
               generatingTarget={generatingTarget}
+              sermonResumeTarget={sermonResumeTarget}
               backgroundRun={backgroundRun}
             />
           </aside>
