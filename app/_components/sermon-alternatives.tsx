@@ -29,7 +29,7 @@ import {
   SermonStateCard,
   useSermonWorkflow,
 } from "./sermon-workflow";
-import { useRegisterAiAgentPage } from "./ai-agent-provider";
+import { useAiAgent, useRegisterAiAgentPage } from "./ai-agent-provider";
 
 function excerpt(value: string): string {
   const sentences = value.match(/[^.!?。]+[.!?。]?/g) ?? [value];
@@ -39,6 +39,12 @@ function excerpt(value: string): string {
 export function SermonAlternatives() {
   const router = useRouter();
   const { draft, ready, isGuest, clientUserScope, updateDraft } = useSermonWorkflow();
+  const {
+    engineAvailabilityStatus,
+    isEngineTierAvailableFor,
+    engineAvailabilityNoticeFor,
+    reloadEngineAvailability,
+  } = useAiAgent();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -50,6 +56,8 @@ export function SermonAlternatives() {
   } | null>(null);
   const [error, setError] = useState("");
   const [guestMessage, setGuestMessage] = useState(false);
+  const [forceNormalizationRefresh, setForceNormalizationRefresh] =
+    useState(false);
   const [runState, setRunState] = useState<SermonGenerationRunState | null>(
     () => getSermonGenerationRunState(),
   );
@@ -78,9 +86,13 @@ export function SermonAlternatives() {
       setSelectedId(null);
     } else if (runState.error) {
       setError(runState.error);
+      if (runState.normalizationGrantInvalid) {
+        setForceNormalizationRefresh(true);
+      }
+      void reloadEngineAvailability();
     }
     acknowledgeSermonGenerationRun();
-  }, [draft, runState]);
+  }, [draft, reloadEngineAvailability, runState]);
 
   useEffect(() => {
     const expectedCount = isGuest ? 1 : 5;
@@ -202,6 +214,18 @@ export function SermonAlternatives() {
     );
   }
 
+  const selectedEngineReady =
+    engineAvailabilityStatus === "ready" &&
+    isEngineTierAvailableFor(draft.options.aiTier, "sermon", isGuest);
+  const engineAvailabilityNotice = engineAvailabilityNoticeFor(
+    "sermon",
+    isGuest,
+  );
+  const hasDurableGenerationProgress =
+    draft.generation?.mode === "regenerate";
+  const regenerationRequestAllowed =
+    selectedEngineReady || hasDurableGenerationProgress;
+
   const choose = () => {
     if (!selectedId) return;
     if (isGuest) {
@@ -241,6 +265,13 @@ export function SermonAlternatives() {
       draft.generation?.mode === "regenerate" &&
       draft.generation.expectedCount === 5 &&
       draft.generation.alternatives.length < 5;
+    if (!selectedEngineReady && !hasDurableGenerationProgress) {
+      setError(
+        engineAvailabilityNotice ??
+          "현재 사용할 수 있는 AI 엔진을 옵션에서 다시 선택해 주세요.",
+      );
+      return;
+    }
     if (
       !hasPendingGeneration &&
       !window.confirm(
@@ -258,13 +289,20 @@ export function SermonAlternatives() {
     try {
       let canonicalScripture = draft.scripture;
       let scriptureNormalization = draft.scriptureNormalization;
+      const durableReplayCandidate = Boolean(
+        !forceNormalizationRefresh &&
+          hasPendingGeneration &&
+          draft.generation &&
+          sermonGenerationUsesScripture(draft.generation, canonicalScripture),
+      );
       if (
         !hasActiveScriptureNormalizationGrant(
           scriptureNormalization,
           canonicalScripture,
           draft.options.aiTier,
           clientUserScope ?? null,
-        )
+        ) &&
+        !durableReplayCandidate
       ) {
         const normalized = await requestScriptureNormalization(
           {
@@ -294,6 +332,7 @@ export function SermonAlternatives() {
           grant: normalized.grant,
           grantExpiresAt: normalized.grantExpiresAt,
         };
+        setForceNormalizationRefresh(false);
       }
       const resumable = Boolean(
         hasPendingGeneration &&
@@ -323,6 +362,7 @@ export function SermonAlternatives() {
           reference: draft.reference,
         },
         generation: activeGeneration,
+        replayExisting: resumable,
         expectedCount: 5,
         clientUserScope: clientUserScope ?? null,
         isGuest,
@@ -331,6 +371,7 @@ export function SermonAlternatives() {
       });
       setSelectedId(null);
     } catch (caught) {
+      void reloadEngineAvailability();
       const normalizationGrantInvalid =
         caught instanceof SermonClientError &&
         caught.code === SCRIPTURE_NORMALIZATION_GRANT_INVALID;
@@ -346,6 +387,7 @@ export function SermonAlternatives() {
       setStopping(false);
       setGenerationStep(null);
       if (normalizationGrantInvalid) {
+        setForceNormalizationRefresh(true);
         updateDraft((current) => ({ ...current, scriptureNormalization: null }));
       }
     }
@@ -377,6 +419,30 @@ export function SermonAlternatives() {
         </div>
         <OptionBadges draft={draft} />
       </section>
+
+      {!isGuest && !selectedEngineReady && engineAvailabilityNotice ? (
+        <div
+          className="sermon-inline-alert is-warning"
+          role={engineAvailabilityStatus === "error" ? "alert" : "status"}
+        >
+          <div>
+            <strong>새 초안에 사용할 엔진을 다시 선택해 주세요</strong>
+            <p>
+              {engineAvailabilityNotice}
+              {hasDurableGenerationProgress
+                ? " 이미 저장된 단계의 결과 확인은 이어서 시도할 수 있으며, 새 AI 생성이 필요하면 서버가 중지합니다."
+                : ""}
+            </p>
+          </div>
+          {engineAvailabilityStatus === "error" ? (
+            <button type="button" onClick={() => void reloadEngineAvailability()}>
+              다시 확인
+            </button>
+          ) : (
+            <Link href={sermonDraftUrl("/sermon/options", draft.id)}>옵션에서 엔진 선택</Link>
+          )}
+        </div>
+      ) : null}
 
       {regenerating || pendingGeneration ? (
         <div className="sermon-generation-panel is-loading" role="status" aria-live="polite">
@@ -481,7 +547,11 @@ export function SermonAlternatives() {
             <strong>{error.includes("중단되었습니다") ? "새 초안 생성을 중지했습니다" : "새로 생성하지 못했습니다"}</strong>
             <p>{error}</p>
           </div>
-          <button type="button" onClick={() => void regenerate()}>
+          <button
+            type="button"
+            onClick={() => void regenerate()}
+            disabled={!isGuest && !regenerationRequestAllowed}
+          >
             {completedCount ? "남은 초안 이어 만들기" : "다시 시도"}
           </button>
         </div>
@@ -502,6 +572,7 @@ export function SermonAlternatives() {
             type="button"
             className="sermon-button is-secondary"
             onClick={() => void regenerate()}
+            disabled={!isGuest && !regenerationRequestAllowed}
           >
             {isGuest
               ? "다른 초안은 로그인 후"

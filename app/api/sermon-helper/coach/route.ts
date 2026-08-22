@@ -20,7 +20,10 @@ import {
   getRequestUserResponse,
   unauthorizedResponse,
 } from "@/app/_lib/auth-user";
-import { getManagedAiRequestConfig } from "@/app/_lib/managed-ai-engines";
+import {
+  getManagedAiRequestConfigResolution,
+  managedAiEngineAccessErrorBody,
+} from "@/app/_lib/managed-ai-engines";
 import { UserAiProviderError } from "@/app/_lib/openai-sermons";
 import { getSiteOrigin } from "@/app/_lib/supabase/config";
 import {
@@ -330,18 +333,26 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "설교도우미 작업을 찾을 수 없습니다." }, 404);
   }
 
-  const ai = await getManagedAiRequestConfig(db, input.tier).catch(() => undefined);
-  if (!ai) {
+  let aiResolution;
+  try {
+    aiResolution = await getManagedAiRequestConfigResolution(db, input.tier, "coach");
+  } catch {
     const racedResponse = await durablePreflightResponse();
     if (racedResponse) return racedResponse;
     return json(
       {
-        error: "선택한 AI 코치 엔진이 아직 관리자가 사용할 수 있도록 설정되지 않았습니다.",
-        code: "coach_engine_unavailable",
+        error: "AI 엔진 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        code: "ai_engine_status_unavailable",
       },
-      409,
+      503,
     );
   }
+  if (aiResolution.status !== "ready") {
+    const racedResponse = await durablePreflightResponse();
+    if (racedResponse) return racedResponse;
+    return json(managedAiEngineAccessErrorBody(aiResolution), 409);
+  }
+  const ai = aiResolution.config;
   // The helper sends pastoral notes and source excerpts. Custom endpoints fail
   // closed until outbound traffic uses a DNS-pinning proxy or hostname allowlist.
   if (ai.engine === "custom") {

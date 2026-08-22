@@ -8,7 +8,10 @@ import {
   getRequestUserResponse,
   unauthorizedResponse,
 } from "@/app/_lib/auth-user";
-import { getManagedAiRequestConfig } from "@/app/_lib/managed-ai-engines";
+import {
+  getManagedAiRequestConfigResolution,
+  managedAiEngineAccessErrorBody,
+} from "@/app/_lib/managed-ai-engines";
 import { UserAiProviderError } from "@/app/_lib/openai-sermons";
 import { getSiteOrigin } from "@/app/_lib/supabase/config";
 import {
@@ -130,13 +133,22 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "AI 에이전트 저장소를 준비하지 못했습니다." }, 503);
   }
 
-  const ai = await getManagedAiRequestConfig(db, input.tier).catch(() => undefined);
-  if (!ai) {
+  let aiResolution;
+  try {
+    aiResolution = await getManagedAiRequestConfigResolution(db, input.tier, "agent");
+  } catch {
     return json(
-      { error: "선택한 AI 에이전트 엔진이 아직 관리자가 사용할 수 있도록 설정되지 않았습니다." },
-      409,
+      {
+        error: "AI 엔진 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        code: "ai_engine_status_unavailable",
+      },
+      503,
     );
   }
+  if (aiResolution.status !== "ready") {
+    return json(managedAiEngineAccessErrorBody(aiResolution), 409);
+  }
+  const ai = aiResolution.config;
   // Custom endpoints remain available to the existing sermon features. The
   // server-side agent sends broad page context, so it fails closed until custom
   // traffic uses a DNS-pinning egress proxy or a production hostname allowlist.

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useAiAgent } from "@/app/_components/ai-agent-provider";
 import type {
   AdminAiSettingView,
   AdminAiSettingsInitialState,
@@ -128,6 +129,7 @@ function initialFormState(initialState: AdminAiSettingsInitialState): {
 export function AdminAiEngineSettingsForm({
   initialState,
 }: AdminAiEngineSettingsFormProps) {
+  const { reloadEngineAvailability } = useAiAgent();
   const [initial] = useState(() => initialFormState(initialState));
   const [settings, setSettings] = useState<DraftSetting[]>(initial.settings);
   const [encryptionConfigured, setEncryptionConfigured] = useState(
@@ -282,6 +284,7 @@ export function AdminAiEngineSettingsForm({
         type: "success",
         message: "세 가지 AI 엔진 설정과 API 키를 저장했습니다.",
       });
+      void reloadEngineAvailability();
     } catch (caught) {
       setSaveFeedback({
         type: "error",
@@ -401,6 +404,9 @@ export function AdminAiEngineSettingsForm({
                   ? "암호화 저장됨"
                   : "서버 환경변수 연결됨"
                 : "미등록";
+          const enabledInputId = `admin-ai-enabled-${setting.tier}`;
+          const enabledStatusId = `${enabledInputId}-status`;
+          const enabledHelpId = `${enabledInputId}-help`;
 
           return (
             <article
@@ -416,23 +422,46 @@ export function AdminAiEngineSettingsForm({
                     {meta.description} · 최소 {SERMON_TOKEN_MINIMUM_COSTS[setting.tier]}토큰부터
                   </p>
                 </div>
-                <label className="flex items-center gap-2 text-sm font-extrabold text-[#34483f]">
-                  <input
-                    type="checkbox"
-                    checked={setting.preferences.enabled}
-                    onChange={(event) =>
-                      updateSetting(setting.tier, (current) => ({
-                        ...current,
-                        preferences: {
-                          ...current.preferences,
-                          enabled: event.target.checked,
-                        },
-                      }))
-                    }
-                    className="size-4 accent-[#315746]"
-                  />
-                  사용
-                </label>
+                <div className="max-w-xs">
+                  <label
+                    htmlFor={enabledInputId}
+                    className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-[#d8d3ca] bg-white px-3 text-sm font-extrabold text-[#34483f] focus-within:ring-2 focus-within:ring-[#b97838]"
+                  >
+                    <input
+                      id={enabledInputId}
+                      type="checkbox"
+                      role="switch"
+                      checked={setting.preferences.enabled}
+                      aria-describedby={`${enabledStatusId} ${enabledHelpId}`}
+                      onChange={(event) =>
+                        updateSetting(setting.tier, (current) => ({
+                          ...current,
+                          preferences: {
+                            ...current.preferences,
+                            enabled: event.target.checked,
+                          },
+                        }))
+                      }
+                      className="size-5 accent-[#315746]"
+                    />
+                    <span>
+                      사용자에게 제공
+                      <small
+                        id={enabledStatusId}
+                        className={`ml-2 font-extrabold ${
+                          setting.preferences.enabled
+                            ? "text-[#2f6948]"
+                            : "text-[#8b5b4d]"
+                        }`}
+                      >
+                        {setting.preferences.enabled ? "활성" : "비활성화"}
+                      </small>
+                    </span>
+                  </label>
+                  <p id={enabledHelpId} className="mt-2 text-[10px] font-semibold leading-4 text-[#737e78]">
+                    비활성화하면 저장 후 사용자 선택 목록에서 숨깁니다. 변경은 아래 저장 버튼을 눌러야 반영됩니다.
+                  </p>
+                </div>
               </div>
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2">

@@ -33,11 +33,19 @@ import {
   usesFragmentedSermonGeneration,
 } from "@/app/_lib/ai-config";
 import {
-  getManagedAiRequestConfigs,
+  getManagedAiEngineRuntime,
+  managedAiEngineAccessErrorBody,
   type ManagedAiRequestConfigs,
+  type ManagedAiSignatureConfigs,
 } from "@/app/_lib/managed-ai-engines";
 import { isAiEngineTier } from "@/app/_lib/ai-engine-tiers";
 import { verifyScriptureNormalizationGrant } from "@/app/_lib/scripture-normalization-grant";
+import {
+  sermonGenerationLegacySignature as generationLegacySignature,
+  sermonGenerationRequestSignature as generationRequestSignature,
+  sermonGenerationRunRequestMatches as generationRunRequestMatches,
+  sermonGenerationSignature as generationSignature,
+} from "@/app/_lib/sermon-generation-signature";
 import { loadSermonPreacherContext } from "@/app/_lib/sermon-preacher-context";
 import { ensureDatabase, getD1 } from "@/db";
 import {
@@ -123,62 +131,6 @@ function validScriptureInput(value: string): boolean {
 
 function validGenerationId(value: string): boolean {
   return /^[A-Za-z0-9_-]{8,100}$/.test(value);
-}
-
-async function generationSignature(
-  managedAiConfigs: ManagedAiRequestConfigs,
-  request: GenerateSermonsRequest,
-): Promise<string> {
-  const payload = JSON.stringify({
-    aiSchedule: request.options.aiTiers.map((tier) => {
-      const ai = managedAiConfigs[tier];
-      return ai
-        ? {
-            source: "administrator",
-            tier,
-            engine: ai.engine,
-            endpoint: ai.endpoint,
-            model: ai.model,
-            reasoningEffort: ai.reasoningEffort,
-            maxOutputTokens: ai.maxOutputTokens,
-          }
-        : { source: "local", tier };
-    }),
-    scripture: request.scripture,
-    options: {
-      topic: request.options.topic,
-      aiTier: request.options.aiTier,
-      aiTiers: request.options.aiTiers,
-      duration: request.options.duration,
-      targetCharacters: request.options.targetCharacters,
-      tone: request.options.tone,
-      sermonType: request.options.sermonType,
-      audience: request.options.audience,
-      audienceSituation: request.options.audienceSituation,
-      pointCount: request.options.pointCount,
-      referenceMode: request.options.referenceMode,
-    },
-    reference: {
-      url: request.reference.url,
-      notes: request.reference.notes,
-      file: request.reference.file
-        ? {
-            name: request.reference.file.name,
-            type: request.reference.file.type,
-            size: request.reference.file.size,
-            text: request.reference.file.text,
-          }
-        : null,
-    },
-    preacherContext: request.preacherContext ?? null,
-  });
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(payload),
-  );
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
 }
 
 function parseGenerationAlternative(value: string): SermonAlternative | null {
@@ -593,13 +545,37 @@ export async function GET(request: Request): Promise<Response> {
   const tier = new URL(request.url).searchParams.get("aiTier");
   if (!isAiEngineTier(tier)) return error("사용할 AI 엔진 등급을 다시 선택해 주세요.");
   try {
-    const config = (await getManagedAiRequestConfigs(getD1()))[tier];
+    const runtimeState = await getManagedAiEngineRuntime(getD1());
+    const config = runtimeState.configs[tier];
+    const availability = runtimeState.tiers.find((entry) => entry.tier === tier);
+    if (
+      !config &&
+      !(
+        process.env.NODE_ENV !== "production" &&
+        user.isDemo &&
+        tier === "basic"
+      )
+    ) {
+      return Response.json(
+        managedAiEngineAccessErrorBody({
+          status: availability?.enabled ? "unavailable" : "disabled",
+          tier,
+        }),
+        { status: 409, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     return Response.json(
       { fragmented: usesFragmentedSermonGeneration(config) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch {
-    return error("AI 엔진의 생성 방식을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.", 503);
+    return Response.json(
+      {
+        error: "AI 엔진의 생성 방식을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        code: "ai_engine_status_unavailable",
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
   }
 }
 
@@ -807,6 +783,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!input.draftId || typeof input.draftId !== "string") {
     return error("설교 작업 식별자가 없습니다.");
   }
+  const draftId = input.draftId;
   if (!options || !isSermonTitleValue(options.topic)) {
     return error("설교 제목을 2자 이상 100자 이하로 입력해 주세요.");
   }
@@ -856,55 +833,128 @@ export async function POST(request: Request): Promise<Response> {
   if (input.ai !== undefined) {
     return error("AI 엔진은 관리자만 설정할 수 있습니다.", 403);
   }
-  const db = user ? getD1() : null;
-  const managedAiConfigs: ManagedAiRequestConfigs = user
-    ? await getManagedAiRequestConfigs(db)
-    : { basic: undefined, advanced: undefined, reasoning: undefined };
+  const connectedDb = getD1();
+  const db = user ? connectedDb : null;
   const selectedAiTier = aiTiers[0];
-  if (user && selectedAiTier !== "basic" && !managedAiConfigs[selectedAiTier]) {
-    return error(
-      "선택한 AI 엔진은 아직 관리자가 사용할 수 있도록 설정하지 않았습니다.",
-      409,
-    );
+  let managedAiConfigs: ManagedAiRequestConfigs = {
+    basic: undefined,
+    advanced: undefined,
+    reasoning: undefined,
+  };
+  let managedAiSignatureConfigs: ManagedAiSignatureConfigs = {
+    basic: undefined,
+    advanced: undefined,
+    reasoning: undefined,
+  };
+  let managedAiTiers: Awaited<ReturnType<typeof getManagedAiEngineRuntime>>["tiers"] = [];
+  let managedAiRuntimeUnavailable = false;
+  try {
+    const runtimeState = await getManagedAiEngineRuntime(connectedDb);
+    managedAiConfigs = runtimeState.configs;
+    managedAiSignatureConfigs = runtimeState.signatureConfigs;
+    managedAiTiers = runtimeState.tiers;
+  } catch {
+    managedAiRuntimeUnavailable = true;
   }
   const userAi = user ? managedAiConfigs[selectedAiTier] : undefined;
-  if (user && userAi) {
-    const normalizationGrant =
-      typeof input.scriptureNormalizationGrant === "string"
-        ? input.scriptureNormalizationGrant
-        : "";
-    if (
-      !verifyScriptureNormalizationGrant({
-        token: normalizationGrant,
-        subject: user.id,
-        draftId: input.draftId,
-        aiTier: selectedAiTier,
-        scripture,
-        providerApiKey: userAi.apiKey,
-      })
-    ) {
-      return error(
-        "성경 본문 AI 확인 증표가 없거나 만료되었습니다. 본문 입력 화면에서 다시 확인해 주세요.",
-        409,
-        "scripture_normalization_grant_invalid",
+
+  const providerEngineGate = (): Response | null => {
+    if (!user) {
+      // Anonymous generation is a local, one-time basic preview. Production
+      // still honors the administrator's persisted basic-engine switch.
+      if (process.env.NODE_ENV !== "production") return null;
+      if (managedAiRuntimeUnavailable) {
+        return Response.json(
+          {
+            error: "AI 엔진 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            code: "ai_engine_status_unavailable",
+          },
+          { status: 503 },
+        );
+      }
+      if (selectedAiTier !== "basic") {
+        return error(
+          "비회원 미리보기는 기본 엔진으로만 시작할 수 있습니다.",
+          403,
+          "guest_preview_basic_only",
+        );
+      }
+      const basic = managedAiTiers.find((entry) => entry.tier === "basic");
+      if (!basic?.enabled || !basic.availableFor.sermon) {
+        return Response.json(
+          managedAiEngineAccessErrorBody({ status: "disabled", tier: "basic" }),
+          { status: 409 },
+        );
+      }
+      return null;
+    }
+
+    if (managedAiRuntimeUnavailable) {
+      return Response.json(
+        {
+          error: "AI 엔진 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+          code: "ai_engine_status_unavailable",
+        },
+        { status: 503 },
       );
     }
-  }
-  if (
-    generationStep !== undefined &&
-    !usesFragmentedSermonGeneration(userAi)
-  ) {
-    return error("세부 단계 생성은 로컬 LLM(OpenAI 호환) 연결에서만 사용할 수 있습니다.");
-  }
-  if (
-    usesFragmentedSermonGeneration(userAi) &&
-    (!splitGeneration || generationStep === undefined)
-  ) {
-    return error(
-      "로컬 LLM 생성 방식이 변경되었습니다. 저장된 진행 상태부터 다시 시도해 주세요.",
-      409,
-    );
-  }
+    const allowLocalDemoBasic =
+      process.env.NODE_ENV !== "production" &&
+      user.isDemo &&
+      selectedAiTier === "basic";
+    const availability = managedAiTiers.find((entry) => entry.tier === selectedAiTier);
+    if (
+      (!userAi || !availability?.availableFor.sermon) &&
+      !allowLocalDemoBasic
+    ) {
+      return Response.json(
+        managedAiEngineAccessErrorBody({
+          status: availability?.enabled ? "unavailable" : "disabled",
+          tier: selectedAiTier,
+        }),
+        { status: 409 },
+      );
+    }
+    if (userAi) {
+      const normalizationGrant =
+        typeof input.scriptureNormalizationGrant === "string"
+          ? input.scriptureNormalizationGrant
+          : "";
+      if (
+        !verifyScriptureNormalizationGrant({
+          token: normalizationGrant,
+          subject: user.id,
+          draftId,
+          aiTier: selectedAiTier,
+          scripture,
+          providerApiKey: userAi.apiKey,
+        })
+      ) {
+        return error(
+          "성경 본문 AI 확인 증표가 없거나 만료되었습니다. 본문 입력 화면에서 다시 확인해 주세요.",
+          409,
+          "scripture_normalization_grant_invalid",
+        );
+      }
+    }
+    if (generationStep !== undefined && !usesFragmentedSermonGeneration(userAi)) {
+      return error(
+        "세부 단계 생성은 로컬 LLM(OpenAI 호환) 연결에서만 사용할 수 있습니다.",
+        400,
+        "sermon_generation_not_fragmented",
+      );
+    }
+    if (
+      usesFragmentedSermonGeneration(userAi) &&
+      (!splitGeneration || generationStep === undefined)
+    ) {
+      return error(
+        "로컬 LLM 생성 방식이 변경되었습니다. 저장된 진행 상태부터 다시 시도해 주세요.",
+        409,
+      );
+    }
+    return null;
+  };
 
   const reference = input.reference ?? { url: "", notes: "", file: null };
   if (reference.url) {
@@ -948,7 +998,7 @@ export async function POST(request: Request): Promise<Response> {
   const duration = options.duration as SermonDuration;
   const pointCount = options.pointCount as SermonPointCount;
   const normalized: GenerateSermonsRequest = {
-    draftId: input.draftId,
+    draftId,
     ...(generationId ? { generationId } : {}),
     ...(position ? { alternativePosition: position } : {}),
     existingTitles,
@@ -1040,7 +1090,6 @@ export async function POST(request: Request): Promise<Response> {
       }
 
       if (splitGeneration && generationId && position) {
-        const signature = await generationSignature(managedAiConfigs, normalized);
         generationRun = await db
           .prepare(
             `SELECT id, draft_id, user_id, expected_count, ai_signature,
@@ -1054,6 +1103,12 @@ export async function POST(request: Request): Promise<Response> {
           if (position !== 1) {
             return error("첫 번째 초안부터 생성을 다시 이어 주세요.", 409);
           }
+          const engineGate = providerEngineGate();
+          if (engineGate) return engineGate;
+          const signature = await generationSignature(
+            managedAiSignatureConfigs,
+            normalized,
+          );
           const now = new Date().toISOString();
           const managedAllowed = 0;
           await db.batch([
@@ -1186,13 +1241,21 @@ export async function POST(request: Request): Promise<Response> {
         ) {
           return error("다른 계정이나 설교 작업의 생성 묶음에는 접근할 수 없습니다.", 403);
         }
-        if (
-          generationRun.expected_count !== expectedCount ||
-          generationRun.ai_signature !== signature
-        ) {
-          return error("생성 도중 AI 설정이 변경되었습니다. 새 초안 묶음으로 다시 시작해 주세요.", 409);
+        const requestSignature = await generationRequestSignature(normalized);
+        const requestSignatureMatch = generationRunRequestMatches(
+          generationRun.ai_signature,
+          requestSignature,
+        );
+        if (requestSignatureMatch === false) {
+          return error("저장된 생성 요청과 현재 설교 내용이 다릅니다. 새 초안 묶음으로 다시 시작해 주세요.", 409);
         }
-
+        if (
+          requestSignatureMatch === null &&
+          generationRun.ai_signature !==
+            (await generationLegacySignature(managedAiSignatureConfigs, normalized))
+        ) {
+          return error("저장된 생성 요청과 현재 설교 내용이 다릅니다. 새 초안 묶음으로 다시 시작해 주세요.", 409);
+        }
         const draftState = await db
           .prepare(
             "SELECT user_id, active_generation_id FROM sermon_drafts WHERE id = ?",
@@ -1282,7 +1345,7 @@ export async function POST(request: Request): Promise<Response> {
               complete: false,
               provider:
                 acceptedPartProvider ??
-                (generationRun.provider === "pending" ? userAi!.engine : generationRun.provider),
+                (generationRun.provider === "pending" ? "persisted" : generationRun.provider),
               model: acceptedPartModel ?? generationRun.model,
               reasoningEffort:
                 acceptedPartReasoningEffort ?? generationRun.reasoning_effort,
@@ -1328,6 +1391,21 @@ export async function POST(request: Request): Promise<Response> {
               : {}),
           });
         }
+        // Everything above is a replay/finalization of already persisted
+        // output. Only a request that will call the provider crosses the
+        // current administrator engine gate and current provider signature.
+        const engineGate = providerEngineGate();
+        if (engineGate) return engineGate;
+        const signature = await generationSignature(
+          managedAiSignatureConfigs,
+          normalized,
+        );
+        if (
+          generationRun.expected_count !== expectedCount ||
+          generationRun.ai_signature !== signature
+        ) {
+          return error("생성 도중 AI 설정이 변경되었습니다. 새 초안 묶음으로 다시 시작해 주세요.", 409);
+        }
         if (
           items.length !== position - 1 ||
           items.some((item, index) => item.position !== index + 1)
@@ -1344,6 +1422,9 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
   }
+
+  const engineGate = providerEngineGate();
+  if (engineGate) return engineGate;
 
   let positionLeaseToken: string | null = null;
   if (

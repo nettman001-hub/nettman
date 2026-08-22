@@ -14,6 +14,8 @@ import { notifyTokenWalletChanged } from "./token-wallet-events.ts";
 export const GENERATION_REQUEST_TIMEOUT_MS = 250_000;
 export const SCRIPTURE_NORMALIZATION_GRANT_INVALID =
   "scripture_normalization_grant_invalid";
+const SERMON_GENERATION_NOT_FRAGMENTED =
+  "sermon_generation_not_fragmented";
 
 export class SermonClientError extends Error {
   readonly code: string | null;
@@ -156,6 +158,13 @@ export async function requestSermonGenerationSequence(
   options: {
     generationId: string;
     expectedCount: 1 | 5;
+    /**
+     * The generation id may already have persisted server output even when
+     * the browser missed the response and has no local alternatives yet.
+     * Start with a replay-safe fragment probe instead of the engine-status
+     * GET so an administrator toggle cannot hide already-paid output.
+     */
+    replayExisting?: boolean;
     completed?: SermonAlternative[];
     completedParts?: SermonGenerationPart[];
     signal?: AbortSignal;
@@ -170,16 +179,19 @@ export async function requestSermonGenerationSequence(
   },
 ): Promise<GenerateSermonsResponse> {
   const clientUserScope = options.clientUserScope ?? null;
-  const useFragmentedGeneration = await usesFragmentedGeneration(request, options.signal);
   const alternatives = [...(options.completed ?? [])];
   if (alternatives.some((alternative) => alternative.scripture !== request.scripture)) {
     throw new Error(
       "저장된 초안의 본문 범위가 현재 본문과 달라 새 초안 묶음으로 다시 시작해 주세요.",
     );
   }
-  let parts = useFragmentedGeneration
-    ? (options.completedParts ?? []).filter(isGenerationPart)
-    : [];
+  const persistedParts = (options.completedParts ?? []).filter(isGenerationPart);
+  let useFragmentedGeneration =
+    options.replayExisting === true
+      ? true
+      : await usesFragmentedGeneration(request, options.signal);
+  let replayModeProbe = options.replayExisting === true && persistedParts.length === 0;
+  let parts = useFragmentedGeneration ? persistedParts : [];
   let latest: GenerateSermonsResponse = {
     alternatives,
     provider: "local",
@@ -220,6 +232,23 @@ export async function requestSermonGenerationSequence(
           clientUserScope,
         );
         throwIfGenerationAborted(options.signal);
+        if (
+          replayModeProbe &&
+          generationStep === 1 &&
+          result.alternatives.length === 1 &&
+          isSermonAlternative(result.alternatives[0]) &&
+          (result.position === undefined || result.position === position) &&
+          result.generationStep === undefined
+        ) {
+          // Older persisted hosted-engine responses may not echo fragment
+          // metadata. A complete, validated alternative is still a replay;
+          // accept it without consulting the now-disabled engine.
+          useFragmentedGeneration = false;
+          replayModeProbe = false;
+          generationStep = undefined;
+          positionParts = [];
+          parts = [];
+        }
         if (generationStep) {
           const stepCount = result.generationStepCount;
           if (
@@ -272,6 +301,27 @@ export async function requestSermonGenerationSequence(
         options.onProgress?.([...alternatives], alternatives.length);
         break;
       } catch (caught) {
+        if (
+          replayModeProbe &&
+          generationStep === 1 &&
+          caught instanceof SermonClientError &&
+          caught.code === SERMON_GENERATION_NOT_FRAGMENTED
+        ) {
+          // The probe is rejected before a provider call. Resolve the live
+          // mode only after the server proves that no fragment replay exists,
+          // then continue the same durable generation id without double work.
+          useFragmentedGeneration = await usesFragmentedGeneration(
+            request,
+            options.signal,
+          );
+          replayModeProbe = false;
+          if (!useFragmentedGeneration) {
+            generationStep = undefined;
+            positionParts = [];
+            parts = [];
+            continue;
+          }
+        }
         if (
           caught instanceof DOMException &&
           caught.name === "AbortError" &&

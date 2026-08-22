@@ -15,7 +15,6 @@ import {
   type AiAgentSurface,
 } from "@/app/_lib/ai-agent-contract";
 import {
-  AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
 } from "@/app/_lib/ai-engine-tiers";
 
@@ -130,6 +129,11 @@ export function AiAgentPanel({
     messages,
     tier,
     setTier,
+    engineAvailabilityStatus,
+    availableEngineTiersFor,
+    isEngineTierAvailableFor,
+    engineAvailabilityNoticeFor,
+    reloadEngineAvailability,
     pending,
     error,
     proposalStates,
@@ -144,6 +148,14 @@ export function AiAgentPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState("");
   const docked = useDockedPanel();
+  const selectableEngineTiers = useMemo(
+    () => availableEngineTiersFor("agent"),
+    [availableEngineTiersFor],
+  );
+  const engineAvailabilityNotice = engineAvailabilityNoticeFor("agent");
+  const engineReady =
+    engineAvailabilityStatus === "ready" &&
+    isEngineTierAvailableFor(tier, "agent");
 
   useEffect(() => {
     if (!isOpen) return;
@@ -197,7 +209,7 @@ export function AiAgentPanel({
 
   async function submit() {
     const content = draft.trim();
-    if (!content || pending || !authenticated) return;
+    if (!content || pending || !authenticated || !engineReady) return;
     setDraft("");
     await sendMessage(content);
   }
@@ -329,7 +341,7 @@ export function AiAgentPanel({
                           key={suggestion}
                           type="button"
                           onClick={() => void sendMessage(suggestion)}
-                          disabled={pending || !page}
+                          disabled={pending || !page || !engineReady}
                           className="min-h-12 rounded-xl border border-white/10 bg-white/7 px-4 py-3 text-left text-sm font-semibold leading-5 text-white transition-colors hover:bg-white/12 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d9c976] disabled:opacity-45"
                         >
                           {suggestion}
@@ -419,25 +431,59 @@ export function AiAgentPanel({
                   {error}
                 </p>
               ) : null}
+              {engineAvailabilityNotice ? (
+                <div
+                  id="ai-agent-engine-status"
+                  className="mb-3 flex items-start justify-between gap-3 rounded-xl border border-[#e4c17f]/25 bg-white/7 px-3 py-2.5 text-xs font-semibold leading-5 text-white/80"
+                  role={engineAvailabilityStatus === "error" ? "alert" : "status"}
+                >
+                  <span>{engineAvailabilityNotice}</span>
+                  {engineAvailabilityStatus === "error" ? (
+                    <button
+                      type="button"
+                      onClick={() => void reloadEngineAvailability()}
+                      className="min-h-9 shrink-0 rounded-lg border border-white/20 px-3 text-[10px] font-extrabold text-white hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d9c976]"
+                    >
+                      다시 확인
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               <label htmlFor="ai-agent-tier" className="sr-only">
                 AI 엔진 선택
               </label>
               <div className="flex items-center gap-2">
                 <select
                   id="ai-agent-tier"
-                  value={tier}
+                  value={engineReady ? tier : ""}
                   onChange={(event) => setTier(event.target.value as typeof tier)}
-                  disabled={pending}
+                  disabled={
+                    pending ||
+                    engineAvailabilityStatus !== "ready" ||
+                    !selectableEngineTiers.length
+                  }
+                  aria-describedby={engineAvailabilityNotice ? "ai-agent-engine-status" : undefined}
                   className="h-9 !min-h-9 min-w-0 flex-1 rounded-lg border border-white/15 !bg-[#1b362c] !px-2.5 !py-0 text-sm font-bold !text-white outline-none focus:border-[#e4c17f] focus:ring-2 focus:ring-[#e4c17f]/25 disabled:opacity-50"
                 >
-                  {AI_ENGINE_TIERS.map((engineTier) => (
+                  {!engineReady ? (
+                    <option value="" disabled className="bg-[#1b362c] text-white">
+                      {engineAvailabilityStatus === "loading"
+                        ? "엔진 확인 중"
+                        : engineAvailabilityStatus === "error"
+                          ? "엔진 확인 필요"
+                          : "사용 가능한 엔진 없음"}
+                    </option>
+                  ) : null}
+                  {selectableEngineTiers.map((engineTier) => (
                     <option key={engineTier} value={engineTier} className="bg-[#1b362c] text-white">
                       {AI_ENGINE_TIER_META[engineTier].label}
                     </option>
                   ))}
                 </select>
                 <span className="shrink-0 rounded-full bg-[#e4c17f]/14 px-2 py-1 text-[10px] font-extrabold text-[#f0d59f]">
-                  메시지 {AI_AGENT_MESSAGE_COSTS[tier]}토큰
+                  {engineReady
+                    ? `메시지 ${AI_AGENT_MESSAGE_COSTS[tier]}토큰`
+                    : "엔진 확인 필요"}
                 </span>
               </div>
               <label htmlFor="ai-agent-message" className="sr-only">
@@ -460,7 +506,7 @@ export function AiAgentPanel({
                   }}
                   placeholder="현재 화면에 관해 묻거나, 고쳐 달라고 요청하세요"
                   rows={2}
-                  disabled={pending || !page}
+                  disabled={pending || !page || !engineReady}
                   className="!max-h-28 !min-h-14 flex-1 resize-none border-0 !bg-transparent !px-2 !py-1.5 text-sm leading-6 !text-white placeholder:text-white/45 focus:shadow-none focus:outline-none disabled:opacity-50"
                 />
                 {pending ? (
@@ -476,7 +522,7 @@ export function AiAgentPanel({
                   <button
                     type="button"
                     onClick={() => void submit()}
-                    disabled={!draft.trim() || !page}
+                    disabled={!draft.trim() || !page || !engineReady}
                     className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#6759e8] text-lg font-black text-white hover:bg-[#7669ef] focus:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:cursor-not-allowed disabled:opacity-40"
                     aria-label="AI 에이전트에게 전송"
                   >

@@ -35,7 +35,7 @@ import {
   SermonStateCard,
   useSermonWorkflow,
 } from "./sermon-workflow";
-import { useRegisterAiAgentPage } from "./ai-agent-provider";
+import { useAiAgent, useRegisterAiAgentPage } from "./ai-agent-provider";
 
 const SUPPORTED_EXTENSIONS = ["pdf", "docx", "txt"];
 
@@ -61,6 +61,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function SermonInput() {
   const router = useRouter();
   const { draft, ready, isGuest, clientUserScope, updateDraft } = useSermonWorkflow();
+  const {
+    engineAvailabilityStatus,
+    isEngineTierAvailableFor,
+    engineAvailabilityNoticeFor,
+    reloadEngineAvailability,
+  } = useAiAgent();
   const [scripture, setScripture] = useState("");
   const [clarifyState, setClarifyState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [clarifyQuestions, setClarifyQuestions] = useState<Array<{ heading: string; content: string }>>([]);
@@ -84,6 +90,8 @@ export function SermonInput() {
   } | null>(null);
   const [error, setError] = useState("");
   const [fileError, setFileError] = useState("");
+  const [forceNormalizationRefresh, setForceNormalizationRefresh] =
+    useState(false);
   const hydratedId = useRef<string | null>(null);
   const scriptureConfirmationDialogRef = useRef<HTMLDivElement>(null);
   const scriptureConfirmationButtonRef = useRef<HTMLButtonElement>(null);
@@ -95,6 +103,7 @@ export function SermonInput() {
     if (!draft || hydratedId.current === draft.id) return;
     hydratedId.current = draft.id;
     setPendingScriptureConfirmation(null);
+    setForceNormalizationRefresh(false);
     setScripture(draft.scripture);
     setReference(draft.reference);
   }, [draft]);
@@ -159,9 +168,15 @@ export function SermonInput() {
       router.push(sermonDraftUrl("/sermon/alternatives", draft.id));
       return;
     }
-    if (runState.error) setError(runState.error);
+    if (runState.error) {
+      setError(runState.error);
+      if (runState.normalizationGrantInvalid) {
+        setForceNormalizationRefresh(true);
+      }
+      void reloadEngineAvailability();
+    }
     acknowledgeSermonGenerationRun();
-  }, [draft, runState, router]);
+  }, [draft, reloadEngineAvailability, runState, router]);
 
   useEffect(() => {
     const expectedCount = isGuest ? 1 : 5;
@@ -179,7 +194,21 @@ export function SermonInput() {
     [scripture],
   );
   const urlValid = validUrl(reference.url);
-  const canGenerate = scriptureValid && urlValid && !generating;
+  const selectedEngineReady = Boolean(
+    draft &&
+      engineAvailabilityStatus === "ready" &&
+      isEngineTierAvailableFor(draft.options.aiTier, "sermon", isGuest),
+  );
+  const engineAvailabilityNotice = engineAvailabilityNoticeFor(
+    "sermon",
+    isGuest,
+  );
+  const hasDurableGenerationProgress =
+    draft?.generation?.mode === "initial";
+  const generationRequestAllowed =
+    selectedEngineReady || hasDurableGenerationProgress;
+  const canGenerate =
+    scriptureValid && urlValid && !generating && generationRequestAllowed;
 
   const agentRegistration = useMemo(() => {
     if (!ready || !draft) return null;
@@ -369,6 +398,15 @@ export function SermonInput() {
     const expectedCount: 1 | 5 = isGuest ? 1 : 5;
     const controller = new AbortController();
     try {
+      const durableReplayCandidate = Boolean(
+        !forceNormalizationRefresh &&
+          draft.generation?.mode === "initial" &&
+          draft.generation.expectedCount === expectedCount &&
+          draft.generation.alternatives.length < expectedCount &&
+          draft.scripture === scriptureInput &&
+          sermonGenerationUsesScripture(draft.generation, scriptureInput) &&
+          JSON.stringify(draft.reference) === JSON.stringify(cleanReference),
+      );
       const confirmedNormalization =
         pendingScriptureConfirmation?.input === scriptureInput &&
         pendingScriptureConfirmation.aiTier === draft.options.aiTier &&
@@ -394,8 +432,18 @@ export function SermonInput() {
         )
           ? draft.scriptureNormalization
           : null;
-      const reusableNormalization = confirmedNormalization ?? storedNormalization;
-      setNormalizingScripture(!reusableNormalization);
+      const replayNormalization =
+        durableReplayCandidate &&
+        draft.scriptureNormalization?.canonical === scriptureInput &&
+        draft.scriptureNormalization.aiTier === draft.options.aiTier &&
+        draft.scriptureNormalization.clientUserScope === (clientUserScope ?? null) &&
+        (!draft.scriptureNormalization.normalizedByAi ||
+          Boolean(draft.scriptureNormalization.confirmedByUserAt))
+          ? draft.scriptureNormalization
+          : null;
+      const reusableNormalization =
+        confirmedNormalization ?? storedNormalization ?? replayNormalization;
+      setNormalizingScripture(!reusableNormalization && !durableReplayCandidate);
       const normalizationResponse = reusableNormalization
         ? {
             scripture: reusableNormalization.canonical,
@@ -403,6 +451,13 @@ export function SermonInput() {
             grant: reusableNormalization.grant,
             grantExpiresAt: reusableNormalization.grantExpiresAt,
           }
+        : durableReplayCandidate
+          ? {
+              scripture: draft.scripture,
+              normalizedByAi: false,
+              grant: null,
+              grantExpiresAt: null,
+            }
         : await requestScriptureNormalization(
             {
               draftId: draft.id,
@@ -412,6 +467,7 @@ export function SermonInput() {
             },
             controller.signal,
           );
+      if (!durableReplayCandidate) setForceNormalizationRefresh(false);
       const canonicalScripture = normalizationResponse.scripture;
       setNormalizingScripture(false);
       if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
@@ -422,17 +478,13 @@ export function SermonInput() {
         aiTier: draft.options.aiTier,
         clientUserScope: clientUserScope ?? null,
         normalizedByAi: normalizationResponse.normalizedByAi,
-        confirmedByUserAt:
-          normalizationResponse.normalizedByAi && canonicalScripture === scriptureInput
-            ? new Date().toISOString()
-            : null,
+        confirmedByUserAt: null,
         grant: normalizationResponse.grant,
         grantExpiresAt: normalizationResponse.grantExpiresAt,
       };
       if (
         !isGuest &&
         normalizationCandidate.normalizedByAi &&
-        canonicalScripture !== scriptureInput &&
         !confirmedNormalization
       ) {
         setPendingScriptureConfirmation(normalizationCandidate);
@@ -489,6 +541,7 @@ export function SermonInput() {
           reference: cleanReference,
         },
         generation: activeGeneration,
+        replayExisting: resumable,
         expectedCount,
         clientUserScope: clientUserScope ?? null,
         isGuest,
@@ -496,6 +549,7 @@ export function SermonInput() {
         scriptureNormalization,
       });
     } catch (caught) {
+      void reloadEngineAvailability();
       const normalizationGrantInvalid =
         caught instanceof SermonClientError &&
         caught.code === SCRIPTURE_NORMALIZATION_GRANT_INVALID;
@@ -509,6 +563,7 @@ export function SermonInput() {
       setError(message);
       setGenerating(false);
       if (normalizationGrantInvalid) {
+        setForceNormalizationRefresh(true);
         updateDraft((current) => ({ ...current, scriptureNormalization: null }));
       }
     } finally {
@@ -532,6 +587,14 @@ export function SermonInput() {
 
   async function requestClarifyingQuestions() {
     if (clarifyState === "loading" || !draft) return;
+    if (!selectedEngineReady) {
+      setClarifyError(
+        engineAvailabilityNotice ??
+          "현재 사용할 수 있는 AI 엔진을 옵션에서 다시 선택해 주세요.",
+      );
+      setClarifyState("error");
+      return;
+    }
     setClarifyState("loading");
     setClarifyError("");
     try {
@@ -554,8 +617,15 @@ export function SermonInput() {
         }),
       });
       const body = (await response.json().catch(() => null)) as
-        | { result?: { sections?: Array<{ heading: string; content: string }> }; error?: string }
+        | { result?: { sections?: Array<{ heading: string; content: string }> }; error?: string; code?: string }
         | null;
+      if (
+        body?.code === "ai_engine_disabled" ||
+        body?.code === "ai_engine_unavailable" ||
+        body?.code === "ai_engine_status_unavailable"
+      ) {
+        void reloadEngineAvailability();
+      }
       if (!response.ok || !body?.result?.sections?.length) {
         throw new Error(body?.error || "보완 질문을 만들지 못했습니다.");
       }
@@ -581,6 +651,30 @@ export function SermonInput() {
         </p>
         <OptionBadges draft={draft} />
       </section>
+
+      {!selectedEngineReady && engineAvailabilityNotice ? (
+        <div
+          className="sermon-inline-alert is-warning"
+          role={engineAvailabilityStatus === "error" ? "alert" : "status"}
+        >
+          <div>
+            <strong>AI 엔진을 다시 확인해 주세요</strong>
+            <p>
+              {engineAvailabilityNotice}
+              {hasDurableGenerationProgress
+                ? " 이미 저장된 단계의 결과 확인은 이어서 시도할 수 있으며, 새 AI 생성이 필요하면 서버가 중지합니다."
+                : ""}
+            </p>
+          </div>
+          {engineAvailabilityStatus === "error" ? (
+            <button type="button" onClick={() => void reloadEngineAvailability()}>
+              다시 확인
+            </button>
+          ) : (
+            <a href={sermonDraftUrl("/sermon/options", draft.id)}>옵션에서 엔진 선택</a>
+          )}
+        </div>
+      ) : null}
 
       <section className="sermon-form-card sermon-input-card" aria-labelledby="scripture-title">
         <div className="sermon-section-heading">
@@ -627,7 +721,7 @@ export function SermonInput() {
           type="button"
           className="sermon-secondary-button"
           onClick={() => void requestClarifyingQuestions()}
-          disabled={clarifyState === "loading"}
+          disabled={clarifyState === "loading" || !selectedEngineReady}
         >
           {clarifyState === "loading" ? "질문 만드는 중…" : "보완 질문 받기"}
         </button>
@@ -724,7 +818,7 @@ export function SermonInput() {
                 type="button"
                 className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#285343] px-4 text-sm font-extrabold text-white hover:bg-[#204739] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] focus-visible:ring-offset-2 disabled:opacity-55"
                 onClick={() => void generate()}
-                disabled={generating}
+                disabled={generating || !generationRequestAllowed}
               >
                 {generating ? "생성 준비 중…" : "이 범위로 생성"}
               </button>
@@ -850,7 +944,7 @@ export function SermonInput() {
           {error.includes("토큰") ? (
             <a href="/tokens">토큰 충전하기</a>
           ) : (
-            <button type="button" onClick={() => void generate()} disabled={generating}>
+            <button type="button" onClick={() => void generate()} disabled={generating || !generationRequestAllowed}>
               {hasSavedProgress ? "저장된 단계부터 이어 만들기" : "다시 시도"}
             </button>
           )}

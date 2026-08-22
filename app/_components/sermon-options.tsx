@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { sermonDraftUrl } from "@/app/_lib/sermon-store";
 import {
-  AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
   isAiEngineTier,
   type AiEngineTier,
@@ -36,7 +35,7 @@ import {
   type SermonTone,
 } from "@/app/_lib/sermon-types";
 import { SermonLoading, useSermonWorkflow } from "./sermon-workflow";
-import { useRegisterAiAgentPage } from "./ai-agent-provider";
+import { useAiAgent, useRegisterAiAgentPage } from "./ai-agent-provider";
 
 type ChoiceProps<T extends string | number> = {
   legend: string;
@@ -109,7 +108,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function SermonOptions() {
   const router = useRouter();
-  const { draft, ready, createDraft, updateDraft } = useSermonWorkflow();
+  const { draft, ready, isGuest, createDraft, updateDraft } = useSermonWorkflow();
+  const {
+    engineAvailabilityStatus,
+    availableEngineTiersFor,
+    isEngineTierAvailableFor,
+    engineAvailabilityNoticeFor,
+    reloadEngineAvailability,
+  } = useAiAgent();
+  const selectableEngineTiers = useMemo(
+    () => availableEngineTiersFor("sermon", isGuest),
+    [availableEngineTiersFor, isGuest],
+  );
+  const engineAvailabilityNotice = engineAvailabilityNoticeFor(
+    "sermon",
+    isGuest,
+  );
   const [form, setForm] = useState<SermonOptionsValue>({
     ...EMPTY_SERMON_OPTIONS,
     aiTiers: [...EMPTY_SERMON_OPTIONS.aiTiers],
@@ -145,6 +159,33 @@ export function SermonOptions() {
         !SERMON_TONES.some((tone) => tone === draft.options.tone),
     );
   }, [draft, dirty]);
+
+  useEffect(() => {
+    if (
+      engineAvailabilityStatus !== "ready" ||
+      !selectableEngineTiers.length ||
+      isEngineTierAvailableFor(form.aiTier, "sermon", isGuest)
+    ) {
+      return;
+    }
+    const fallbackTier = selectableEngineTiers[0]!;
+    const aiTiers = normalizeSermonAiTiers({ aiTier: fallbackTier });
+    setForm((current) => ({
+      ...current,
+      aiTier: fallbackTier,
+      aiTiers,
+    }));
+    setDirty(true);
+    setSavedMessage(
+      `${AI_ENGINE_TIER_META[fallbackTier].label}(으)로 안전하게 변경했습니다. 내용을 확인해 주세요.`,
+    );
+  }, [
+    engineAvailabilityStatus,
+    form.aiTier,
+    isEngineTierAvailableFor,
+    isGuest,
+    selectableEngineTiers,
+  ]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -185,12 +226,15 @@ export function SermonOptions() {
     [form],
   );
   const valid = isSermonOptionsComplete(form);
+  const engineReady =
+    engineAvailabilityStatus === "ready" &&
+    isEngineTierAvailableFor(form.aiTier, "sermon", isGuest);
   const showToneError = submitted || (customToneSelected && form.tone.length > 0);
   const showAudienceSituationError =
     submitted ||
     (customAudienceSituationSelected && form.audienceSituation.length > 0);
   const estimatedTokenCost =
-    form.duration && form.pointCount
+    engineReady && form.duration && form.pointCount
       ? sermonGenerationTokenCost(form.aiTier, form.duration, form.pointCount)
       : null;
 
@@ -281,6 +325,11 @@ export function SermonOptions() {
           if (!isAiEngineTier(patch.aiTier)) {
             throw new Error("AI 엔진 등급을 다시 선택해 주세요.");
           }
+          if (!isEngineTierAvailableFor(patch.aiTier, "sermon", isGuest)) {
+            throw new Error(
+              "관리자가 사용 중지했거나 연결을 완료하지 않은 AI 엔진은 선택할 수 없습니다.",
+            );
+          }
           next.aiTier = patch.aiTier;
           next.aiTiers = normalizeSermonAiTiers({ aiTier: patch.aiTier });
         }
@@ -308,7 +357,16 @@ export function SermonOptions() {
         };
       },
     };
-  }, [dirty, draft, errors, form, ready, valid]);
+  }, [
+    dirty,
+    draft,
+    errors,
+    form,
+    isEngineTierAvailableFor,
+    isGuest,
+    ready,
+    valid,
+  ]);
 
   useRegisterAiAgentPage(agentRegistration);
 
@@ -324,6 +382,7 @@ export function SermonOptions() {
   };
 
   const changeAiTier = (tier: AiEngineTier) => {
+    if (!isEngineTierAvailableFor(tier, "sermon", isGuest)) return;
     setForm((current) => {
       const aiTiers = normalizeSermonAiTiers({ aiTier: tier });
       return { ...current, aiTier: tier, aiTiers };
@@ -366,7 +425,7 @@ export function SermonOptions() {
 
   const save = (moveNext: boolean) => {
     setSubmitted(true);
-    if (moveNext && !valid) return;
+    if (moveNext && (!valid || !engineReady)) return;
     const nextOptions = normalizedOptions(form);
     const changed = JSON.stringify(nextOptions) !== JSON.stringify(draft.options);
 
@@ -664,11 +723,14 @@ export function SermonOptions() {
               <p>한 번 선택한 엔진을 다섯 개 초안 전체에 동일하게 적용합니다.</p>
             </div>
           </div>
-          <fieldset className="sermon-engine-stage is-single">
+          <fieldset
+            className="sermon-engine-stage is-single"
+            aria-describedby={engineAvailabilityNotice ? "sermon-engine-availability" : undefined}
+          >
             <legend>다섯 초안 공통 엔진</legend>
             <p>선택한 등급은 1번째부터 5번째 초안까지 모두 동일하게 사용됩니다.</p>
             <div className="sermon-reference-choices is-engine-tiers">
-              {AI_ENGINE_TIERS.map((tier) => {
+              {selectableEngineTiers.map((tier) => {
                 const meta = AI_ENGINE_TIER_META[tier];
                 return (
                   <label key={tier} className={form.aiTier === tier ? "is-selected" : ""}>
@@ -687,13 +749,29 @@ export function SermonOptions() {
               })}
             </div>
           </fieldset>
+          {engineAvailabilityNotice ? (
+            <div
+              id="sermon-engine-availability"
+              className="sermon-inline-alert is-warning"
+              role={engineAvailabilityStatus === "error" ? "alert" : "status"}
+            >
+              <span>{engineAvailabilityNotice}</span>
+              {engineAvailabilityStatus === "error" ? (
+                <button type="button" onClick={() => void reloadEngineAvailability()}>
+                  다시 확인
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <p className="sermon-engine-token-total">
             현재 조건 예상 차감
             <strong>{estimatedTokenCost === null ? "계산 전" : `${estimatedTokenCost}토큰`}</strong>
           </p>
           <p className="sermon-field-hint sermon-engine-pricing-note">
             {estimatedTokenCost === null
-              ? "분량과 대지 수를 선택하면 예상 차감을 계산합니다."
+              ? engineReady
+                ? "분량과 대지 수를 선택하면 예상 차감을 계산합니다."
+                : "사용 가능한 AI 엔진을 확인한 뒤 예상 차감을 표시합니다."
               : `${AI_ENGINE_TIER_META[form.aiTier].label} · ${form.duration}분 · ${form.pointCount}대지 기준이며, 초안 개수와 관계없이 생성 1회만 차감합니다.`}
           </p>
         </section>
@@ -738,12 +816,13 @@ export function SermonOptions() {
         <div aria-live="polite">
           {savedMessage ? <p className="sermon-save-message">{savedMessage}</p> : null}
           {!valid ? <p>필수 옵션을 모두 선택하면 다음 단계로 갈 수 있습니다.</p> : null}
+          {valid && !engineReady ? <p>사용 가능한 AI 엔진이 있어야 다음 단계로 갈 수 있습니다.</p> : null}
         </div>
         <div className="sermon-button-row">
           <button className="sermon-button is-secondary" type="button" onClick={() => save(false)}>
             임시 저장
           </button>
-          <button className="sermon-button is-primary" type="submit" disabled={!valid}>
+          <button className="sermon-button is-primary" type="submit" disabled={!valid || !engineReady}>
             본문 입력으로
           </button>
         </div>

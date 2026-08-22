@@ -21,6 +21,8 @@ export type SermonHelperCoachStoredRetryAction = "retain" | "rotate" | "clear";
 const TERMINAL_RETRY_CODES = new Set([
   "coach_engine_unavailable",
   "custom_coach_provider_disabled",
+  "ai_engine_disabled",
+  "ai_engine_unavailable",
   "coach_request_refunded",
   "coach_response_expired",
   "coach_request_conflict",

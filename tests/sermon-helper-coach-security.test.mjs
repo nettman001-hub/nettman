@@ -326,6 +326,9 @@ test("browser retry storage is scoped, bounded, expiring, and classifies termina
 
   assert.equal(classifyStoredSermonHelperCoachRetryResponse({ status: 409, code: "coach_engine_unavailable" }), "clear");
   assert.equal(classifyStoredSermonHelperCoachRetryResponse({ status: 409, code: "custom_coach_provider_disabled" }), "clear");
+  assert.equal(classifyStoredSermonHelperCoachRetryResponse({ status: 409, code: "ai_engine_disabled" }), "clear");
+  assert.equal(classifyStoredSermonHelperCoachRetryResponse({ status: 409, code: "ai_engine_unavailable" }), "clear");
+  assert.equal(classifyStoredSermonHelperCoachRetryResponse({ status: 503, code: "ai_engine_status_unavailable" }), "retain");
   assert.equal(classifyStoredSermonHelperCoachRetryResponse({ status: 404 }), "clear");
   assert.equal(classifyStoredSermonHelperCoachRetryResponse({ status: 401 }), "retain");
   assert.equal(classifyStoredSermonHelperCoachRetryResponse({ status: 403 }), "retain");
@@ -377,8 +380,9 @@ test("sermon-helper coach route durably couples replay, debit, refund, expiry, a
   assert.match(route, /getRequestUserResponse\(request\)/);
   assert.match(route, /SERMON_HELPER_COACH_MAX_REQUEST_BYTES/);
   assert.match(route, /ownsProject\(db, input\.projectId, authenticatedUser\.id\)/);
-  assert.match(route, /getManagedAiRequestConfig\(db, input\.tier\)/);
-  assert.match(route, /code: "coach_engine_unavailable"/);
+  assert.match(route, /getManagedAiRequestConfigResolution\(db, input\.tier, "coach"\)/);
+  assert.match(route, /managedAiEngineAccessErrorBody/);
+  assert.match(route, /code: "ai_engine_status_unavailable"/);
   assert.match(route, /inspectExistingSermonHelperCoachRequest\(/);
   assert.match(route, /existingReservationResponse\(/);
   assert.ok(
@@ -388,10 +392,10 @@ test("sermon-helper coach route durably couples replay, debit, refund, expiry, a
   );
   assert.ok(
     route.indexOf("const durableResponse = await durablePreflightResponse()") <
-      route.indexOf("getManagedAiRequestConfig(db, input.tier)"),
+      route.indexOf('getManagedAiRequestConfigResolution(db, input.tier, "coach")'),
     "every existing durable state must be handled before managed-engine checks",
   );
-  assert.match(route, /if \(!ai\) \{\s*const racedResponse = await durablePreflightResponse\(\)/);
+  assert.match(route, /if \(aiResolution\.status !== "ready"\) \{\s*const racedResponse = await durablePreflightResponse\(\)/);
   assert.match(route, /if \(ai\.engine === "custom"\) \{\s*const racedResponse = await durablePreflightResponse\(\)/);
   assert.match(route, /reserveSermonHelperCoachRequest\(/);
   assert.match(route, /finalizeSermonHelperCoachRequest\(/);

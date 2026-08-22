@@ -5,7 +5,10 @@ import {
 } from "@/app/_lib/openai-sermons";
 import { getRequestUserResponse, unauthorizedResponse } from "@/app/_lib/auth-user";
 import { aiUserScope } from "@/app/_lib/ai-config";
-import { getManagedAiRequestConfig } from "@/app/_lib/managed-ai-engines";
+import {
+  getManagedAiRequestConfigResolution,
+  managedAiEngineAccessErrorBody,
+} from "@/app/_lib/managed-ai-engines";
 import { isAiEngineTier } from "@/app/_lib/ai-engine-tiers";
 import { loadSermonPreacherContext } from "@/app/_lib/sermon-preacher-context";
 import { ensureDatabase, getD1 } from "@/db";
@@ -142,10 +145,42 @@ export async function POST(request: Request): Promise<Response> {
   };
 
   const db = getD1();
-  const userAi = await getManagedAiRequestConfig(db, normalizedOptions.aiTier);
-  if (normalizedOptions.aiTier !== "basic" && !userAi) {
-    return error("선택한 AI 엔진은 아직 관리자가 사용할 수 있도록 설정하지 않았습니다.", 409);
+  if (!db && !user.isDemo) {
+    return Response.json(
+      {
+        error: "AI 엔진 상태 저장소에 연결할 수 없습니다.",
+        code: "ai_engine_status_unavailable",
+      },
+      { status: 503 },
+    );
   }
+  let aiResolution;
+  try {
+    aiResolution = await getManagedAiRequestConfigResolution(
+      db,
+      normalizedOptions.aiTier,
+      "sermon",
+    );
+  } catch {
+    return Response.json(
+      {
+        error: "AI 엔진 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        code: "ai_engine_status_unavailable",
+      },
+      { status: 503 },
+    );
+  }
+  if (
+    aiResolution.status !== "ready" &&
+    !(
+      process.env.NODE_ENV !== "production" &&
+      user.isDemo &&
+      normalizedOptions.aiTier === "basic"
+    )
+  ) {
+    return Response.json(managedAiEngineAccessErrorBody(aiResolution), { status: 409 });
+  }
+  const userAi = aiResolution.status === "ready" ? aiResolution.config : undefined;
   let serverRevisionCount = input.revisionCount as number;
   let preacherContext: SermonPreacherContext | undefined;
   if (db) {

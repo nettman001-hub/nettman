@@ -1,7 +1,10 @@
 import { aiUserScope } from "@/app/_lib/ai-config";
 import { isAiEngineTier } from "@/app/_lib/ai-engine-tiers";
 import { getRequestUserResponse } from "@/app/_lib/auth-user";
-import { getManagedAiRequestConfig } from "@/app/_lib/managed-ai-engines";
+import {
+  getManagedAiRequestConfigResolution,
+  managedAiEngineAccessErrorBody,
+} from "@/app/_lib/managed-ai-engines";
 import {
   normalizeAiScriptureReference,
   UserAiProviderError,
@@ -101,12 +104,24 @@ export async function POST(request: Request): Promise<Response> {
       return error("AI 본문 표준화를 위한 데이터베이스 연결이 준비되지 않았습니다.", 503);
     }
     if (db) await ensureDatabase(db);
-    const ai = await getManagedAiRequestConfig(
-      db,
-      input.aiTier,
-    );
-    if (!ai) {
-      if (input.aiTier === "basic") {
+    let aiResolution;
+    try {
+      aiResolution = await getManagedAiRequestConfigResolution(db, input.aiTier, "sermon");
+    } catch {
+      return Response.json(
+        {
+          error: "AI 엔진 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+          code: "ai_engine_status_unavailable",
+        },
+        { status: 503 },
+      );
+    }
+    if (aiResolution.status !== "ready") {
+      if (
+        process.env.NODE_ENV !== "production" &&
+        user.isDemo &&
+        input.aiTier === "basic"
+      ) {
         return Response.json(
           {
             scripture,
@@ -117,11 +132,9 @@ export async function POST(request: Request): Promise<Response> {
           { headers: { "Cache-Control": "no-store" } },
         );
       }
-      return error(
-        "선택한 AI 엔진이 아직 성경 본문을 확인할 수 있도록 설정되지 않았습니다.",
-        409,
-      );
+      return Response.json(managedAiEngineAccessErrorBody(aiResolution), { status: 409 });
     }
+    const ai = aiResolution.config;
     if (!scriptureNormalizationGrantConfigured(ai.apiKey)) {
       return error(
         "AI 본문 확인 증표를 보호할 서버 비밀키가 설정되지 않았습니다.",

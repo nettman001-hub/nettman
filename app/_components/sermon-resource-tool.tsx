@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
   isAiEngineTier,
   type AiEngineTier,
@@ -14,7 +13,7 @@ import {
   type SermonResourceMode,
   type SermonResourceResult,
 } from "@/app/_lib/sermon-resources";
-import { useRegisterAiAgentPage } from "./ai-agent-provider";
+import { useAiAgent, useRegisterAiAgentPage } from "./ai-agent-provider";
 
 type SermonItem = {
   id: string;
@@ -64,6 +63,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function SermonResourceTool({ mode }: ToolProps) {
+  const {
+    engineAvailabilityStatus,
+    availableEngineTiersFor,
+    isEngineTierAvailableFor,
+    engineAvailabilityNoticeFor,
+    reloadEngineAvailability,
+  } = useAiAgent();
+  const selectableEngineTiers = useMemo(
+    () => availableEngineTiersFor("resource"),
+    [availableEngineTiersFor],
+  );
+  const engineAvailabilityNotice = engineAvailabilityNoticeFor("resource");
   const [sermons, setSermons] = useState<SermonItem[]>([]);
   const [sermonsLoading, setSermonsLoading] = useState(true);
   const [sermonsError, setSermonsError] = useState("");
@@ -82,6 +93,22 @@ export function SermonResourceTool({ mode }: ToolProps) {
   const [source, setSource] = useState<{ title: string; scripture: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [fairUse, setFairUse] = useState<FairUseStatus | null>(null);
+
+  useEffect(() => {
+    if (
+      engineAvailabilityStatus !== "ready" ||
+      !selectableEngineTiers.length ||
+      isEngineTierAvailableFor(aiTier, "resource")
+    ) {
+      return;
+    }
+    setAiTier(selectableEngineTiers[0]!);
+  }, [
+    aiTier,
+    engineAvailabilityStatus,
+    isEngineTierAvailableFor,
+    selectableEngineTiers,
+  ]);
 
   useEffect(() => {
     if (mode !== "ministry") {
@@ -170,12 +197,16 @@ export function SermonResourceTool({ mode }: ToolProps) {
     setRequestState("idle");
   }
 
+  const engineReady =
+    engineAvailabilityStatus === "ready" &&
+    isEngineTierAvailableFor(aiTier, "resource");
   const canGenerate =
-    mode === "ministry"
+    engineReady &&
+    (mode === "ministry"
       ? Boolean(sermonId) && selections.length > 0
       : mode === "study"
         ? scriptureInput.trim().length > 0 && selections.length > 0
-        : manuscriptInput.trim().length >= 300;
+        : manuscriptInput.trim().length >= 300);
 
   const generate = useCallback(async () => {
     if (!canGenerate || requestState === "loading") return;
@@ -205,6 +236,7 @@ export function SermonResourceTool({ mode }: ToolProps) {
             result?: SermonResourceResult;
             source?: { title: string; scripture: string };
             error?: string;
+            code?: string;
             remainingToday?: number;
             dailyLimit?: number;
           }
@@ -217,6 +249,13 @@ export function SermonResourceTool({ mode }: ToolProps) {
           remainingToday: body.remainingToday,
           dailyLimit: body.dailyLimit,
         });
+      }
+      if (
+        body?.code === "ai_engine_disabled" ||
+        body?.code === "ai_engine_unavailable" ||
+        body?.code === "ai_engine_status_unavailable"
+      ) {
+        void reloadEngineAvailability();
       }
       if (!response.ok || !body?.result) {
         throw new Error(body?.error || "자료를 생성하지 못했습니다.");
@@ -243,6 +282,7 @@ export function SermonResourceTool({ mode }: ToolProps) {
     mode,
     notesInput,
     requestState,
+    reloadEngineAvailability,
     scriptureInput,
     selections,
     sermonId,
@@ -367,6 +407,11 @@ export function SermonResourceTool({ mode }: ToolProps) {
           if (!isAiEngineTier(patch.aiTier)) {
             throw new Error("AI 엔진 등급을 다시 선택해 주세요.");
           }
+          if (!isEngineTierAvailableFor(patch.aiTier, "resource")) {
+            throw new Error(
+              "관리자가 사용 중지했거나 이 기능에 연결하지 않은 AI 엔진은 선택할 수 없습니다.",
+            );
+          }
           setAiTier(patch.aiTier);
           applied = true;
         }
@@ -458,6 +503,7 @@ export function SermonResourceTool({ mode }: ToolProps) {
     aiTier,
     canGenerate,
     generate,
+    isEngineTierAvailableFor,
     manuscriptInput,
     mode,
     notesInput,
@@ -669,11 +715,14 @@ export function SermonResourceTool({ mode }: ToolProps) {
           )}
         </fieldset>
 
-        <fieldset className="mt-7 border-t border-[#e4dfd6] pt-6">
+        <fieldset
+          className="mt-7 border-t border-[#e4dfd6] pt-6"
+          aria-describedby={engineAvailabilityNotice ? `${mode}-engine-status` : undefined}
+        >
           <legend className="text-sm font-extrabold text-[#34473e]">AI 엔진</legend>
           <p className="mt-1 text-xs leading-5 text-[#7b847f]">선택한 엔진 하나를 이 결과 전체에 적용합니다.</p>
           <div className="mt-3 grid grid-cols-3 gap-2">
-            {AI_ENGINE_TIERS.map((tier) => (
+            {selectableEngineTiers.map((tier) => (
               <label
                 key={tier}
                 className={`cursor-pointer rounded-xl border px-2 py-3 text-center text-xs font-bold ${
@@ -702,6 +751,24 @@ export function SermonResourceTool({ mode }: ToolProps) {
             ))}
           </div>
         </fieldset>
+        {engineAvailabilityNotice ? (
+          <div
+            id={`${mode}-engine-status`}
+            className="mt-3 flex items-start justify-between gap-3 rounded-xl border border-[#e2c8a8] bg-[#fff7e9] px-4 py-3 text-xs font-semibold leading-5 text-[#805326]"
+            role={engineAvailabilityStatus === "error" ? "alert" : "status"}
+          >
+            <span>{engineAvailabilityNotice}</span>
+            {engineAvailabilityStatus === "error" ? (
+              <button
+                type="button"
+                onClick={() => void reloadEngineAvailability()}
+                className="min-h-9 shrink-0 rounded-lg border border-[#b7956e] bg-white px-3 text-[10px] font-extrabold text-[#69451e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
+              >
+                다시 확인
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <button
           type="button"

@@ -19,7 +19,7 @@ import {
   SermonStateCard,
   useSermonWorkflow,
 } from "./sermon-workflow";
-import { useRegisterAiAgentPage } from "./ai-agent-provider";
+import { useAiAgent, useRegisterAiAgentPage } from "./ai-agent-provider";
 
 const SECTION_OPTIONS: Array<{
   value: SermonRevision["section"];
@@ -63,6 +63,12 @@ export function SermonEditor() {
     replaceDraft,
     updateDraft,
   } = useSermonWorkflow();
+  const {
+    engineAvailabilityStatus,
+    isEngineTierAvailableFor,
+    engineAvailabilityNoticeFor,
+    reloadEngineAvailability,
+  } = useAiAgent();
   const [section, setSection] = useState<SermonRevision["section"]>("body");
   const [instruction, setInstruction] = useState("");
   const [toneAdjustment, setToneAdjustment] = useState("");
@@ -85,6 +91,15 @@ export function SermonEditor() {
   const displayed = view === "previous" && previous ? previous : selected;
   const remaining = Math.max(0, 3 - (draft?.revisionCount ?? 0));
   const instructionValid = instruction.trim().length >= 10;
+  const selectedEngineReady = Boolean(
+    draft &&
+      engineAvailabilityStatus === "ready" &&
+      isEngineTierAvailableFor(draft.options.aiTier, "sermon", isGuest),
+  );
+  const engineAvailabilityNotice = engineAvailabilityNoticeFor(
+    "sermon",
+    isGuest,
+  );
 
   const agentRegistration = useMemo(() => {
     if (!ready || !draft || !selected) return null;
@@ -198,6 +213,13 @@ export function SermonEditor() {
   const revise = async () => {
     setError("");
     setNotice("");
+    if (!selectedEngineReady) {
+      setError(
+        engineAvailabilityNotice ??
+          "현재 사용할 수 있는 AI 엔진을 옵션에서 다시 선택해 주세요.",
+      );
+      return;
+    }
     if (!instructionValid || remaining === 0 || revising || completing) return;
     setRevising(true);
     const controller = new AbortController();
@@ -251,6 +273,7 @@ export function SermonEditor() {
           : `수정을 반영했습니다. 수정 기회가 ${remaining - 1}회 남았습니다.`,
       );
     } catch (caught) {
+      void reloadEngineAvailability();
       setError(
         caught instanceof DOMException && caught.name === "AbortError"
           ? "전체 수정 요청이 250초를 넘겼습니다. 횟수는 차감되지 않았습니다."
@@ -499,6 +522,29 @@ export function SermonEditor() {
             <p>한 번에 한 가지 핵심 방향을 10자 이상으로 적으면 결과가 선명해집니다.</p>
           </div>
         </div>
+        {!isGuest && !selectedEngineReady && engineAvailabilityNotice ? (
+          <div
+            className="sermon-inline-alert is-warning"
+            role={engineAvailabilityStatus === "error" ? "alert" : "status"}
+          >
+            <div>
+              <strong>수정에 사용할 AI 엔진을 다시 선택해 주세요</strong>
+              <p>{engineAvailabilityNotice}</p>
+            </div>
+            {engineAvailabilityStatus === "error" ? (
+              <button type="button" onClick={() => void reloadEngineAvailability()}>
+                다시 확인
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => router.push(sermonDraftUrl("/sermon/options", draft.id))}
+              >
+                옵션에서 엔진 선택
+              </button>
+            )}
+          </div>
+        ) : null}
         <div className="sermon-revision-fields">
           <div className="sermon-field">
             <label htmlFor="revision-section">수정할 부분</label>
@@ -565,7 +611,7 @@ export function SermonEditor() {
               <strong>수정 결과를 받지 못했습니다</strong>
               <p>{error}</p>
             </div>
-            <button type="button" disabled={revising} onClick={() => void revise()}>
+            <button type="button" disabled={revising || !selectedEngineReady} onClick={() => void revise()}>
               다시 시도
             </button>
           </div>
@@ -588,7 +634,7 @@ export function SermonEditor() {
             <button
               className="sermon-button is-secondary"
               type="button"
-              disabled={!instructionValid || remaining === 0 || revising || completing}
+              disabled={!instructionValid || remaining === 0 || revising || completing || !selectedEngineReady}
               onClick={() => void revise()}
             >
               {revising ? "수정 반영 중…" : `수정 요청 · ${remaining}회 남음`}

@@ -9,7 +9,10 @@ import {
 import { isAiEngineTier, type AiEngineTier } from "../../_lib/ai-engine-tiers";
 import { getRequestUserResponse, unauthorizedResponse } from "../../_lib/auth-user";
 import { demoSermons, safeJson, type SermonSections } from "../../_lib/data";
-import { getManagedAiRequestConfig } from "../../_lib/managed-ai-engines";
+import {
+  getManagedAiRequestConfigResolution,
+  managedAiEngineAccessErrorBody,
+} from "../../_lib/managed-ai-engines";
 import { UserAiProviderError } from "../../_lib/openai-sermons";
 import {
   getScripturePassage,
@@ -306,7 +309,13 @@ ${notes}` : "",
   }
 
   if (!db && !user.isDemo) {
-    return Response.json({ error: "데이터 저장소에 연결할 수 없습니다." }, { status: 503 });
+    return Response.json(
+      {
+        error: "AI 엔진 상태 저장소에 연결할 수 없습니다.",
+        code: "ai_engine_status_unavailable",
+      },
+      { status: 503 },
+    );
   }
   if (mode === "ministry" && !db) {
     const sermon = demoSermons.find((item) => item.id === sermonId);
@@ -361,13 +370,22 @@ ${notes}` : "",
     return Response.json({ error: "원고 또는 본문 내용을 확인할 수 없습니다." }, { status: 409 });
   }
 
-  const ai = await getManagedAiRequestConfig(db, aiTier);
-  if (!ai) {
+  let aiResolution;
+  try {
+    aiResolution = await getManagedAiRequestConfigResolution(db, aiTier, "resource");
+  } catch {
     return Response.json(
-      { error: "선택한 AI 엔진이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요." },
+      {
+        error: "AI 엔진 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        code: "ai_engine_status_unavailable",
+      },
       { status: 503 },
     );
   }
+  if (aiResolution.status !== "ready") {
+    return Response.json(managedAiEngineAccessErrorBody(aiResolution), { status: 409 });
+  }
+  const ai = aiResolution.config;
 
   let resourceReservation: Extract<SermonResourceReservation, { ok: true }> | null = null;
   let demoReservation = false;

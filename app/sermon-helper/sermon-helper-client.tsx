@@ -8,7 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
-import { useRegisterAiAgentPage } from "@/app/_components/ai-agent-provider";
+import {
+  useAiAgent,
+  useRegisterAiAgentPage,
+} from "@/app/_components/ai-agent-provider";
 import type { AgentActionProposal } from "@/app/_lib/ai-agent-contract";
 import {
   AI_ENGINE_TIER_META,
@@ -616,6 +619,9 @@ function CoachPanel({
   project,
   clientUserScope,
   tier,
+  newRequestEngineReady,
+  engineAvailabilityMessage,
+  onEngineAvailabilityInvalidated,
   onTierChange,
   onAdopt,
   onPendingChange,
@@ -623,6 +629,9 @@ function CoachPanel({
   project: SermonHelperProject;
   clientUserScope: string;
   tier: AiEngineTier;
+  newRequestEngineReady: boolean;
+  engineAvailabilityMessage: string | null;
+  onEngineAvailabilityInvalidated: () => void;
   onTierChange: (tier: AiEngineTier) => void;
   onAdopt: (
     stepId: SermonHelperStepId,
@@ -733,12 +742,13 @@ function CoachPanel({
     };
     setMode(recovered.request.mode);
     setPrompt(recovered.request.prompt ?? "");
+    onPendingChange(true);
     onTierChange(recovered.request.tier);
     if (recovered.request.stepId === "write") {
       setWriteItemId(recovered.request.step.items[0]?.id ?? "");
       setWriteExcerpt(recovered.request.step.items[0]?.content ?? "");
     }
-  }, [onTierChange, project.id, retryStorageKey]);
+  }, [onPendingChange, onTierChange, project.id, retryStorageKey]);
 
   useEffect(() => () => {
     controllerRef.current?.abort();
@@ -761,6 +771,13 @@ function CoachPanel({
     }
     if (!recovered && stepId === "write" && (!selectedWriteItem || !writeExcerpt.trim())) {
       setError("AI 코치에게 보낼 대지와 2,500자 이하의 검토 범위를 먼저 선택해 주세요.");
+      return;
+    }
+    if (!recovered && !newRequestEngineReady) {
+      setError(
+        engineAvailabilityMessage ??
+          "현재 AI 코치에 사용할 수 있는 엔진이 없습니다.",
+      );
       return;
     }
     const controller = new AbortController();
@@ -840,6 +857,13 @@ function CoachPanel({
       });
       const body = await responseBody(response);
       notifyWalletFromApiBody(body);
+      if (
+        body.code === "ai_engine_disabled" ||
+        body.code === "ai_engine_unavailable" ||
+        body.code === "ai_engine_status_unavailable"
+      ) {
+        onEngineAvailabilityInvalidated();
+      }
       if (!response.ok) {
         const retryAction = classifyStoredSermonHelperCoachRetryResponse({
           status: response.status,
@@ -910,6 +934,15 @@ function CoachPanel({
       </div>
 
       <div className="p-5 sm:p-6">
+        {engineAvailabilityMessage && !storedRetry ? (
+          <p
+            id="helper-coach-request-engine-status"
+            role="status"
+            className="mb-5 rounded-xl border border-[#e4c494] bg-[#fff5e7] px-4 py-3 text-xs font-bold leading-5 text-[#805326]"
+          >
+            {engineAvailabilityMessage}
+          </p>
+        ) : null}
         <fieldset>
           <legend className="text-xs font-extrabold text-[#53645c]">도움 방식</legend>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -1013,7 +1046,15 @@ function CoachPanel({
           {pending ? (
             <button type="button" onClick={() => controllerRef.current?.abort()} className="inline-flex min-h-11 items-center rounded-xl border border-[#a14736] bg-white px-4 text-xs font-extrabold text-[#9a4635] hover:bg-[#fff0eb] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">응답 중지</button>
           ) : (
-            <button type="button" onClick={() => void requestCoach()} className="inline-flex min-h-11 items-center rounded-xl bg-[#315647] px-4 text-xs font-extrabold text-white hover:bg-[#24483a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">{SERMON_HELPER_COACH_COSTS[tier]}토큰으로 제안 받기</button>
+            <button
+              type="button"
+              onClick={() => void requestCoach()}
+              disabled={!storedRetry && !newRequestEngineReady}
+              aria-describedby={!storedRetry && engineAvailabilityMessage ? "helper-coach-request-engine-status" : undefined}
+              className="inline-flex min-h-11 items-center rounded-xl bg-[#315647] px-4 text-xs font-extrabold text-white hover:bg-[#24483a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {storedRetry ? "이전 요청 결과 확인" : `${SERMON_HELPER_COACH_COSTS[tier]}토큰으로 제안 받기`}
+            </button>
           )}
           <p className="text-[10px] font-semibold leading-4 text-[#7b6b5a]">실행할 때만 {SERMON_HELPER_COACH_COSTS[tier]}토큰이 차감됩니다. 제안 채택은 추가 차감이 없습니다.</p>
         </div>
@@ -1076,6 +1117,18 @@ export function SermonHelperClient({
   clientUserScope: string;
 }) {
   const router = useRouter();
+  const {
+    engineAvailabilityStatus,
+    availableEngineTiersFor,
+    isEngineTierAvailableFor,
+    engineAvailabilityNoticeFor,
+    reloadEngineAvailability,
+  } = useAiAgent();
+  const selectableCoachTiers = useMemo(
+    () => availableEngineTiersFor("coach"),
+    [availableEngineTiersFor],
+  );
+  const coachEngineAvailabilityMessage = engineAvailabilityNoticeFor("coach");
   const [screenState, setScreenState] = useState<ScreenState>(initialProjectId ? "loading" : "start");
   const [recentItems, setRecentItems] = useState<SermonHelperProjectSummary[]>([]);
   const [recentLoading, setRecentLoading] = useState(!initialProjectId);
@@ -1101,6 +1154,29 @@ export function SermonHelperClient({
   const hasUnsavedRef = useRef(false);
   const savingRef = useRef(false);
   const dirtyStepsRef = useRef(new Set<SermonHelperStepId>());
+  const coachEngineReady =
+    engineAvailabilityStatus === "ready" &&
+    isEngineTierAvailableFor(aiTier, "coach");
+
+  useEffect(() => {
+    if (
+      coachPending ||
+      engineAvailabilityStatus !== "ready" ||
+      !selectableCoachTiers.length ||
+      isEngineTierAvailableFor(aiTier, "coach")
+    ) {
+      return;
+    }
+    setAiTier(selectableCoachTiers[0]!);
+    setNormalizationCandidate(null);
+    setNormalizationError(null);
+  }, [
+    aiTier,
+    coachPending,
+    engineAvailabilityStatus,
+    isEngineTierAvailableFor,
+    selectableCoachTiers,
+  ]);
 
   const resetProject = useCallback((next: SermonHelperProject) => {
     projectRef.current = next;
@@ -1622,6 +1698,13 @@ export function SermonHelperClient({
   const normalizeScripture = useCallback(async () => {
     const snapshot = projectRef.current;
     if (!snapshot || normalizingScripture) return;
+    if (!coachEngineReady) {
+      setNormalizationError(
+        coachEngineAvailabilityMessage ??
+          "현재 본문 확인에 사용할 수 있는 AI 엔진이 없습니다.",
+      );
+      return;
+    }
     const input = snapshot.scripture.trim();
     if (!input) {
       setNormalizationError("먼저 읽을 성경 본문을 입력해 주세요.");
@@ -1654,6 +1737,7 @@ export function SermonHelperClient({
         setNormalizationCandidate(result.scripture);
       }
     } catch (caught) {
+      void reloadEngineAvailability();
       if (
         projectRef.current?.id !== snapshot.id ||
         projectRef.current.scripture.trim() !== input
@@ -1673,7 +1757,14 @@ export function SermonHelperClient({
         setNormalizingScripture(false);
       }
     }
-  }, [aiTier, clientUserScope, normalizingScripture]);
+  }, [
+    aiTier,
+    clientUserScope,
+    coachEngineAvailabilityMessage,
+    coachEngineReady,
+    normalizingScripture,
+    reloadEngineAvailability,
+  ]);
 
   useEffect(() => () => {
     normalizationControllerRef.current?.abort();
@@ -1837,17 +1928,62 @@ export function SermonHelperClient({
           <div className="flex shrink-0 flex-wrap gap-2">
             <label className="text-[10px] font-extrabold text-[#53645c]">
               AI 보조 엔진
-              <select value={aiTier} onChange={(event) => setAiTier(event.target.value as AiEngineTier)} disabled={coachPending} className="mt-1 block min-h-11 rounded-xl border border-[#cfc7bb] bg-white px-3 text-xs font-extrabold text-[#304b3f] outline-none focus:border-[#7b978a] focus:ring-4 focus:ring-[#7b978a]/12 disabled:cursor-not-allowed disabled:bg-[#f3f0e9]">
-                {(Object.keys(AI_ENGINE_TIER_META) as AiEngineTier[]).map((tier) => (
-                  <option key={tier} value={tier}>{AI_ENGINE_TIER_META[tier].label} · 코치 {SERMON_HELPER_COACH_COSTS[tier]}토큰</option>
-                ))}
-              </select>
+              {coachPending && !coachEngineReady ? (
+                <span className="mt-1 block min-h-11 rounded-xl border border-[#cfc7bb] bg-[#f3f0e9] px-3 py-3 text-xs font-extrabold text-[#766b5d]">
+                  이전 요청 엔진으로 결과 확인 중
+                </span>
+              ) : (
+                <select
+                  value={coachEngineReady ? aiTier : ""}
+                  onChange={(event) => setAiTier(event.target.value as AiEngineTier)}
+                  disabled={
+                    coachPending ||
+                    engineAvailabilityStatus !== "ready" ||
+                    !selectableCoachTiers.length
+                  }
+                  aria-describedby={coachEngineAvailabilityMessage ? "helper-coach-engine-status" : undefined}
+                  className="mt-1 block min-h-11 rounded-xl border border-[#cfc7bb] bg-white px-3 text-xs font-extrabold text-[#304b3f] outline-none focus:border-[#7b978a] focus:ring-4 focus:ring-[#7b978a]/12 disabled:cursor-not-allowed disabled:bg-[#f3f0e9]"
+                >
+                  {!coachEngineReady ? (
+                    <option value="" disabled>
+                      {engineAvailabilityStatus === "loading"
+                        ? "엔진 확인 중"
+                        : engineAvailabilityStatus === "error"
+                          ? "엔진 확인 필요"
+                          : "사용 가능한 엔진 없음"}
+                    </option>
+                  ) : null}
+                  {selectableCoachTiers.map((tier) => (
+                    <option key={tier} value={tier}>
+                      {AI_ENGINE_TIER_META[tier].label} · 코치 {SERMON_HELPER_COACH_COSTS[tier]}토큰
+                    </option>
+                  ))}
+                </select>
+              )}
             </label>
             {(saveState === "error" || saveState === "dirty") ? <button type="button" onClick={() => void saveProject()} className="inline-flex min-h-11 items-center rounded-xl border border-[#a99c8b] bg-white px-4 text-xs font-extrabold text-[#365146] hover:bg-[#faf7f0] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">지금 저장</button> : null}
             {saveState === "conflict" ? <button type="button" onClick={() => void loadProject(project.id)} className="inline-flex min-h-11 items-center rounded-xl bg-[#9a4938] px-4 text-xs font-extrabold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">서버 내용 다시 불러오기</button> : null}
             <button type="button" onClick={() => void deleteProject()} disabled={deleting || saveState === "saving" || coachPending} aria-describedby={coachPending ? "coach-delete-wait" : undefined} className="inline-flex min-h-11 items-center rounded-xl border border-[#cfaea5] bg-white px-4 text-xs font-extrabold text-[#914d3d] hover:bg-[#fff4f0] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] disabled:cursor-not-allowed disabled:opacity-45">{deleting ? "삭제하는 중" : "이 준비 삭제"}</button>
           </div>
         </div>
+        {coachEngineAvailabilityMessage && !coachPending ? (
+          <div
+            id="helper-coach-engine-status"
+            className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-[#e4c494] bg-[#fff5e7] px-4 py-3 text-xs font-bold leading-5 text-[#805326]"
+            role={engineAvailabilityStatus === "error" ? "alert" : "status"}
+          >
+            <span>{coachEngineAvailabilityMessage}</span>
+            {engineAvailabilityStatus === "error" ? (
+              <button
+                type="button"
+                onClick={() => void reloadEngineAvailability()}
+                className="min-h-9 shrink-0 rounded-lg border border-[#b7956e] bg-white px-3 text-[10px] font-extrabold text-[#69451e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]"
+              >
+                다시 확인
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {coachPending ? <p id="coach-delete-wait" role="status" className="mt-4 rounded-xl bg-[#fff5e7] px-4 py-3 text-xs font-bold leading-5 text-[#805326]">AI 코치 요청 중에는 이 준비를 삭제할 수 없습니다. AI 코치 영역의 ‘응답 중지’를 누르고 요청이 끝난 뒤 삭제해 주세요.</p> : null}
         {pendingNavigationHref ? <p role="status" className="mt-4 rounded-xl bg-[#edf3ee] px-4 py-3 text-xs font-extrabold text-[#456052]">변경 내용을 안전하게 저장한 뒤 이동합니다.</p> : null}
         {error ? <p role="alert" className="mt-4 rounded-xl border border-[#e7b6a9] bg-[#fff0eb] px-4 py-3 text-xs font-semibold leading-5 text-[#943f2f]">{error}</p> : null}
@@ -1932,7 +2068,15 @@ export function SermonHelperClient({
                   {normalizingScripture ? (
                     <button type="button" onClick={() => normalizationControllerRef.current?.abort()} className="inline-flex min-h-11 items-center rounded-xl border border-[#a24837] bg-white px-4 text-xs font-extrabold text-[#974232] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">본문 확인 중지</button>
                   ) : (
-                    <button type="button" onClick={() => void normalizeScripture()} className="inline-flex min-h-11 items-center rounded-xl bg-[#315647] px-4 text-xs font-extrabold text-white hover:bg-[#24483a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">AI로 본문 표기 확인</button>
+                    <button
+                      type="button"
+                      onClick={() => void normalizeScripture()}
+                      disabled={!coachEngineReady}
+                      aria-describedby={!coachEngineReady && coachEngineAvailabilityMessage ? "helper-coach-engine-status" : undefined}
+                      className="inline-flex min-h-11 items-center rounded-xl bg-[#315647] px-4 text-xs font-extrabold text-white hover:bg-[#24483a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      AI로 본문 표기 확인
+                    </button>
                   )}
                 </div>
               </div>
@@ -1992,7 +2136,19 @@ export function SermonHelperClient({
 
           <ProvenancePanel entries={project.provenance} stepId={project.currentStepId} onChange={updateProvenance} />
 
-          <CoachPanel project={project} clientUserScope={clientUserScope} tier={aiTier} onTierChange={setAiTier} onAdopt={adoptCoachSuggestion} onPendingChange={setCoachPending} />
+          <CoachPanel
+            project={project}
+            clientUserScope={clientUserScope}
+            tier={aiTier}
+            newRequestEngineReady={coachEngineReady}
+            engineAvailabilityMessage={coachEngineAvailabilityMessage}
+            onEngineAvailabilityInvalidated={() => {
+              void reloadEngineAvailability();
+            }}
+            onTierChange={setAiTier}
+            onAdopt={adoptCoachSuggestion}
+            onPendingChange={setCoachPending}
+          />
 
           {project.currentStepId === "write" ? (
             <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-[#edf3ee] px-5 py-4 text-xs font-semibold text-[#4c6358]">

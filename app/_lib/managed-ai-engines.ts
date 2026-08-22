@@ -2,14 +2,20 @@ import {
   AI_ENGINE_PRESETS,
   DEFAULT_AI_PREFERENCES,
   validateAiPreferences,
-  validateAiRequestConfig,
   type AiPreferences,
   type AiRequestConfig,
 } from "@/app/_lib/ai-config";
 import {
   AI_ENGINE_TIERS,
+  type AiEngineSurface,
+  type AiEngineTierAvailability,
   type AiEngineTier,
 } from "@/app/_lib/ai-engine-tiers";
+import {
+  evaluateManagedAiEngineWithApiKeyResolver,
+  failClosedPreferencesForMissingPersistedTier,
+  selectManagedAiSettingsForRuntime,
+} from "@/app/_lib/managed-ai-engine-runtime-policy";
 import {
   readGlobalAiPreferences,
   serverAiApiKey,
@@ -24,6 +30,8 @@ export type ManagedAiEngineSetting = {
   tier: AiEngineTier;
   preferences: AiPreferences;
   encryptedApiKey: string | null;
+  /** False only when a persisted row cannot pass the current provider validator. */
+  configurationValid: boolean;
 };
 
 export type ManagedAiRequestConfig = AiRequestConfig & {
@@ -34,6 +42,34 @@ export type ManagedAiRequestConfigs = Record<
   AiEngineTier,
   ManagedAiRequestConfig | undefined
 >;
+
+export type ManagedAiSignatureConfig = Pick<
+  ManagedAiRequestConfig,
+  "engine" | "endpoint" | "model" | "reasoningEffort" | "maxOutputTokens"
+>;
+
+export type ManagedAiSignatureConfigs = Record<
+  AiEngineTier,
+  ManagedAiSignatureConfig | undefined
+>;
+
+export type ManagedAiEngineRuntime = {
+  tiers: AiEngineTierAvailability[];
+  configs: ManagedAiRequestConfigs;
+  /** Provider identity snapshot for durable-run signatures, even while disabled. */
+  signatureConfigs: ManagedAiSignatureConfigs;
+};
+
+export type ManagedAiRequestConfigResolution =
+  | { status: "ready"; tier: AiEngineTier; config: ManagedAiRequestConfig }
+  | { status: "disabled"; tier: AiEngineTier }
+  | { status: "unavailable"; tier: AiEngineTier };
+
+export type ManagedAiEngineAccessErrorBody = {
+  error: string;
+  code: "ai_engine_disabled" | "ai_engine_unavailable";
+  tier: AiEngineTier;
+};
 
 export type ManagedAiKeyStatus = {
   configured: boolean;
@@ -67,12 +103,13 @@ async function environmentSettings(): Promise<ManagedAiEngineSetting[]> {
     tier,
     preferences: tier === "basic" ? basic : defaultPreferencesForTier(tier),
     encryptedApiKey: null,
+    configurationValid: true,
   }));
 }
 
 function parsedPreferences(
   row: {
-    enabled: number;
+    enabled: number | boolean;
     engine: string;
     endpoint: string;
     model: string;
@@ -80,8 +117,13 @@ function parsedPreferences(
     max_output_tokens: number | null;
   } | undefined,
   tier: AiEngineTier,
-): AiPreferences {
-  if (!row) return defaultPreferencesForTier(tier);
+): { preferences: AiPreferences; configurationValid: boolean } {
+  if (!row) {
+    return {
+      preferences: defaultPreferencesForTier(tier),
+      configurationValid: true,
+    };
+  }
   const parsed = validateAiPreferences({
     enabled: Boolean(row.enabled),
     engine: row.engine,
@@ -90,7 +132,38 @@ function parsedPreferences(
     reasoningEffort: row.reasoning_effort,
     maxOutputTokens: row.max_output_tokens,
   });
-  return parsed.ok ? parsed.value : defaultPreferencesForTier(tier);
+  if (parsed.ok) {
+    return { preferences: parsed.value, configurationValid: true };
+  }
+  // Keep the administrator's switch authoritative even when an old/corrupt
+  // provider row no longer passes validation. Runtime resolution will report
+  // configured=false instead of silently replacing it with an environment
+  // provider and bypassing a saved disable.
+  return {
+    preferences: {
+      ...defaultPreferencesForTier(tier),
+      enabled: Boolean(row.enabled),
+    },
+    configurationValid: false,
+  };
+}
+
+/**
+ * A database-backed runtime treats a missing tier row as an administrator
+ * configuration gap, never as permission to reactivate an environment
+ * provider. The legacy `global` row is resolved before this helper is used.
+ */
+export function managedAiEngineSettingForMissingRow(
+  tier: AiEngineTier,
+): ManagedAiEngineSetting {
+  return {
+    tier,
+    preferences: failClosedPreferencesForMissingPersistedTier(
+      defaultPreferencesForTier(tier),
+    ),
+    encryptedApiKey: null,
+    configurationValid: true,
+  };
 }
 
 /**
@@ -111,7 +184,7 @@ export async function readManagedAiEngineSettingsStrict(
     .bind(...AI_ENGINE_TIERS, LEGACY_GLOBAL_AI_SETTINGS_ID)
     .all<{
       id: string;
-      enabled: number;
+      enabled: number | boolean;
       engine: string;
       endpoint: string;
       model: string;
@@ -120,26 +193,26 @@ export async function readManagedAiEngineSettingsStrict(
       api_key_encrypted: string | null;
     }>();
   const rows = new Map(result.results.map((row) => [row.id, row]));
-  const environment = await environmentSettings();
-  return AI_ENGINE_TIERS.map((tier, index) => {
+  return AI_ENGINE_TIERS.map((tier) => {
     const row =
       rows.get(tier) ??
       (tier === "basic"
         ? rows.get(LEGACY_GLOBAL_AI_SETTINGS_ID)
         : undefined);
+    if (!row) return managedAiEngineSettingForMissingRow(tier);
+    const parsed = parsedPreferences(row, tier);
     return {
       tier,
-      preferences: row
-        ? parsedPreferences(row, tier)
-        : environment[index].preferences,
+      preferences: parsed.preferences,
       encryptedApiKey: row?.api_key_encrypted ?? null,
+      configurationValid: parsed.configurationValid,
     };
   });
 }
 
 /**
- * Runtime inference remains operational when persistence is temporarily
- * unavailable by falling back to server environment configuration.
+ * Backward-compatible settings discovery for administrator model lookup only.
+ * Provider-bound inference uses getManagedAiEngineRuntime, which is strict.
  */
 export async function readManagedAiEngineSettings(
   db: AppDatabase | null,
@@ -248,27 +321,92 @@ export async function getManagedAiRequestConfig(
   return (await getManagedAiRequestConfigs(db))[tier];
 }
 
-export async function getManagedAiRequestConfigs(
+export function managedAiEngineAccessErrorBody(
+  resolution: Exclude<ManagedAiRequestConfigResolution, { status: "ready" }>,
+): ManagedAiEngineAccessErrorBody {
+  return resolution.status === "disabled"
+    ? {
+        error: "선택한 AI 엔진은 관리자가 비활성화했습니다.",
+        code: "ai_engine_disabled",
+        tier: resolution.tier,
+      }
+    : {
+        error: "선택한 AI 엔진의 연결 설정이 아직 준비되지 않았습니다.",
+        code: "ai_engine_unavailable",
+        tier: resolution.tier,
+      };
+}
+
+export async function getManagedAiRequestConfigResolution(
   db: AppDatabase | null,
-): Promise<ManagedAiRequestConfigs> {
-  const settings = await readManagedAiEngineSettings(db);
+  tier: AiEngineTier = "basic",
+  surface?: AiEngineSurface,
+): Promise<ManagedAiRequestConfigResolution> {
+  const runtime = await getManagedAiEngineRuntime(db);
+  const availability = runtime.tiers.find((entry) => entry.tier === tier);
+  const config = runtime.configs[tier];
+  if (config && (!surface || availability?.availableFor[surface])) {
+    return { status: "ready", tier, config };
+  }
+  return availability?.enabled
+    ? { status: "unavailable", tier }
+    : { status: "disabled", tier };
+}
+
+export async function getManagedAiEngineRuntime(
+  db: AppDatabase | null,
+): Promise<ManagedAiEngineRuntime> {
+  // An attached database is the administrator's source of truth. Never fall
+  // back to environment defaults after a storage error because that could
+  // reactivate a tier the administrator explicitly disabled. DB-less local
+  // development/demo remains supported through environment settings.
+  const settings = await selectManagedAiSettingsForRuntime({
+    db,
+    production: process.env.NODE_ENV === "production",
+    readStrict: readManagedAiEngineSettingsStrict,
+    readEnvironment: environmentSettings,
+  });
   const entries = await Promise.all(
     AI_ENGINE_TIERS.map(async (tier) => {
       const setting = settings.find((item) => item.tier === tier);
-      if (!setting?.preferences.enabled) return [tier, undefined] as const;
-      const apiKey = await resolveManagedAiApiKey(setting);
-      if (!apiKey && setting.preferences.engine !== "custom") {
-        return [tier, undefined] as const;
+      if (!setting) {
+        return {
+          availability: {
+            tier,
+            enabled: false,
+            configured: false,
+            availableFor: {
+              sermon: false,
+              resource: false,
+              agent: false,
+              coach: false,
+            },
+          },
+          config: undefined,
+          signatureConfig: undefined,
+        } as const;
       }
-      const parsed = validateAiRequestConfig({
-        ...setting.preferences,
-        apiKey: apiKey ?? "",
-      });
-      return [
+      return evaluateManagedAiEngineWithApiKeyResolver({
         tier,
-        parsed.ok ? ({ ...parsed.value, tier } satisfies ManagedAiRequestConfig) : undefined,
-      ] as const;
+        preferences: setting.preferences,
+        configurationValid: setting.configurationValid,
+        resolveApiKey: () => resolveManagedAiApiKey(setting),
+      });
     }),
   );
-  return Object.fromEntries(entries) as ManagedAiRequestConfigs;
+  return {
+    tiers: entries.map((entry) => entry.availability),
+    configs: Object.fromEntries(
+      entries.map((entry) => [entry.availability.tier, entry.config]),
+    ) as ManagedAiRequestConfigs,
+    signatureConfigs: Object.fromEntries(
+      entries.map((entry) => [entry.availability.tier, entry.signatureConfig]),
+    ) as ManagedAiSignatureConfigs,
+  };
+}
+
+export async function getManagedAiRequestConfigs(
+  db: AppDatabase | null,
+): Promise<ManagedAiRequestConfigs> {
+  return (await getManagedAiEngineRuntime(db)).configs;
 }

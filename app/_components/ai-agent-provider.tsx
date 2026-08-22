@@ -20,8 +20,13 @@ import {
   type AiAgentPageContext,
 } from "@/app/_lib/ai-agent-contract";
 import {
+  AI_ENGINE_TIER_META,
+  isAiEngineTierAvailable,
+  isAiEngineTierAvailabilityResponse,
   isAiEngineTier,
+  type AiEngineTierAvailability,
   type AiEngineTier,
+  type AiEngineSurface,
 } from "@/app/_lib/ai-engine-tiers";
 import { notifyTokenWalletChanged } from "@/app/_lib/token-wallet-events";
 
@@ -49,6 +54,8 @@ type WorkspaceRegistration = {
 
 type ProposalState = "applying" | "applied" | "dismissed";
 
+export type AiEngineAvailabilityStatus = "loading" | "ready" | "error";
+
 type AiAgentContextValue = {
   isOpen: boolean;
   open: () => void;
@@ -59,6 +66,22 @@ type AiAgentContextValue = {
   messages: readonly UiAiAgentMessage[];
   tier: AiEngineTier;
   setTier: (tier: AiEngineTier) => void;
+  engineAvailability: readonly AiEngineTierAvailability[];
+  engineAvailabilityStatus: AiEngineAvailabilityStatus;
+  availableEngineTiersFor: (
+    surface: AiEngineSurface,
+    allowGuestBasic?: boolean,
+  ) => readonly AiEngineTier[];
+  isEngineTierAvailableFor: (
+    tier: AiEngineTier,
+    surface: AiEngineSurface,
+    allowGuestBasic?: boolean,
+  ) => boolean;
+  engineAvailabilityNoticeFor: (
+    surface: AiEngineSurface,
+    allowGuestBasic?: boolean,
+  ) => string | null;
+  reloadEngineAvailability: () => Promise<void>;
   pending: boolean;
   error: string | null;
   proposalStates: Readonly<Record<string, ProposalState>>;
@@ -166,6 +189,68 @@ function responseError(status: number, body: unknown): string {
   return "AI 에이전트가 응답하지 못했습니다. 잠시 뒤 다시 시도해 주세요.";
 }
 
+function availabilityNotice(
+  status: AiEngineAvailabilityStatus,
+  availability: readonly AiEngineTierAvailability[],
+  surface: AiEngineSurface,
+  allowGuestBasic = false,
+): string | null {
+  if (status === "loading") return "사용 가능한 AI 엔진을 확인하는 중입니다.";
+  if (status === "error") {
+    return "AI 엔진 상태를 확인하지 못했습니다. 다시 확인할 때까지 AI 요청을 보낼 수 없습니다.";
+  }
+
+  const considered = allowGuestBasic
+    ? availability.filter(
+        (entry) => surface === "sermon" && entry.tier === "basic",
+      )
+    : availability;
+  const isSelectable = (entry: AiEngineTierAvailability) =>
+    allowGuestBasic && surface === "sermon" && entry.tier === "basic"
+      ? entry.enabled && entry.availableFor.sermon
+      : isAiEngineTierAvailable(entry, surface);
+  const disabled = considered.filter((entry) => !entry.enabled);
+  const unconfigured = considered.filter(
+    (entry) => entry.enabled && !entry.configured && !isSelectable(entry),
+  );
+  const selectable = considered.filter(isSelectable);
+  const unsupported = considered.filter(
+    (entry) =>
+      entry.enabled &&
+      entry.configured &&
+      !entry.availableFor[surface] &&
+      !isSelectable(entry),
+  );
+
+  if (!selectable.length) {
+    if (unconfigured.length && disabled.length) {
+      return "관리자가 사용 중지했거나 연결 설정을 완료하지 않은 엔진만 있습니다. 관리자에게 AI 엔진 설정을 요청해 주세요.";
+    }
+    if (unconfigured.length) {
+      return "사용 설정된 AI 엔진의 연결 정보가 아직 완성되지 않았습니다. 관리자에게 설정 완료를 요청해 주세요.";
+    }
+    if (unsupported.length) {
+      return "사용 설정된 엔진이 현재 기능을 지원하지 않습니다. 관리자에게 이 기능을 지원하는 엔진 설정을 요청해 주세요.";
+    }
+    return "관리자가 모든 AI 엔진의 사용을 중지했습니다.";
+  }
+
+  const hiddenLabels = [
+    ...disabled.map(
+      (entry) => `${AI_ENGINE_TIER_META[entry.tier].label} 사용 중지`,
+    ),
+    ...unconfigured.map(
+      (entry) => `${AI_ENGINE_TIER_META[entry.tier].label} 연결 미완료`,
+    ),
+    ...unsupported.map(
+      (entry) => `${AI_ENGINE_TIER_META[entry.tier].label} 현재 기능 미지원`,
+    ),
+  ];
+  return hiddenLabels.length
+    ? `${hiddenLabels.join(", ")}로 선택 목록에서 숨겼습니다.`
+    : null;
+}
+
 export function AiAgentProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
@@ -173,6 +258,11 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
   const [workspace, setWorkspace] = useState<WorkspaceRegistration | null>(null);
   const [messages, setMessages] = useState<UiAiAgentMessage[]>([]);
   const [tier, setTierState] = useState<AiEngineTier>("basic");
+  const [engineAvailability, setEngineAvailability] = useState<
+    AiEngineTierAvailability[]
+  >([]);
+  const [engineAvailabilityStatus, setEngineAvailabilityStatus] =
+    useState<AiEngineAvailabilityStatus>("loading");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [proposalStates, setProposalStates] = useState<
@@ -184,6 +274,7 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
   );
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const availabilityAbortRef = useRef<AbortController | null>(null);
   const userScopeRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -198,11 +289,12 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
   useEffect(
     () => () => {
       abortRef.current?.abort();
+      availabilityAbortRef.current?.abort();
     },
     [],
   );
 
-  const setTier = useCallback((nextTier: AiEngineTier) => {
+  const storeTier = useCallback((nextTier: AiEngineTier) => {
     setTierState(nextTier);
     try {
       window.localStorage.setItem(AI_AGENT_TIER_STORAGE_KEY, nextTier);
@@ -210,6 +302,105 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
       // Keeping the in-memory selection is sufficient when storage is blocked.
     }
   }, []);
+
+  const reloadEngineAvailability = useCallback(async () => {
+    const controller = new AbortController();
+    availabilityAbortRef.current?.abort();
+    availabilityAbortRef.current = controller;
+    setEngineAvailabilityStatus("loading");
+
+    try {
+      const response = await fetch("/api/ai-engine-tiers", {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isAiEngineTierAvailabilityResponse(body)) {
+        throw new Error("AI 엔진 상태 응답을 확인하지 못했습니다.");
+      }
+      setEngineAvailability(body.tiers);
+      setEngineAvailabilityStatus("ready");
+    } catch {
+      if (!controller.signal.aborted) setEngineAvailabilityStatus("error");
+    } finally {
+      if (availabilityAbortRef.current === controller) {
+        availabilityAbortRef.current = null;
+      }
+    }
+  }, []);
+
+  const availableEngineTiersFor = useCallback(
+    (surface: AiEngineSurface, allowGuestBasic = false) =>
+      engineAvailabilityStatus === "ready"
+        ? engineAvailability.flatMap((entry) => {
+            const available =
+              allowGuestBasic
+                ? surface === "sermon" &&
+                  entry.tier === "basic" &&
+                  entry.enabled &&
+                  entry.availableFor.sermon
+                : isAiEngineTierAvailable(entry, surface);
+            return available ? [entry.tier] : [];
+          })
+        : [],
+    [engineAvailability, engineAvailabilityStatus],
+  );
+
+  const isEngineTierAvailableFor = useCallback(
+    (
+      candidate: AiEngineTier,
+      surface: AiEngineSurface,
+      allowGuestBasic = false,
+    ) => availableEngineTiersFor(surface, allowGuestBasic).includes(candidate),
+    [availableEngineTiersFor],
+  );
+
+  const engineAvailabilityNoticeFor = useCallback(
+    (surface: AiEngineSurface, allowGuestBasic = false) =>
+      availabilityNotice(
+        engineAvailabilityStatus,
+        engineAvailability,
+        surface,
+        allowGuestBasic,
+      ),
+    [engineAvailability, engineAvailabilityStatus],
+  );
+
+  const selectableAgentTiers = useMemo(
+    () => availableEngineTiersFor("agent"),
+    [availableEngineTiersFor],
+  );
+
+  const setTier = useCallback(
+    (nextTier: AiEngineTier) => {
+      if (
+        engineAvailabilityStatus !== "ready" ||
+        !isEngineTierAvailableFor(nextTier, "agent")
+      ) {
+        return;
+      }
+      storeTier(nextTier);
+    },
+    [engineAvailabilityStatus, isEngineTierAvailableFor, storeTier],
+  );
+
+  useEffect(() => {
+    if (
+      engineAvailabilityStatus !== "ready" ||
+      !selectableAgentTiers.length ||
+      isEngineTierAvailableFor(tier, "agent")
+    ) {
+      return;
+    }
+    storeTier(selectableAgentTiers[0]!);
+  }, [
+    engineAvailabilityStatus,
+    isEngineTierAvailableFor,
+    selectableAgentTiers,
+    storeTier,
+    tier,
+  ]);
 
   const registerPage = useCallback((nextPage: AiAgentPageRegistration) => {
     const registrationId = Symbol("ai-agent-page");
@@ -226,6 +417,7 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
       const registrationId = Symbol("ai-agent-workspace");
       workspaceRegistrations.current.set(registrationId, nextWorkspace);
       setWorkspace(nextWorkspace);
+      void reloadEngineAvailability();
 
       if (userScopeRef.current !== nextWorkspace.userScope) {
         abortRef.current?.abort();
@@ -241,7 +433,7 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
         setWorkspace(latestMapValue(workspaceRegistrations.current));
       };
     },
-    [],
+    [reloadEngineAvailability],
   );
 
   const close = useCallback(() => setIsOpen(false), []);
@@ -266,6 +458,16 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
       }
       if (!page) {
         setError("현재 화면을 AI 에이전트에 연결하지 못했습니다.");
+        return;
+      }
+      if (
+        engineAvailabilityStatus !== "ready" ||
+        !isEngineTierAvailableFor(tier, "agent")
+      ) {
+        setError(
+          engineAvailabilityNoticeFor("agent") ??
+            "현재 사용할 수 있는 AI 엔진이 없습니다.",
+        );
         return;
       }
 
@@ -320,6 +522,16 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
         if (body && typeof body === "object" && "wallet" in body && body.wallet) {
           notifyTokenWalletChanged(body.wallet);
         }
+        if (
+          body &&
+          typeof body === "object" &&
+          "code" in body &&
+          (body.code === "ai_engine_disabled" ||
+            body.code === "ai_engine_unavailable" ||
+            body.code === "ai_engine_status_unavailable")
+        ) {
+          void reloadEngineAvailability();
+        }
         if (!response.ok || !body || !("answer" in body)) {
           throw new Error(responseError(response.status, body));
         }
@@ -344,13 +556,40 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
         if (!controller.signal.aborted) setPending(false);
       }
     },
-    [messages, page, pending, tier, workspace?.authenticated],
+    [
+      engineAvailabilityNoticeFor,
+      engineAvailabilityStatus,
+      isEngineTierAvailableFor,
+      messages,
+      page,
+      pending,
+      reloadEngineAvailability,
+      tier,
+      workspace?.authenticated,
+    ],
   );
 
   const applyProposal = useCallback(
     async (proposal: AgentActionProposal) => {
       if (!page || !page.capabilities.includes(proposal.capability)) {
         setError("화면 내용이 바뀌었습니다. 현재 화면에서 다시 요청해 주세요.");
+        return;
+      }
+      const proposalPatch = proposal.args.patch;
+      if (
+        proposalPatch &&
+        typeof proposalPatch === "object" &&
+        !Array.isArray(proposalPatch) &&
+        "aiTier" in proposalPatch &&
+        isAiEngineTier(proposalPatch.aiTier) &&
+        !isEngineTierAvailableFor(
+          proposalPatch.aiTier,
+          proposal.capability === "resource.form.patch" ? "resource" : "sermon",
+        )
+      ) {
+        setError(
+          "관리자가 사용 중지했거나 연결을 완료하지 않은 AI 엔진은 적용할 수 없습니다.",
+        );
         return;
       }
       const sourceMessage = messages.find(
@@ -410,7 +649,7 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
         );
       }
     },
-    [messages, page, router],
+    [isEngineTierAvailableFor, messages, page, router],
   );
 
   const dismissProposal = useCallback((proposalId: string) => {
@@ -441,6 +680,12 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
       messages,
       tier,
       setTier,
+      engineAvailability,
+      engineAvailabilityStatus,
+      availableEngineTiersFor,
+      isEngineTierAvailableFor,
+      engineAvailabilityNoticeFor,
+      reloadEngineAvailability,
       pending,
       error,
       proposalStates,
@@ -458,14 +703,20 @@ export function AiAgentProvider({ children }: { children: ReactNode }) {
       close,
       dismissProposal,
       error,
+      engineAvailability,
+      engineAvailabilityStatus,
+      engineAvailabilityNoticeFor,
       isOpen,
+      isEngineTierAvailableFor,
       messages,
       open,
       page,
       pending,
       proposalStates,
+      availableEngineTiersFor,
       registerPage,
       registerWorkspace,
+      reloadEngineAvailability,
       sendMessage,
       setTier,
       stopResponse,

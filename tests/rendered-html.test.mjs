@@ -494,14 +494,23 @@ test("stores an optional per-engine maximum output token override", async () => 
   assert.equal(resolveSermonMaxOutputTokens({ maxOutputTokens: null }, 18_000), 18_000);
   assert.equal(resolveSermonMaxOutputTokens({ maxOutputTokens: 32_000 }, 18_000), 32_000);
 
-  const [schema, database, managed, route, form, generation, sermons, migration] =
+  const [
+    schema,
+    database,
+    managed,
+    route,
+    form,
+    generationSignature,
+    sermons,
+    migration,
+  ] =
     await Promise.all([
       readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
       readFile(new URL("../db/index.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/_lib/managed-ai-engines.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/api/admin/ai-settings/route.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/admin/ai/admin-ai-engine-settings-form.tsx", import.meta.url), "utf8"),
-      readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
+      readFile(new URL("../app/_lib/sermon-generation-signature.ts", import.meta.url), "utf8"),
       readFile(new URL("../app/_lib/openai-sermons.ts", import.meta.url), "utf8"),
       readFile(new URL("../drizzle/0011_add_ai_max_output_tokens.sql", import.meta.url), "utf8"),
     ]);
@@ -513,7 +522,7 @@ test("stores an optional per-engine maximum output token override", async () => 
   assert.match(form, /value=\{setting\.preferences\.maxOutputTokens \?\? ""\}/);
   assert.match(form, /value === "" \? null : Number\(value\)/);
   assert.match(form, /aria-describedby=\{`admin-ai-max-output-tokens-help-/);
-  assert.match(generation, /maxOutputTokens: ai\.maxOutputTokens/);
+  assert.match(generationSignature, /maxOutputTokens: ai\.maxOutputTokens/);
   assert.match(sermons, /maxOutputTokens: 500/);
   assert.match(sermons, /resolveSermonMaxOutputTokens\(ai, 1_600, "outline"\)/);
   assert.match(sermons, /resolveSermonMaxOutputTokens\(ai, 1_800, "fragment"\)/);
@@ -3315,7 +3324,11 @@ test("accepts natural scripture notation and normalizes it before creating a gen
   assert.match(input, /scriptureNormalization\?\.canonical === scriptureInput/);
   assert.match(
     input,
-    /canonicalScripture !== scriptureInput[\s\S]*setPendingScriptureConfirmation\(normalizationCandidate\)[\s\S]*return;/,
+    /normalizationCandidate\.normalizedByAi &&[\s\S]*!confirmedNormalization[\s\S]*setPendingScriptureConfirmation\(normalizationCandidate\)[\s\S]*return;/,
+  );
+  assert.doesNotMatch(
+    input,
+    /normalizationResponse\.normalizedByAi && canonicalScripture === scriptureInput[\s\S]*confirmedByUserAt/,
   );
   assert.match(input, /AI가 인식한 본문 범위를 확인해 주세요/);
   assert.match(input, /role="dialog"/);
@@ -3485,11 +3498,12 @@ test("validates the revised durations, audiences, situations, and target lengths
     isSermonOptionsComplete,
     isSermonTitleValue,
   } = await import(new URL("../app/_lib/sermon-types.ts", import.meta.url));
-  const [route, provider, localGenerator, store] = await Promise.all([
+  const [route, provider, localGenerator, store, generationSignature] = await Promise.all([
     readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/openai-sermons.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/sermon-content.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/sermon-store.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_lib/sermon-generation-signature.ts", import.meta.url), "utf8"),
   ]);
 
   assert.deepEqual(SERMON_DURATIONS, [10, 15, 20, 25, 30]);
@@ -3534,7 +3548,7 @@ test("validates the revised durations, audiences, situations, and target lengths
   assert.equal(isSermonOptionsComplete({ ...complete, audience: "대학부" }), false);
   assert.equal(isSermonOptionsComplete({ ...complete, audienceSituation: "" }), false);
 
-  assert.match(route, /audienceSituation: request\.options\.audienceSituation/);
+  assert.match(generationSignature, /audienceSituation: request\.options\.audienceSituation/);
   assert.match(route, /isSermonAudienceSituationValue\(options\.audienceSituation\)/);
   assert.match(provider, /`청중 상황: \$\{request\.options\.audienceSituation\}`/);
   assert.match(localGenerator, /audienceSituationContext\(options\.audienceSituation\)/);
@@ -3794,6 +3808,149 @@ test("negotiates fragmented generation only for a server-selected compatible eng
   }
 });
 
+test("replays a durable generation before checking a newly disabled engine", async () => {
+  const { requestSermonGenerationSequence } = await import(
+    new URL("../app/_lib/sermon-client.ts", import.meta.url)
+  );
+  const originalFetch = globalThis.fetch;
+  const methods = [];
+  const alternative = {
+    id: "durable-replay-1",
+    title: "응답이 유실되어도 다시 찾은 설교",
+    summary: "서버에 저장된 유료 결과를 엔진 상태 조회보다 먼저 재생합니다.",
+    scripture: "요한복음 3:16",
+    sections: {
+      introduction: "도입",
+      points: [{ heading: "첫째", content: "내용" }],
+      conclusion: "결론",
+      application: "적용",
+    },
+  };
+  globalThis.fetch = async (_url, init) => {
+    methods.push(init.method);
+    assert.equal(init.method, "POST", "durable replay must not start with the engine GET");
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.generationStep, 1);
+    return Response.json({
+      alternatives: [alternative],
+      generationId: body.generationId,
+      position: 1,
+      complete: true,
+      provider: "persisted",
+    });
+  };
+
+  try {
+    const result = await requestSermonGenerationSequence(
+      {
+        draftId: "draft-durable-replay",
+        options: {
+          topic: "하나님의 사랑",
+          aiTier: "advanced",
+          aiTiers: ["advanced", "advanced", "advanced", "advanced", "advanced"],
+          duration: 20,
+          targetCharacters: 5_000,
+          tone: "위로",
+          sermonType: "강해",
+          audience: "청장년",
+          audienceSituation: "일반",
+          pointCount: 3,
+          referenceMode: "auto",
+        },
+        scripture: "요한복음 3:16",
+        reference: { url: "", notes: "", file: null },
+      },
+      {
+        generationId: "generation-durable-replay",
+        expectedCount: 1,
+        replayExisting: true,
+      },
+    );
+    assert.deepEqual(methods, ["POST"]);
+    assert.equal(result.alternatives[0].id, alternative.id);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("falls back from a replay probe only after the server rejects fragment mode", async () => {
+  const { requestSermonGenerationSequence } = await import(
+    new URL("../app/_lib/sermon-client.ts", import.meta.url)
+  );
+  const originalFetch = globalThis.fetch;
+  const methods = [];
+  let posts = 0;
+  globalThis.fetch = async (_url, init) => {
+    methods.push(init.method);
+    if (init.method === "GET") return Response.json({ fragmented: false });
+    posts += 1;
+    const body = JSON.parse(String(init.body));
+    if (posts === 1) {
+      assert.equal(body.generationStep, 1);
+      return Response.json(
+        {
+          error: "세부 단계 생성은 로컬 LLM(OpenAI 호환) 연결에서만 사용할 수 있습니다.",
+          code: "sermon_generation_not_fragmented",
+        },
+        { status: 400 },
+      );
+    }
+    assert.equal(body.generationStep, undefined);
+    return Response.json({
+      alternatives: [
+        {
+          id: "durable-hosted-1",
+          title: "호스팅 엔진으로 이어 만든 설교",
+          summary: "재생할 조각이 없음을 확인한 뒤 현재 엔진 방식으로 이어 만듭니다.",
+          scripture: "로마서 8:28",
+          sections: {
+            introduction: "도입",
+            points: [{ heading: "첫째", content: "내용" }],
+            conclusion: "결론",
+            application: "적용",
+          },
+        },
+      ],
+      generationId: body.generationId,
+      position: 1,
+      complete: true,
+      provider: "openai",
+    });
+  };
+
+  try {
+    const result = await requestSermonGenerationSequence(
+      {
+        draftId: "draft-durable-hosted",
+        options: {
+          topic: "합력하여 선",
+          aiTier: "advanced",
+          aiTiers: ["advanced", "advanced", "advanced", "advanced", "advanced"],
+          duration: 20,
+          targetCharacters: 5_000,
+          tone: "위로",
+          sermonType: "강해",
+          audience: "청장년",
+          audienceSituation: "일반",
+          pointCount: 3,
+          referenceMode: "auto",
+        },
+        scripture: "로마서 8:28",
+        reference: { url: "", notes: "", file: null },
+      },
+      {
+        generationId: "generation-durable-hosted",
+        expectedCount: 1,
+        replayExisting: true,
+      },
+    );
+    assert.deepEqual(methods, ["POST", "GET", "POST"]);
+    assert.equal(result.alternatives.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("stops the active generation request before another alternative starts", async () => {
   const { requestSermonGenerationSequence } = await import(
     new URL("../app/_lib/sermon-client.ts", import.meta.url)
@@ -3879,21 +4036,18 @@ test("normalizes legacy engine choices to one engine for every sermon", async ()
 });
 
 test("selects one engine and mirrors it across the five sermon stages", async () => {
-  const route = await readFile(
-    new URL("../app/api/sermons/generate/route.ts", import.meta.url),
-    "utf8",
-  );
-  const options = await readFile(
-    new URL("../app/_components/sermon-options.tsx", import.meta.url),
-    "utf8",
-  );
+  const [route, options, generationSignature] = await Promise.all([
+    readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_components/sermon-options.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/_lib/sermon-generation-signature.ts", import.meta.url), "utf8"),
+  ]);
 
   assert.match(options, /name="ai-tier"/);
   assert.match(options, /normalizeSermonAiTiers\(\{ aiTier: tier \}\)/);
   assert.doesNotMatch(options, /ai-tier-\$\{position\}/);
-  assert.match(route, /aiSchedule: request\.options\.aiTiers\.map/);
+  assert.match(generationSignature, /aiSchedule: request\.options\.aiTiers\.map/);
   assert.match(route, /const selectedAiTier = aiTiers\[0\]/);
-  assert.match(route, /const userAi = user \? managedAiConfigs\[selectedAiTier\] : undefined/);
+  assert.match(generationSignature, /const ai = managedAiConfigs\[tier\]/);
   assert.match(
     route,
     /usesFragmentedSermonGeneration\(userAi\) &&\s*\(!splitGeneration \|\| generationStep === undefined\)/,
@@ -4333,12 +4487,13 @@ test("loads sermon preacher context only from the authenticated server profile a
   const { loadSermonPreacherContext } = await import(
     new URL("../app/_lib/sermon-preacher-context.ts", import.meta.url)
   );
-  const [types, contextSource, generateRoute, reviseRoute, client] = await Promise.all([
+  const [types, contextSource, generateRoute, reviseRoute, client, generationSignature] = await Promise.all([
     readFile(new URL("../app/_lib/sermon-types.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/sermon-preacher-context.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/sermons/generate/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/sermons/revise/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_lib/sermon-client.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_lib/sermon-generation-signature.ts", import.meta.url), "utf8"),
   ]);
 
   let selectedQuery = "";
@@ -4396,7 +4551,7 @@ test("loads sermon preacher context only from the authenticated server profile a
     assert.doesNotMatch(route, /input\.preacherContext/);
     assert.match(route, /\.\.\.\(preacherContext \? \{ preacherContext \} : \{\}\)/);
   }
-  assert.match(generateRoute, /preacherContext: request\.preacherContext \?\? null/);
+  assert.match(generationSignature, /preacherContext: request\.preacherContext \?\? null/);
   assert.doesNotMatch(generateRoute, /options: \{\s*\.\.\.options,/);
   assert.doesNotMatch(reviseRoute, /options: input\.options/);
   assert.match(reviseRoute, /options: normalizedOptions/);

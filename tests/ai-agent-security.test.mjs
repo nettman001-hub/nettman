@@ -235,7 +235,9 @@ test("AI agent route keeps auth, origin, token debit, refund, and managed-provid
   assert.match(route, /sameOriginRequest\(request\)/);
   assert.match(route, /getRequestUserResponse\(request\)/);
   assert.match(route, /AI_AGENT_MAX_REQUEST_BYTES/);
-  assert.match(route, /getManagedAiRequestConfig\(db, input\.tier\)/);
+  assert.match(route, /getManagedAiRequestConfigResolution\(db, input\.tier, "agent"\)/);
+  assert.match(route, /managedAiEngineAccessErrorBody/);
+  assert.match(route, /code: "ai_engine_status_unavailable"/);
   assert.match(route, /referenceId = `agent:\$\{input\.sessionId\}:\$\{input\.messageId\}`/);
   assert.match(route, /chargeTokenWallet\(/);
   assert.match(route, /refundTokenWalletCharge\(/);

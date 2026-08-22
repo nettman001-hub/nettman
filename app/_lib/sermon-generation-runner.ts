@@ -129,6 +129,7 @@ export function startSermonGenerationRun(args: {
   mode: "initial" | "regenerate";
   request: GenerateSermonsRequest;
   generation: SermonGeneration;
+  replayExisting: boolean;
   expectedCount: 1 | 5;
   clientUserScope: string | null;
   isGuest: boolean;
@@ -159,6 +160,7 @@ export function startSermonGenerationRun(args: {
       const result = await requestSermonGenerationSequence(args.request, {
         generationId: args.generation.id,
         expectedCount: args.expectedCount,
+        replayExisting: args.replayExisting,
         completed: args.generation.alternatives,
         completedParts: args.generation.parts,
         signal: controller.signal,

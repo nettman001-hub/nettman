@@ -93,6 +93,9 @@ function parseSettings(body: Record<string, unknown>):
       return { ok: false, error: "같은 AI 엔진 등급을 중복 저장할 수 없습니다." };
     }
     tiers.add(entry.tier);
+    if (typeof entry.enabled !== "boolean") {
+      return { ok: false, error: "AI 엔진 활성화 여부를 다시 선택해 주세요." };
+    }
     const preferences = validateAiPreferences(entry);
     if (!preferences.ok) return preferences;
 
@@ -167,6 +170,7 @@ export async function PUT(request: Request): Promise<Response> {
         tier: setting.tier,
         preferences: setting.preferences,
         encryptedApiKey,
+        configurationValid: true,
       };
       const resolvedKey = setting.apiKey ?? await resolveManagedAiApiKey(next);
       if (
