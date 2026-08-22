@@ -14,6 +14,14 @@ import {
 } from "@/app/_components/ai-agent-provider";
 import type { AgentActionProposal } from "@/app/_lib/ai-agent-contract";
 import {
+  BackgroundAiRunBusyError,
+  startBackgroundAiRun,
+  stopBackgroundAiRun,
+  subscribeBackgroundAiRun,
+  type BackgroundAiRunState,
+} from "@/app/_lib/background-ai-runner";
+import {
+  AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
   type AiEngineTier,
 } from "@/app/_lib/ai-engine-tiers";
@@ -32,6 +40,7 @@ import {
   type StoredSermonHelperCoachRetry,
 } from "@/app/_lib/sermon-helper-coach-retry-storage";
 import { requestScriptureNormalization } from "@/app/_lib/sermon-client";
+import type { NormalizeScriptureResponse } from "@/app/_lib/sermon-types";
 import {
   SERMON_HELPER_REVIEW_FIELD_KEYS,
   SERMON_HELPER_STEP_IDS,
@@ -649,13 +658,14 @@ function CoachPanel({
   const [writeExcerpt, setWriteExcerpt] = useState("");
   const [storedRetry, setStoredRetry] = useState<StoredSermonHelperCoachRetry | null>(null);
   const [acceptedIds, setAcceptedIds] = useState<Set<string>>(() => new Set());
+  const [backgroundRun, setBackgroundRun] =
+    useState<BackgroundAiRunState | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const retryRequestRef = useRef<{
     messageId: string;
     payloadKey: string;
   } | null>(null);
   const storedRetryRef = useRef<StoredSermonHelperCoachRetry | null>(null);
-  const controllerRef = useRef<AbortController | null>(null);
   const stepId = project.currentStepId;
   const step = project.steps[stepId];
   const writeItems = stepId === "write"
@@ -667,6 +677,7 @@ function CoachPanel({
     [clientUserScope, project.id],
   );
   const coachInputsLocked = pending || Boolean(storedRetry);
+  const runKey = `helper-coach:${project.id}`;
 
   const clearStoredRetry = useCallback(() => {
     storedRetryRef.current = null;
@@ -692,6 +703,37 @@ function CoachPanel({
     return true;
   }, [retryStorageKey]);
 
+  useEffect(
+    () =>
+      subscribeBackgroundAiRun((state) => {
+        const own = state?.key === runKey ? state : null;
+        setBackgroundRun(own);
+        if (!own) return;
+        if (own.status === "running") {
+          setPending(true);
+          setError(null);
+          return;
+        }
+        setPending(false);
+        if (own.status === "completed") {
+          const completed = own.result as SermonHelperCoachApiResponse | null;
+          if (completed?.answer && Array.isArray(completed.suggestions)) {
+            clearStoredRetry();
+            setResult(completed);
+            setError(null);
+          }
+          return;
+        }
+        setError(
+          own.error ||
+            (own.status === "stopped"
+              ? "AI 코치 요청을 중지했습니다. 작성 중인 내용은 그대로 보존됩니다."
+              : "AI 코치가 응답하지 못했습니다."),
+        );
+      }),
+    [clearStoredRetry, runKey],
+  );
+
   useEffect(() => {
     onPendingChange(pending || Boolean(storedRetry));
   }, [onPendingChange, pending, storedRetry]);
@@ -708,7 +750,6 @@ function CoachPanel({
     setWriteItemId("");
     setWriteExcerpt("");
     retryRequestRef.current = null;
-    controllerRef.current?.abort();
   }, [stepId]);
 
   useEffect(() => {
@@ -750,10 +791,6 @@ function CoachPanel({
     }
   }, [onPendingChange, onTierChange, project.id, retryStorageKey]);
 
-  useEffect(() => () => {
-    controllerRef.current?.abort();
-  }, []);
-
   async function requestCoach() {
     if (pending) return;
     let recovered = storedRetryRef.current;
@@ -780,8 +817,6 @@ function CoachPanel({
       );
       return;
     }
-    const controller = new AbortController();
-    controllerRef.current = controller;
     if (!sessionIdRef.current) {
       sessionIdRef.current = recovered?.request.sessionId ?? crypto.randomUUID();
     }
@@ -849,61 +884,75 @@ function CoachPanel({
         }
         exactRequest = record.request;
       }
-      const response = await fetch("/api/sermon-helper/coach", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify(exactRequest),
-      });
-      const body = await responseBody(response);
-      notifyWalletFromApiBody(body);
-      if (
-        body.code === "ai_engine_disabled" ||
-        body.code === "ai_engine_unavailable" ||
-        body.code === "ai_engine_status_unavailable"
-      ) {
-        onEngineAvailabilityInvalidated();
-      }
-      if (!response.ok) {
-        const retryAction = classifyStoredSermonHelperCoachRetryResponse({
-          status: response.status,
-          code: body.code,
-          requestState: body.requestState,
-        });
-        if (retryAction === "clear") {
-          clearStoredRetry();
-        } else if (retryAction === "rotate" && exactRequest) {
-          const rotated = createStoredSermonHelperCoachRetry({
-            request: { ...exactRequest, messageId: crypto.randomUUID() },
-            projectId: project.id,
+      const handle = startBackgroundAiRun<SermonHelperCoachApiResponse>({
+        id: exactRequest.messageId,
+        key: runKey,
+        kind: "helper-coach",
+        label: "설교도우미 AI 코치",
+        targetHref: `/sermon-helper?id=${encodeURIComponent(project.id)}`,
+        context: { projectId: project.id, stepId: exactRequest.stepId },
+        execute: async (signal) => {
+          const response = await fetch("/api/sermon-helper/coach", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal,
+            body: JSON.stringify(exactRequest),
           });
-          if (rotated) {
-            retryRequestRef.current = null;
-            persistStoredRetry(rotated);
+          const body = await responseBody(response);
+          notifyWalletFromApiBody(body);
+          if (
+            body.code === "ai_engine_disabled" ||
+            body.code === "ai_engine_unavailable" ||
+            body.code === "ai_engine_status_unavailable"
+          ) {
+            onEngineAvailabilityInvalidated();
           }
-        }
-        throw new Error(asMessage(body, "AI 코치가 응답하지 못했습니다."));
-      }
-      if (
-        typeof body.answer !== "string" ||
-        !Array.isArray(body.suggestions) ||
-        !Array.isArray(body.warnings)
-      ) {
-        throw new Error("AI 코치 응답 형식을 확인하지 못했습니다.");
-      }
-      const nextResult = body as unknown as SermonHelperCoachApiResponse;
+          if (!response.ok) {
+            const retryAction = classifyStoredSermonHelperCoachRetryResponse({
+              status: response.status,
+              code: body.code,
+              requestState: body.requestState,
+            });
+            if (retryAction === "clear") {
+              clearStoredRetry();
+            } else if (retryAction === "rotate") {
+              const rotated = createStoredSermonHelperCoachRetry({
+                request: { ...exactRequest, messageId: crypto.randomUUID() },
+                projectId: project.id,
+              });
+              if (rotated) {
+                retryRequestRef.current = null;
+                persistStoredRetry(rotated);
+              }
+            }
+            throw new Error(asMessage(body, "AI 코치가 응답하지 못했습니다."));
+          }
+          if (
+            typeof body.answer !== "string" ||
+            !Array.isArray(body.suggestions) ||
+            !Array.isArray(body.warnings)
+          ) {
+            throw new Error("AI 코치 응답 형식을 확인하지 못했습니다.");
+          }
+          return body as unknown as SermonHelperCoachApiResponse;
+        },
+        errorMessage: (caught) =>
+          caught instanceof Error ? caught.message : "AI 코치가 응답하지 못했습니다.",
+      });
+      const nextResult = await handle.promise;
       clearStoredRetry();
       setResult(nextResult);
     } catch (caught) {
       setError(
-        controller.signal.aborted
+        caught instanceof DOMException && caught.name === "AbortError"
           ? "AI 코치 요청을 중지했습니다. 작성 중인 내용은 그대로 보존됩니다."
+          : caught instanceof BackgroundAiRunBusyError
+            ? caught.message
           : caught instanceof Error
             ? caught.message
             : "AI 코치가 응답하지 못했습니다.",
       );
     } finally {
-      if (controllerRef.current === controller) controllerRef.current = null;
       setPending(false);
     }
   }
@@ -1044,7 +1093,7 @@ function CoachPanel({
         ) : null}
         <div className="mt-3 flex flex-wrap items-center gap-3">
           {pending ? (
-            <button type="button" onClick={() => controllerRef.current?.abort()} className="inline-flex min-h-11 items-center rounded-xl border border-[#a14736] bg-white px-4 text-xs font-extrabold text-[#9a4635] hover:bg-[#fff0eb] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">응답 중지</button>
+            <button type="button" onClick={() => stopBackgroundAiRun(backgroundRun?.id)} className="inline-flex min-h-11 items-center rounded-xl border border-[#a14736] bg-white px-4 text-xs font-extrabold text-[#9a4635] hover:bg-[#fff0eb] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">응답 중지</button>
           ) : (
             <button
               type="button"
@@ -1118,6 +1167,7 @@ export function SermonHelperClient({
 }) {
   const router = useRouter();
   const {
+    engineAvailability,
     engineAvailabilityStatus,
     availableEngineTiersFor,
     isEngineTierAvailableFor,
@@ -1141,10 +1191,11 @@ export function SermonHelperClient({
   const [coachPending, setCoachPending] = useState(false);
   const [aiTier, setAiTier] = useState<AiEngineTier>("basic");
   const [normalizingScripture, setNormalizingScripture] = useState(false);
+  const [normalizationBackgroundRun, setNormalizationBackgroundRun] =
+    useState<BackgroundAiRunState | null>(null);
   const [normalizationError, setNormalizationError] = useState<string | null>(null);
   const [normalizationCandidate, setNormalizationCandidate] = useState<string | null>(null);
   const [pendingNavigationHref, setPendingNavigationHref] = useState<string | null>(null);
-  const normalizationControllerRef = useRef<AbortController | null>(null);
   const deletingRef = useRef(false);
   const guardedHrefRef = useRef("");
   const projectRef = useRef<SermonHelperProject | null>(null);
@@ -1157,6 +1208,53 @@ export function SermonHelperClient({
   const coachEngineReady =
     engineAvailabilityStatus === "ready" &&
     isEngineTierAvailableFor(aiTier, "coach");
+
+  useEffect(
+    () =>
+      subscribeBackgroundAiRun((state) => {
+        const currentProject = projectRef.current;
+        const key = currentProject
+          ? `scripture-normalization:${currentProject.id}`
+          : "";
+        const own = key && state?.key === key ? state : null;
+        setNormalizationBackgroundRun(own);
+        if (!own) return;
+        if (own.status === "running") {
+          setNormalizingScripture(true);
+          setNormalizationError(null);
+          return;
+        }
+        setNormalizingScripture(false);
+        const expectedInput =
+          typeof own.context.input === "string" ? own.context.input : "";
+        if (
+          !currentProject ||
+          currentProject.id !== own.context.projectId ||
+          currentProject.scripture.trim() !== expectedInput
+        ) {
+          return;
+        }
+        if (own.status === "completed") {
+          const completed = own.result as NormalizeScriptureResponse | null;
+          if (!completed?.normalizedByAi) {
+            setNormalizationError(
+              "선택한 엔진에서는 AI 본문 확인을 사용할 수 없어 입력을 그대로 보존했습니다. 성경 원문에서 범위를 직접 확인해 주세요.",
+            );
+          } else {
+            setNormalizationCandidate(completed.scripture);
+            setNormalizationError(null);
+          }
+          return;
+        }
+        setNormalizationError(
+          own.error ||
+            (own.status === "stopped"
+              ? "본문 확인을 중지했습니다. 입력은 그대로 보존됩니다."
+              : "성경 본문 표기를 확인하지 못했습니다."),
+        );
+      }),
+    [project?.id],
+  );
 
   useEffect(() => {
     if (
@@ -1710,20 +1808,33 @@ export function SermonHelperClient({
       setNormalizationError("먼저 읽을 성경 본문을 입력해 주세요.");
       return;
     }
-    const controller = new AbortController();
-    normalizationControllerRef.current = controller;
     setNormalizingScripture(true);
     setNormalizationError(null);
     setNormalizationCandidate(null);
     try {
-      const result = await requestScriptureNormalization({
-        draftId: snapshot.id,
-        scripture: input,
-        aiTier,
-        clientUserScope,
-      }, controller.signal);
+      const handle = startBackgroundAiRun<NormalizeScriptureResponse>({
+        key: `scripture-normalization:${snapshot.id}`,
+        kind: "scripture-normalization",
+        label: "성경 본문 확인",
+        targetHref: `/sermon-helper?id=${encodeURIComponent(snapshot.id)}`,
+        context: { projectId: snapshot.id, input, aiTier },
+        execute: (signal) =>
+          requestScriptureNormalization(
+            {
+              draftId: snapshot.id,
+              scripture: input,
+              aiTier,
+              clientUserScope,
+            },
+            signal,
+          ),
+        errorMessage: (caught) =>
+          caught instanceof Error
+            ? caught.message
+            : "성경 본문 표기를 확인하지 못했습니다.",
+      });
+      const result = await handle.promise;
       if (
-        controller.signal.aborted ||
         projectRef.current?.id !== snapshot.id ||
         projectRef.current.scripture.trim() !== input
       ) {
@@ -1745,17 +1856,16 @@ export function SermonHelperClient({
         return;
       }
       setNormalizationError(
-        controller.signal.aborted
+        caught instanceof DOMException && caught.name === "AbortError"
           ? "본문 확인을 중지했습니다. 입력은 그대로 보존됩니다."
+          : caught instanceof BackgroundAiRunBusyError
+            ? caught.message
           : caught instanceof Error
             ? caught.message
             : "성경 본문 표기를 확인하지 못했습니다.",
       );
     } finally {
-      if (normalizationControllerRef.current === controller) {
-        normalizationControllerRef.current = null;
-        setNormalizingScripture(false);
-      }
+      setNormalizingScripture(false);
     }
   }, [
     aiTier,
@@ -1765,10 +1875,6 @@ export function SermonHelperClient({
     normalizingScripture,
     reloadEngineAvailability,
   ]);
-
-  useEffect(() => () => {
-    normalizationControllerRef.current?.abort();
-  }, []);
 
   const deleteProject = useCallback(async () => {
     const snapshot = projectRef.current;
@@ -1790,7 +1896,7 @@ export function SermonHelperClient({
     setPendingNavigationHref(null);
     setError(null);
     hasUnsavedRef.current = false;
-    normalizationControllerRef.current?.abort();
+    stopBackgroundAiRun(normalizationBackgroundRun?.id);
     let versionConflict = false;
     try {
       const response = await fetch(
@@ -1833,7 +1939,13 @@ export function SermonHelperClient({
       deletingRef.current = false;
       setDeleting(false);
     }
-  }, [coachPending, deleting, loadRecent, router]);
+  }, [
+    coachPending,
+    deleting,
+    loadRecent,
+    normalizationBackgroundRun?.id,
+    router,
+  ]);
 
   const completeProject = useCallback(async () => {
     const snapshot = projectRef.current;
@@ -1953,11 +2065,21 @@ export function SermonHelperClient({
                           : "사용 가능한 엔진 없음"}
                     </option>
                   ) : null}
-                  {selectableCoachTiers.map((tier) => (
-                    <option key={tier} value={tier}>
-                      {AI_ENGINE_TIER_META[tier].label} · 코치 {SERMON_HELPER_COACH_COSTS[tier]}토큰
-                    </option>
-                  ))}
+                  {AI_ENGINE_TIERS.map((tier) => {
+                    const available = isEngineTierAvailableFor(tier, "coach");
+                    const entry = engineAvailability.find((item) => item.tier === tier);
+                    const status = !entry?.enabled
+                      ? "사용중지"
+                      : !entry.configured
+                        ? "준비중"
+                        : "사용불가";
+                    return (
+                      <option key={tier} value={tier} disabled={!available}>
+                        {AI_ENGINE_TIER_META[tier].label} · 코치 {SERMON_HELPER_COACH_COSTS[tier]}토큰
+                        {!available ? ` · ${status}` : ""}
+                      </option>
+                    );
+                  })}
                 </select>
               )}
             </label>
@@ -1989,7 +2111,7 @@ export function SermonHelperClient({
         {error ? <p role="alert" className="mt-4 rounded-xl border border-[#e7b6a9] bg-[#fff0eb] px-4 py-3 text-xs font-semibold leading-5 text-[#943f2f]">{error}</p> : null}
         <div className="mt-6">
           <label htmlFor="helper-scripture" className="text-xs font-extrabold text-[#52655c]">이번 설교의 본문</label>
-          <input id="helper-scripture" value={project.scripture} onChange={(event) => { normalizationControllerRef.current?.abort(); setNormalizationCandidate(null); setNormalizationError(null); mutateProject((current) => ({ ...current, scripture: event.target.value }), "observe"); }} placeholder="예: 요한복음 3장 16~18절 또는 요한복음 3:16-18" className="mt-2 min-h-12 w-full rounded-xl border border-[#d5cfc3] bg-[#faf8f3] px-4 text-sm font-bold text-[#2d483d] outline-none focus:border-[#7b978a] focus:ring-4 focus:ring-[#7b978a]/12" />
+          <input id="helper-scripture" value={project.scripture} onChange={(event) => { stopBackgroundAiRun(normalizationBackgroundRun?.id); setNormalizationCandidate(null); setNormalizationError(null); mutateProject((current) => ({ ...current, scripture: event.target.value }), "observe"); }} placeholder="예: 요한복음 3장 16~18절 또는 요한복음 3:16-18" className="mt-2 min-h-12 w-full rounded-xl border border-[#d5cfc3] bg-[#faf8f3] px-4 text-sm font-bold text-[#2d483d] outline-none focus:border-[#7b978a] focus:ring-4 focus:ring-[#7b978a]/12" />
         </div>
       </header>
 
@@ -2066,7 +2188,7 @@ export function SermonHelperClient({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {normalizingScripture ? (
-                    <button type="button" onClick={() => normalizationControllerRef.current?.abort()} className="inline-flex min-h-11 items-center rounded-xl border border-[#a24837] bg-white px-4 text-xs font-extrabold text-[#974232] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">본문 확인 중지</button>
+                    <button type="button" onClick={() => stopBackgroundAiRun(normalizationBackgroundRun?.id)} className="inline-flex min-h-11 items-center rounded-xl border border-[#a24837] bg-white px-4 text-xs font-extrabold text-[#974232] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838]">본문 확인 중지</button>
                   ) : (
                     <button
                       type="button"

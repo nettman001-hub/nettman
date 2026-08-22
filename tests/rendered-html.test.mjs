@@ -184,7 +184,7 @@ test("adds a detailed customer guide to the top-right account menu", async () =>
   assert.match(guide, /href="\/terms"/);
 });
 
-test("enforces bounded, token-free fair use for study and ministry resources", async () => {
+test("enforces bounded fair use and tiered token billing for study and ministry resources", async () => {
   const [database, schema, route, resource, tool, auth, secureTables, terms] = await Promise.all([
     readFile(new URL("../db/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -202,7 +202,10 @@ test("enforces bounded, token-free fair use for study and ministry resources", a
   assert.match(database, /active_request_id = excluded\.active_request_id/);
   assert.match(database, /WHEN \? = 1 AND request_count > 0 THEN request_count - 1/);
   assert.match(route, /finishSermonResourceUsage\(db, resourceReservation, !succeeded\)/);
-  assert.doesNotMatch(route, /debitToken|spendToken|sermonTokenCost/);
+  assert.match(route, /chargeTokenWallet/);
+  assert.match(route, /SERMON_RESOURCE_TOKEN_COSTS\[aiTier\]/);
+  assert.match(route, /mode === "study" \|\| mode === "ministry"/);
+  assert.match(route, /refundTokenWalletCharge/);
   assert.match(tool, /fetch\(`\/api\/sermons\/\$\{encodeURIComponent\(requested\)\}`/);
   assert.match(tool, /if \(requested\) return nextItems\.find[\s\S]*\?\.id \?\? ""/);
   assert.match(tool, /setAiTier\(tier\);[\s\S]{0,160}setResult\(null\)/);
@@ -214,7 +217,7 @@ test("enforces bounded, token-free fair use for study and ministry resources", a
   assert.match(resource, /audienceSituation: promptField\(source\.audienceSituation/);
   assert.match(auth, /\["sermon_resource_usage", "user_id"\]/);
   assert.match(secureTables, /"sermon_resource_usage"/);
-  assert.match(terms, /스터디와 사역 활용 자료 생성은 토큰을 차감하지 않고[\s\S]*하루 20회/);
+  assert.match(terms, /스터디와 사역 활용 자료 생성은 1회당 기본엔진 1토큰[\s\S]*하루 20회/);
 
   const { generateSermonResource } = await import(
     new URL("../app/_lib/sermon-resources.ts", import.meta.url)
@@ -860,7 +863,7 @@ test("keeps public privacy and terms pages grounded in implemented service behav
   assert.match(privacy, /설교 초안과 로컬 저장 이력은 현재 로그인 계정별로 분리되지 않으며/);
   assert.match(privacy, /HTTP 연결에서는 API\s*키와 설교 요청 내용이 전송 구간에서 암호화되지 않으므로/);
   assert.match(terms, /AI 결과에는 부정확한[\s\S]{0,80}성경 인용/);
-  assert.match(terms, /스터디와 사역 활용 자료 생성은 토큰을 차감하지 않고[\s\S]*하루 20회/);
+  assert.match(terms, /스터디와 사역 활용 자료 생성은 1회당 기본엔진 1토큰[\s\S]*하루 20회/);
   assert.match(terms, /HTTP 주소는 API 키와 요청 내용이 암호화되지\s*않은 상태로 전송/);
   assert.match(terms, /구독이나 자동 결제가 아닌[\s\r\n]*일회성 결제/);
   assert.match(terms, /1,000원당 200토큰/);
@@ -905,9 +908,9 @@ test("keeps token pricing, atomic ledger rules, and one-time checkout explicit",
   assert.match(wallet, /WELCOME_TOKEN_GRANT = 200/);
   assert.match(wallet, /TOKENS_PER_1000_KRW = 200/);
   assert.match(wallet, /MINIMUM_TOPUP_KRW = 1_000/);
-  assert.match(pricing, /basic: 15/);
-  assert.match(pricing, /advanced: 30/);
-  assert.match(pricing, /reasoning: 60/);
+  assert.match(pricing, /basic: 10/);
+  assert.match(pricing, /advanced: 20/);
+  assert.match(pricing, /reasoning: 40/);
   assert.match(wallet, /PORTONE_API_SECRET/);
   assert.match(wallet, /PORTONE_WEBHOOK_SECRET/);
   assert.match(wallet, /pg_advisory_xact_lock/);
@@ -981,7 +984,10 @@ test("prices one sermon generation by engine, duration, and point count only", a
     assert.equal(sermonGenerationTokenCost(tier, 10, 1), SERMON_TOKEN_MINIMUM_COSTS[tier]);
     for (const duration of SERMON_PRICING_DURATIONS) {
       for (const pointCount of SERMON_PRICING_POINT_COUNTS) {
-        const expected = multiplier * (duration + 5 + 2 * (pointCount - 1));
+        const expected = Math.max(
+          SERMON_TOKEN_MINIMUM_COSTS[tier],
+          multiplier * (duration + 2 * (pointCount - 1)),
+        );
         const actual = sermonGenerationTokenCost(tier, duration, pointCount);
         assert.equal(actual, expected, `${tier}/${duration}분/${pointCount}대지`);
         assert.ok(Number.isSafeInteger(actual));
@@ -996,16 +1002,16 @@ test("prices one sermon generation by engine, duration, and point count only", a
     );
   }
 
-  assert.equal(sermonGenerationTokenCost("basic", 30, 4), 41);
-  assert.equal(sermonGenerationTokenCost("advanced", 30, 4), 82);
-  assert.equal(sermonGenerationTokenCost("reasoning", 30, 4), 164);
+  assert.equal(sermonGenerationTokenCost("basic", 30, 4), 36);
+  assert.equal(sermonGenerationTokenCost("advanced", 30, 4), 72);
+  assert.equal(sermonGenerationTokenCost("reasoning", 30, 4), 144);
   assert.equal(
     sermonTokenCost(
       { engine: "deepseek", model: "deepseek-v4-flash", tier: "advanced" },
       30,
       4,
     ),
-    82,
+    72,
   );
   assert.doesNotMatch(engineMeta, /빠른 초안/);
   assert.match(options, /현재 조건 예상 차감/);
@@ -4874,8 +4880,9 @@ test("keeps the pastor-led sermon helper workflow and explicit AI adoption", asy
     assert.match(client, new RegExp(`id: "${mode}"`));
   }
   assert.match(client, /SERMON_HELPER_COACH_COSTS\[tier\]/);
-  assert.match(client, /controllerRef\.current\?\.abort\(\)/);
-  assert.match(client, /useEffect\(\(\) => \(\) => \{\s*controllerRef\.current\?\.abort\(\);\s*\}, \[\]\)/);
+  assert.match(client, /startBackgroundAiRun<SermonHelperCoachApiResponse>/);
+  assert.match(client, /stopBackgroundAiRun\(backgroundRun\?\.id\)/);
+  assert.doesNotMatch(client, /useEffect\(\(\) => \(\) => \{\s*controllerRef\.current\?\.abort\(\);\s*\}, \[\]\)/);
   assert.match(client, /내 작업에 채택/);
   assert.match(client, /sourceType: "ai_suggestion"/);
   assert.match(client, /provenanceIds: \[/);
@@ -4885,7 +4892,7 @@ test("keeps the pastor-led sermon helper workflow and explicit AI adoption", asy
 
   assert.match(client, /requestScriptureNormalization/);
   assert.match(client, /setNormalizationCandidate\(result\.scripture\)/);
-  assert.match(client, /normalizationControllerRef\.current\?\.abort\(\);[\s\S]*scripture: event\.target\.value/);
+  assert.match(client, /stopBackgroundAiRun\(normalizationBackgroundRun\?\.id\);[\s\S]*scripture: event\.target\.value/);
   assert.match(client, /projectRef\.current\?\.id !== snapshot\.id/);
   assert.match(client, /projectRef\.current\.scripture\.trim\(\) !== input/);
   assert.ok(

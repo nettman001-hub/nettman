@@ -419,7 +419,7 @@ export function AdminAiEngineSettingsForm({
                     {meta.label}
                   </h3>
                   <p className="mt-1 text-sm text-[#6a756f]">
-                    {meta.description} · 최소 {SERMON_TOKEN_MINIMUM_COSTS[setting.tier]}토큰부터
+                    {meta.description} · 약 {SERMON_TOKEN_MINIMUM_COSTS[setting.tier]}토큰부터
                   </p>
                 </div>
                 <div className="max-w-xs">

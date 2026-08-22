@@ -22,11 +22,20 @@ import {
 import {
   generateSermonResource,
   MINISTRY_OUTPUT_TYPES,
+  SERMON_RESOURCE_TOKEN_COSTS,
   STUDY_OPTIONS,
   type SermonResourceMode,
   type SermonResourceProfile,
   type SermonResourceSource,
 } from "../../_lib/sermon-resources";
+import {
+  chargeTokenWallet,
+  getTokenWallet,
+  InsufficientTokensError,
+  refundTokenWalletCharge,
+  type TokenWalletCharge,
+  type TokenWalletSnapshot,
+} from "../../_lib/token-wallet";
 
 type ResourcePayload = {
   sermonId?: unknown;
@@ -36,6 +45,7 @@ type ResourcePayload = {
   scripture?: unknown;
   notes?: unknown;
   manuscript?: unknown;
+  messageId?: unknown;
 };
 
 type SermonRow = {
@@ -50,6 +60,15 @@ type SermonRow = {
 };
 
 const demoActiveUsers = new Set<string>();
+
+function validMessageId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
 
 function isNonContentCharacter(character: string): boolean {
   const code = character.codePointAt(0) ?? 0;
@@ -155,6 +174,8 @@ export async function POST(request: Request): Promise<Response> {
   if ("response" in auth) return auth.response;
   const { user } = auth;
   if (!user) return unauthorizedResponse();
+  const resourceUserId = user.id;
+  const resourceUserIsDemo = user.isDemo;
 
   const payload = (await request.json().catch(() => null)) as ResourcePayload | null;
   if (!isMode(payload?.mode)) {
@@ -170,7 +191,24 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "생성할 항목을 하나 이상 선택해 주세요." }, { status: 400 });
   }
   const aiTier: AiEngineTier = isAiEngineTier(payload.aiTier) ? payload.aiTier : "basic";
+  const billable = mode === "study" || mode === "ministry";
+  const messageId = validMessageId(payload.messageId) ? payload.messageId : "";
+  if (billable && !messageId) {
+    return Response.json(
+      { error: "AI 자료 요청 식별자를 확인해 주세요.", code: "invalid_message_id" },
+      { status: 400 },
+    );
+  }
   const db = getD1();
+  if (billable && !resourceUserIsDemo && !db) {
+    return Response.json(
+      {
+        error: "토큰 지갑을 확인할 수 없어 AI 자료 생성을 시작하지 못했습니다.",
+        code: "token_wallet_unavailable",
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
   let source: SermonResourceSource | null = null;
   let profile: SermonResourceProfile = {
@@ -395,7 +433,7 @@ ${notes}` : "",
       reservation = await reserveSermonResourceUsage(db, user.id);
     } catch {
       return Response.json(
-        { error: "무료 사용량을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요." },
+        { error: "일일 사용량을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요." },
         { status: 503 },
       );
     }
@@ -403,7 +441,7 @@ ${notes}` : "",
       return Response.json(
         {
           error: reservation.reason === "daily_limit"
-            ? `오늘의 무료 생성 ${SERMON_RESOURCE_DAILY_LIMIT}회를 모두 사용했습니다.`
+            ? `오늘의 생성 ${SERMON_RESOURCE_DAILY_LIMIT}회를 모두 사용했습니다.`
             : "이미 다른 AI 자료를 생성하고 있습니다. 완료된 뒤 다시 시도해 주세요.",
           remainingToday: reservation.remainingToday,
           dailyLimit: reservation.dailyLimit,
@@ -424,7 +462,79 @@ ${notes}` : "",
   }
 
   let succeeded = false;
+  let tokenCharge: TokenWalletCharge | null = null;
+
+  async function walletAfterRefund(reason: string): Promise<{
+    wallet?: TokenWalletSnapshot;
+    walletRefreshRequired?: true;
+  }> {
+    if (tokenCharge?.charged && db && !resourceUserIsDemo) {
+      const refundArgs = {
+        db,
+        userId: resourceUserId,
+        chargeReferenceId: tokenCharge.referenceId,
+        sourceKind: "resource",
+        reason,
+        description: "AI 자료 생성 실패 자동 환불",
+      } as const;
+      try {
+        await refundTokenWalletCharge(refundArgs);
+      } catch {
+        await refundTokenWalletCharge(refundArgs).catch(() => undefined);
+      }
+    }
+    if (!db || resourceUserIsDemo) return {};
+    const wallet = await getTokenWallet(db, resourceUserId).catch(() => null);
+    return wallet ? { wallet } : { walletRefreshRequired: true };
+  }
+
   try {
+    if (billable && db && !user.isDemo) {
+      try {
+        tokenCharge = await chargeTokenWallet({
+          db,
+          userId: user.id,
+          referenceId: `resource:${messageId}`,
+          kind: "resource",
+          cost: SERMON_RESOURCE_TOKEN_COSTS[aiTier],
+          description: `${mode === "study" ? "스터디" : "사역 활용"} AI 생성 · ${aiTier}`,
+          metadata: { messageId, mode, tier: aiTier, pricingVersion: 1 },
+        });
+        if (!tokenCharge.charged) {
+          const wallet = await getTokenWallet(db, user.id).catch(() => null);
+          return Response.json(
+            {
+              error: tokenCharge.refunded
+                ? "이미 중지되거나 환불된 요청입니다. 새로 다시 실행해 주세요."
+                : "같은 AI 자료 요청이 이미 처리 중이거나 처리되었습니다.",
+              code: tokenCharge.refunded
+                ? "resource_request_refunded"
+                : "resource_request_duplicate",
+              ...(wallet ? { wallet } : { walletRefreshRequired: true }),
+            },
+            { status: 409, headers: { "Cache-Control": "no-store" } },
+          );
+        }
+      } catch (caught) {
+        if (caught instanceof InsufficientTokensError) {
+          return Response.json(
+            {
+              error: caught.message,
+              code: "insufficient_tokens",
+              balance: caught.balance,
+              required: caught.required,
+              topUpUrl: "/tokens",
+            },
+            { status: 402, headers: { "Cache-Control": "no-store" } },
+          );
+        }
+        return Response.json(
+          { error: "AI 자료 생성 토큰을 차감하지 못했습니다." },
+          { status: 503 },
+        );
+      }
+    }
+
     const result = await generateSermonResource({
       ai,
       mode,
@@ -433,12 +543,16 @@ ${notes}` : "",
       profile,
       signal: request.signal,
     });
+    const wallet = billable && db && !user.isDemo
+      ? await getTokenWallet(db, user.id).catch(() => null)
+      : null;
     const response = Response.json({
       result,
       source: { title: source.title, scripture: source.scripture },
       tier: aiTier,
       provider: ai.engine,
       model: ai.model,
+      ...(wallet ? { wallet } : billable && db && !user.isDemo ? { walletRefreshRequired: true } : {}),
       ...(resourceReservation
         ? {
             remainingToday: resourceReservation.remainingToday,
@@ -449,7 +563,22 @@ ${notes}` : "",
     succeeded = true;
     return response;
   } catch (caught) {
+    if (
+      request.signal.aborted ||
+      (caught instanceof DOMException && caught.name === "AbortError")
+    ) {
+      const walletState = await walletAfterRefund("user_aborted");
+      return Response.json(
+        {
+          error: "AI 자료 생성을 중지했습니다.",
+          code: "resource_request_aborted",
+          ...walletState,
+        },
+        { status: 408, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     if (caught instanceof UserAiProviderError) {
+      const walletState = await walletAfterRefund(`provider_${caught.code}`);
       const status = caught.httpStatus && caught.httpStatus >= 400 && caught.httpStatus < 600
         ? caught.httpStatus
         : caught.code === "auth"
@@ -457,10 +586,11 @@ ${notes}` : "",
           : caught.code === "invalid_response"
             ? 502
             : 503;
-      return Response.json({ error: caught.message }, { status });
+      return Response.json({ error: caught.message, ...walletState }, { status });
     }
     if (caught instanceof DOMException && caught.name === "TimeoutError") {
-      return Response.json({ error: "AI 생성 시간이 초과되었습니다. 다시 시도해 주세요." }, { status: 504 });
+      const walletState = await walletAfterRefund("provider_timeout");
+      return Response.json({ error: "AI 생성 시간이 초과되었습니다. 다시 시도해 주세요.", ...walletState }, { status: 504 });
     }
     // Diagnostic whitelist log: name + short message only (no payloads, no
     // keys — provider error messages never carry credentials).
@@ -473,7 +603,8 @@ ${notes}` : "",
       message:
         caught instanceof Error ? caught.message.slice(0, 200) : String(caught).slice(0, 120),
     });
-    return Response.json({ error: "자료를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요." }, { status: 500 });
+    const walletState = await walletAfterRefund("unexpected_error");
+    return Response.json({ error: "자료를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.", ...walletState }, { status: 500 });
   } finally {
     if (resourceReservation && db) {
       try {

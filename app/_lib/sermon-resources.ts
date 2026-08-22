@@ -1,4 +1,5 @@
 import type { AiRequestConfig } from "./ai-config.ts";
+import type { AiEngineTier } from "./ai-engine-tiers.ts";
 import {
   buildAiProviderRequest,
   parseAiProviderResponse,
@@ -38,6 +39,13 @@ export const MINISTRY_OUTPUT_TYPES = [
 ] as const;
 
 export type SermonResourceMode = "study" | "ministry" | "critique" | "clarify";
+
+/** Study and ministry requests use the same small per-engine wallet price. */
+export const SERMON_RESOURCE_TOKEN_COSTS: Record<AiEngineTier, number> = {
+  basic: 1,
+  advanced: 2,
+  reasoning: 4,
+};
 
 /** Fixed critique rubric; each axis becomes one result section. */
 export const CRITIQUE_RUBRIC = [

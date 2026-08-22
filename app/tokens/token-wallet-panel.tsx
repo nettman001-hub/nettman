@@ -501,14 +501,17 @@ export function TokenWalletPanel({ email }: { email: string }) {
           <h2 id="pricing-title" className="font-serif text-xl font-bold text-[#294238]">설교 생성 차감</h2>
           <p className="mt-2 text-xs leading-5 text-[#737e78]">설교 생성 1회 기준입니다. 비용은 엔진, 설교 분량과 대지 수에 따라 달라지며 초안 개수는 비용에 영향을 주지 않습니다. AI가 첫 결과를 만들지 못한 요청은 자동 환불되고, 저장된 작업을 이어 만들 때는 중복 차감하지 않습니다.</p>
           <dl className="mt-5 space-y-3 text-sm">
-            <div className="flex items-center justify-between"><dt className="font-bold text-[#43564d]">기본엔진</dt><dd className="font-black text-[#263d34]">{data.pricing.sermonCosts.basic}토큰부터</dd></div>
-            <div className="flex items-center justify-between"><dt className="font-bold text-[#43564d]">고급엔진</dt><dd className="font-black text-[#a95d2d]">{data.pricing.sermonCosts.advanced}토큰부터</dd></div>
-            <div className="flex items-center justify-between"><dt className="font-bold text-[#43564d]">고급추론엔진</dt><dd className="font-black text-[#7b4f86]">{data.pricing.sermonCosts.reasoning}토큰부터</dd></div>
+            <div className="flex items-center justify-between"><dt className="font-bold text-[#43564d]">기본엔진</dt><dd className="font-black text-[#263d34]">약 {data.pricing.sermonCosts.basic}토큰부터</dd></div>
+            <div className="flex items-center justify-between"><dt className="font-bold text-[#43564d]">고급엔진</dt><dd className="font-black text-[#a95d2d]">약 {data.pricing.sermonCosts.advanced}토큰부터</dd></div>
+            <div className="flex items-center justify-between"><dt className="font-bold text-[#43564d]">고급추론엔진</dt><dd className="font-black text-[#7b4f86]">약 {data.pricing.sermonCosts.reasoning}토큰부터</dd></div>
           </dl>
           <div className="mt-5 rounded-xl bg-[#f5f1e9] p-3 text-xs leading-5 text-[#6d655a]">
-            <strong>10분·1포인트</strong>는 기본/고급/고급추론 순으로 15 · 30 · 60토큰,
+            <strong>10분·1포인트</strong>는 기본/고급/고급추론 순으로 약 10 · 20 · 40토큰,
             {" "}<strong>30분·4대지</strong>는 {sermonGenerationTokenCost("basic", 30, 4)} · {sermonGenerationTokenCost("advanced", 30, 4)} · {sermonGenerationTokenCost("reasoning", 30, 4)}토큰입니다.
           </div>
+          <p className="mt-3 rounded-xl bg-[#edf3ee] px-4 py-3 text-xs font-semibold leading-6 text-[#486052]">
+            스터디와 사역 활용은 생성 1회당 기본 1 · 고급 2 · 고급추론 4토큰을 차감합니다.
+          </p>
         </section>
 
         <section className="rounded-[1.5rem] border border-[#ddd7cd] bg-white p-5" aria-labelledby="history-title">

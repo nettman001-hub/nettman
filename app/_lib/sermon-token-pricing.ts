@@ -14,22 +14,23 @@ export const SERMON_TOKEN_ENGINE_MULTIPLIERS: Record<AiEngineTier, number> = {
 };
 
 export const SERMON_TOKEN_MINIMUM_COSTS: Record<AiEngineTier, number> = {
-  basic: 15,
-  advanced: 30,
-  reasoning: 60,
+  basic: 10,
+  advanced: 20,
+  reasoning: 40,
 };
 
 /**
  * One token quote covers one complete generation run, including all five drafts.
- * The minimum is a 10-minute, 1-point sermon. Each extra main point adds two base
- * units before the selected engine multiplier is applied.
+ * The minimum is a 10-minute, 1-point sermon. Longer sermons add one base unit
+ * per minute and each extra main point adds two base units before the selected
+ * engine multiplier is applied.
  */
 export function sermonGenerationTokenCost(
   tier: AiEngineTier,
   duration: SermonPricingDuration,
   pointCount: SermonPricingPointCount,
 ): number {
-  const baseUnits = duration + 5 + 2 * (pointCount - 1);
+  const baseUnits = duration + 2 * (pointCount - 1);
   return Math.max(
     SERMON_TOKEN_MINIMUM_COSTS[tier],
     SERMON_TOKEN_ENGINE_MULTIPLIERS[tier] * baseUnits,

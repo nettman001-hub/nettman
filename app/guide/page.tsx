@@ -312,8 +312,8 @@ export default async function GuidePage() {
                     </tbody>
                   </table>
                 </div>
-                <Callout title="무료 공정 이용 한도">
-                  세 도구는 설교 생성 토큰을 차감하지 않습니다. 계정당 합산 하루 20회, 동시에 1건만 생성할 수 있으며 실패한 요청은 일일 횟수에서 제외됩니다.
+                <Callout title="토큰과 공정 이용 한도">
+                  스터디와 사역 활용은 생성 1회당 기본 1 · 고급 2 · 고급추론 4토큰을 차감하고, 설교 비평은 토큰을 차감하지 않습니다. 세 도구는 계정당 합산 하루 20회, 동시에 1건만 생성할 수 있으며 실패한 요청은 일일 횟수에서 제외됩니다.
                 </Callout>
               </section>
 
@@ -334,9 +334,9 @@ export default async function GuidePage() {
                 <SectionTitle id="tokens-title" number="09" title="토큰과 충전" description="설교 생성 전에 예상 비용을 확인하고, 우측 상단에서 남은 토큰과 사용 내역을 관리합니다." />
                 <div className="mt-6 grid gap-4 lg:grid-cols-3">
                   {[
-                    ["기본", "1배", "10분·1포인트 15토큰부터"],
-                    ["고급", "2배", "10분·1포인트 30토큰부터"],
-                    ["고급 추론", "4배", "10분·1포인트 60토큰부터"],
+                    ["기본", "1배", "10분·1포인트 약 10토큰부터"],
+                    ["고급", "2배", "10분·1포인트 약 20토큰부터"],
+                    ["고급 추론", "4배", "10분·1포인트 약 40토큰부터"],
                   ].map(([name, multiplier, cost]) => (
                     <div key={name} className="rounded-2xl border border-[#ded8ce] bg-[#fbfaf6] p-5">
                       <p className="text-xs font-extrabold text-[#9b6234]">{multiplier} 엔진</p>

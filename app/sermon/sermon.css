@@ -294,8 +294,30 @@
   cursor: pointer;
 }
 .sermon-reference-choices label.is-selected { border-color: #67806f; background: #eff5ed; box-shadow: inset 0 0 0 1px #67806f; }
+.sermon-reference-choices label.is-disabled {
+  border-color: #deded9;
+  background: #f4f3ef;
+  cursor: not-allowed;
+  opacity: 0.58;
+  box-shadow: none;
+}
 .sermon-reference-choices strong { font-size: 0.82rem; }
 .sermon-reference-choices span { color: var(--sermon-muted); font-size: 0.7rem; line-height: 1.55; }
+.sermon-engine-label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; }
+.sermon-engine-label-row strong { color: #29493a; }
+.sermon-engine-disabled-badge {
+  display: inline-flex;
+  min-height: 1.25rem;
+  align-items: center;
+  border-radius: 999px;
+  background: #e3dfd7;
+  padding: 0.1rem 0.45rem;
+  color: #7f665c;
+  font-size: 0.58rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
 .sermon-engine-stage-list { display: grid; gap: 1rem; }
 .sermon-engine-stage { margin: 0; border: 1px solid var(--sermon-line); border-radius: 1.1rem; background: #fbfaf6; padding: 1rem; }
 .sermon-engine-stage > legend { margin: 0; padding: 0 0.35rem; color: #29493a; font-family: var(--font-serif); font-size: 1rem; font-weight: 850; }

@@ -1,18 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
   isAiEngineTier,
   type AiEngineTier,
 } from "@/app/_lib/ai-engine-tiers";
 import {
   MINISTRY_OUTPUT_TYPES,
+  SERMON_RESOURCE_TOKEN_COSTS,
   STUDY_GROUPS,
   STUDY_OPTIONS,
   type SermonResourceMode,
   type SermonResourceResult,
 } from "@/app/_lib/sermon-resources";
+import {
+  BackgroundAiRunBusyError,
+  startBackgroundAiRun,
+  stopBackgroundAiRun,
+  subscribeBackgroundAiRun,
+  type BackgroundAiRunState,
+} from "@/app/_lib/background-ai-runner";
+import { notifyTokenWalletChanged } from "@/app/_lib/token-wallet-events";
 import { useAiAgent, useRegisterAiAgentPage } from "./ai-agent-provider";
 
 type SermonItem = {
@@ -32,6 +42,12 @@ type RequestState = "idle" | "loading" | "success" | "error";
 type FairUseStatus = {
   remainingToday: number;
   dailyLimit: number;
+};
+
+type ResourceRunResult = {
+  result: SermonResourceResult;
+  source: { title: string; scripture: string } | null;
+  fairUse: FairUseStatus | null;
 };
 
 // The agent contract accepts a maximum 28k-character snapshot. Keep enough
@@ -64,6 +80,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function SermonResourceTool({ mode }: ToolProps) {
   const {
+    engineAvailability,
     engineAvailabilityStatus,
     availableEngineTiersFor,
     isEngineTierAvailableFor,
@@ -93,6 +110,44 @@ export function SermonResourceTool({ mode }: ToolProps) {
   const [source, setSource] = useState<{ title: string; scripture: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [fairUse, setFairUse] = useState<FairUseStatus | null>(null);
+  const [backgroundRun, setBackgroundRun] =
+    useState<BackgroundAiRunState | null>(null);
+  const consumedRunRef = useRef<string>("");
+  const runKey = `resource:${mode}`;
+
+  useEffect(
+    () =>
+      subscribeBackgroundAiRun((state) => {
+        const own = state?.key === runKey ? state : null;
+        setBackgroundRun(own);
+        if (!own) return;
+        if (own.status === "running") {
+          setRequestState("loading");
+          setError("");
+          return;
+        }
+        if (consumedRunRef.current === own.id) return;
+        consumedRunRef.current = own.id;
+        if (own.status === "completed") {
+          const completed = own.result as ResourceRunResult | null;
+          if (completed?.result) {
+            setResult(completed.result);
+            setSource(completed.source);
+            setFairUse(completed.fairUse);
+            setRequestState("success");
+            return;
+          }
+        }
+        setRequestState("error");
+        setError(
+          own.error ||
+            (own.status === "stopped"
+              ? "AI 자료 생성을 중지했습니다. 입력은 그대로 보존됩니다."
+              : "자료를 생성하지 못했습니다."),
+        );
+      }),
+    [runKey],
+  );
 
   useEffect(() => {
     if (
@@ -216,64 +271,101 @@ export function SermonResourceTool({ mode }: ToolProps) {
     setSource(null);
     setFairUse(null);
     setCopied(false);
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 100_000);
     try {
-      const response = await fetch("/api/sermon-resources", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(
-          mode === "ministry"
-            ? { sermonId, mode, selections, aiTier }
-            : mode === "study"
-              ? { mode, selections, aiTier, scripture: scriptureInput.trim(), notes: notesInput.trim() }
-              : { mode, aiTier, manuscript: manuscriptInput, scripture: scriptureInput.trim() },
-        ),
-        signal: controller.signal,
-      });
-      const body = (await response.json().catch(() => null)) as
-        | {
-            result?: SermonResourceResult;
-            source?: { title: string; scripture: string };
-            error?: string;
-            code?: string;
-            remainingToday?: number;
-            dailyLimit?: number;
+      const messageId = crypto.randomUUID();
+      const requestPayload =
+        mode === "ministry"
+          ? { sermonId, mode, selections, aiTier, messageId }
+          : mode === "study"
+            ? {
+                mode,
+                selections,
+                aiTier,
+                messageId,
+                scripture: scriptureInput.trim(),
+                notes: notesInput.trim(),
+              }
+            : {
+                mode,
+                aiTier,
+                messageId,
+                manuscript: manuscriptInput,
+                scripture: scriptureInput.trim(),
+              };
+      const handle = startBackgroundAiRun<ResourceRunResult>({
+        id: messageId,
+        key: runKey,
+        kind: "resource",
+        label:
+          mode === "study"
+            ? "스터디 생성"
+            : mode === "ministry"
+              ? "사역 자료 생성"
+              : "설교 비평",
+        targetHref: `/${mode}`,
+        context: { mode, aiTier },
+        execute: async (signal) => {
+          const response = await fetch("/api/sermon-resources", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify(requestPayload),
+            signal,
+          });
+          const body = (await response.json().catch(() => null)) as
+            | {
+                result?: SermonResourceResult;
+                source?: { title: string; scripture: string };
+                error?: string;
+                code?: string;
+                remainingToday?: number;
+                dailyLimit?: number;
+                wallet?: { balance: number; lifetimeSpent: number };
+                walletRefreshRequired?: boolean;
+              }
+            | null;
+          if (body?.wallet) notifyTokenWalletChanged(body.wallet);
+          else if (body?.walletRefreshRequired) notifyTokenWalletChanged();
+          if (
+            body?.code === "ai_engine_disabled" ||
+            body?.code === "ai_engine_unavailable" ||
+            body?.code === "ai_engine_status_unavailable"
+          ) {
+            void reloadEngineAvailability();
           }
-        | null;
-      if (
-        typeof body?.remainingToday === "number" &&
-        typeof body.dailyLimit === "number"
-      ) {
-        setFairUse({
-          remainingToday: body.remainingToday,
-          dailyLimit: body.dailyLimit,
-        });
-      }
-      if (
-        body?.code === "ai_engine_disabled" ||
-        body?.code === "ai_engine_unavailable" ||
-        body?.code === "ai_engine_status_unavailable"
-      ) {
-        void reloadEngineAvailability();
-      }
-      if (!response.ok || !body?.result) {
-        throw new Error(body?.error || "자료를 생성하지 못했습니다.");
-      }
-      setResult(body.result);
-      setSource(body.source ?? null);
-      setRequestState("success");
+          if (!response.ok || !body?.result) {
+            throw new Error(body?.error || "자료를 생성하지 못했습니다.");
+          }
+          return {
+            result: body.result,
+            source: body.source ?? null,
+            fairUse:
+              typeof body.remainingToday === "number" &&
+              typeof body.dailyLimit === "number"
+                ? {
+                    remainingToday: body.remainingToday,
+                    dailyLimit: body.dailyLimit,
+                  }
+                : null,
+          };
+        },
+        errorMessage: (caught) =>
+          caught instanceof Error ? caught.message : "자료를 생성하지 못했습니다.",
+      });
+      await handle.promise;
     } catch (caught) {
       const message =
         caught instanceof DOMException && caught.name === "AbortError"
-          ? "생성 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요."
+          ? "AI 자료 생성을 중지했습니다. 입력은 그대로 보존됩니다."
+          : caught instanceof BackgroundAiRunBusyError
+            ? caught.message
           : caught instanceof Error
             ? caught.message
             : "자료를 생성하지 못했습니다.";
       setError(message);
       setRequestState("error");
-    } finally {
-      window.clearTimeout(timeout);
     }
   }, [
     aiTier,
@@ -283,6 +375,7 @@ export function SermonResourceTool({ mode }: ToolProps) {
     notesInput,
     requestState,
     reloadEngineAvailability,
+    runKey,
     scriptureInput,
     selections,
     sermonId,
@@ -720,35 +813,73 @@ export function SermonResourceTool({ mode }: ToolProps) {
           aria-describedby={engineAvailabilityNotice ? `${mode}-engine-status` : undefined}
         >
           <legend className="text-sm font-extrabold text-[#34473e]">AI 엔진</legend>
-          <p className="mt-1 text-xs leading-5 text-[#7b847f]">선택한 엔진 하나를 이 결과 전체에 적용합니다.</p>
+          <p className="mt-1 text-xs leading-5 text-[#7b847f]">
+            선택한 엔진 하나를 이 결과 전체에 적용합니다.
+            {mode === "study" || mode === "ministry"
+              ? " 생성 1회당 기본 1 · 고급 2 · 고급추론 4토큰입니다."
+              : ""}
+          </p>
           <div className="mt-3 grid grid-cols-3 gap-2">
-            {selectableEngineTiers.map((tier) => (
-              <label
-                key={tier}
-                className={`cursor-pointer rounded-xl border px-2 py-3 text-center text-xs font-bold ${
-                  aiTier === tier
-                    ? "border-[#6f8c7d] bg-[#e5eee7] text-[#28513f]"
-                    : "border-[#ddd8cf] bg-[#fcfbf8] text-[#637069]"
-                }`}
-              >
-                <input
-                  className="sr-only"
-                  type="radio"
-                  name={`${mode}-ai-tier`}
-                  checked={aiTier === tier}
-                  onChange={() => {
-                    setAiTier(tier);
-                    setResult(null);
-                    setSource(null);
-                    setError("");
-                    setFairUse(null);
-                    setCopied(false);
-                    setRequestState("idle");
-                  }}
-                />
-                {AI_ENGINE_TIER_META[tier].label}
-              </label>
-            ))}
+            {AI_ENGINE_TIERS.map((tier) => {
+              const availability = engineAvailability.find(
+                (entry) => entry.tier === tier,
+              );
+              const available = isEngineTierAvailableFor(tier, "resource");
+              const status =
+                engineAvailabilityStatus === "loading"
+                  ? "확인중"
+                  : engineAvailabilityStatus === "error"
+                    ? "확인필요"
+                    : !availability?.enabled
+                      ? "사용중지"
+                      : !availability.configured
+                        ? "준비중"
+                        : "사용불가";
+              return (
+                <label
+                  key={tier}
+                  aria-disabled={!available}
+                  className={`rounded-xl border px-2 py-3 text-center text-xs font-bold ${
+                    available
+                      ? "cursor-pointer"
+                      : "cursor-not-allowed border-[#e6e1d8] bg-[#f3f1ec] text-[#9a9f9b] opacity-60"
+                  } ${
+                    aiTier === tier && available
+                      ? "border-[#6f8c7d] bg-[#e5eee7] text-[#28513f]"
+                      : available
+                        ? "border-[#ddd8cf] bg-[#fcfbf8] text-[#637069]"
+                        : ""
+                  }`}
+                >
+                  <input
+                    className="sr-only"
+                    type="radio"
+                    name={`${mode}-ai-tier`}
+                    checked={aiTier === tier}
+                    disabled={!available}
+                    onChange={() => {
+                      setAiTier(tier);
+                      setResult(null);
+                      setSource(null);
+                      setError("");
+                      setFairUse(null);
+                      setCopied(false);
+                      setRequestState("idle");
+                    }}
+                  />
+                  <span className="block">{AI_ENGINE_TIER_META[tier].label}</span>
+                  {!available ? (
+                    <small className="mt-1 block text-[9px] font-extrabold">
+                      {status}
+                    </small>
+                  ) : mode === "study" || mode === "ministry" ? (
+                    <small className="mt-1 block text-[9px] font-extrabold opacity-75">
+                      {SERMON_RESOURCE_TOKEN_COSTS[tier]}토큰
+                    </small>
+                  ) : null}
+                </label>
+              );
+            })}
           </div>
         </fieldset>
         {engineAvailabilityNotice ? (
@@ -770,22 +901,32 @@ export function SermonResourceTool({ mode }: ToolProps) {
           </div>
         ) : null}
 
-        <button
-          type="button"
-          disabled={!canGenerate || requestState === "loading"}
-          onClick={() => void generate()}
-          className="mt-7 inline-flex min-h-13 w-full items-center justify-center rounded-xl bg-[#285343] px-5 text-sm font-extrabold text-white shadow-[0_10px_25px_rgba(38,81,65,.16)] hover:bg-[#204739] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {requestState === "loading"
-            ? "생성 중…"
-            : mode === "study"
+        {requestState === "loading" && backgroundRun?.status === "running" ? (
+          <button
+            type="button"
+            onClick={() => stopBackgroundAiRun(backgroundRun.id)}
+            className="mt-7 inline-flex min-h-13 w-full items-center justify-center rounded-xl border border-[#a74d40] bg-[#fff1ed] px-5 text-sm font-extrabold text-[#963f32] shadow-[0_10px_25px_rgba(88,39,31,.08)] hover:bg-[#fbe4dd] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#a74d40] focus-visible:ring-offset-2"
+          >
+            AI 생성 중지
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={!canGenerate}
+            onClick={() => void generate()}
+            className="mt-7 inline-flex min-h-13 w-full items-center justify-center rounded-xl bg-[#285343] px-5 text-sm font-extrabold text-white shadow-[0_10px_25px_rgba(38,81,65,.16)] hover:bg-[#204739] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {mode === "study"
               ? "선택 항목 스터디 생성"
               : mode === "critique"
                 ? "내 설교 비평받기"
                 : "사역 자료 생성"}
-        </button>
+          </button>
+        )}
         <p className="mt-3 text-center text-[11px] font-semibold leading-5 text-[#7b847f]">
-          토큰 차감 없음 · 계정당 하루 20회 무료 · 동시에 1건 생성
+          {mode === "study" || mode === "ministry"
+            ? `${SERMON_RESOURCE_TOKEN_COSTS[aiTier]}토큰 차감 · 계정당 하루 20회 · 동시에 1건 생성`
+            : "토큰 차감 없음 · 계정당 하루 20회 · 동시에 1건 생성"}
           {fairUse ? (
             <span className="block text-[#456455]">
               오늘 남은 생성 {fairUse.remainingToday}회 / {fairUse.dailyLimit}회

@@ -20,7 +20,6 @@ import {
   type AiAgentPageContext,
 } from "@/app/_lib/ai-agent-contract";
 import {
-  AI_ENGINE_TIER_META,
   isAiEngineTierAvailable,
   isAiEngineTierAvailabilityResponse,
   isAiEngineTier,
@@ -235,20 +234,10 @@ function availabilityNotice(
     return "관리자가 모든 AI 엔진의 사용을 중지했습니다.";
   }
 
-  const hiddenLabels = [
-    ...disabled.map(
-      (entry) => `${AI_ENGINE_TIER_META[entry.tier].label} 사용 중지`,
-    ),
-    ...unconfigured.map(
-      (entry) => `${AI_ENGINE_TIER_META[entry.tier].label} 연결 미완료`,
-    ),
-    ...unsupported.map(
-      (entry) => `${AI_ENGINE_TIER_META[entry.tier].label} 현재 기능 미지원`,
-    ),
-  ];
-  return hiddenLabels.length
-    ? `${hiddenLabels.join(", ")}로 선택 목록에서 숨겼습니다.`
-    : null;
+  // Partially unavailable engines stay visible in every selector with their
+  // own disabled status badge, so a separate "hidden from the list" notice is
+  // both noisy and inaccurate.
+  return null;
 }
 
 export function AiAgentProvider({ children }: { children: ReactNode }) {

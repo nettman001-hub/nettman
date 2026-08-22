@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { sermonDraftUrl } from "@/app/_lib/sermon-store";
 import {
+  AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
   isAiEngineTier,
   type AiEngineTier,
@@ -110,6 +111,7 @@ export function SermonOptions() {
   const router = useRouter();
   const { draft, ready, isGuest, createDraft, updateDraft } = useSermonWorkflow();
   const {
+    engineAvailability,
     engineAvailabilityStatus,
     availableEngineTiersFor,
     isEngineTierAvailableFor,
@@ -730,20 +732,54 @@ export function SermonOptions() {
             <legend>다섯 초안 공통 엔진</legend>
             <p>선택한 등급은 1번째부터 5번째 초안까지 모두 동일하게 사용됩니다.</p>
             <div className="sermon-reference-choices is-engine-tiers">
-              {selectableEngineTiers.map((tier) => {
+              {AI_ENGINE_TIERS.map((tier) => {
                 const meta = AI_ENGINE_TIER_META[tier];
+                const available = isEngineTierAvailableFor(
+                  tier,
+                  "sermon",
+                  isGuest,
+                );
+                const availability = engineAvailability.find(
+                  (entry) => entry.tier === tier,
+                );
+                const unavailableLabel =
+                  engineAvailabilityStatus === "loading"
+                    ? "확인중"
+                    : engineAvailabilityStatus === "error"
+                      ? "확인필요"
+                      : isGuest && tier !== "basic"
+                        ? "로그인 필요"
+                        : !availability?.enabled
+                          ? "사용중지"
+                          : !availability.configured
+                            ? "준비중"
+                            : !availability.availableFor.sermon
+                              ? "사용불가"
+                              : "사용중지";
                 return (
-                  <label key={tier} className={form.aiTier === tier ? "is-selected" : ""}>
+                  <label
+                    key={tier}
+                    className={`${form.aiTier === tier && available ? "is-selected" : ""} ${!available ? "is-disabled" : ""}`.trim()}
+                    aria-disabled={!available}
+                  >
                     <input
                       type="radio"
                       name="ai-tier"
                       value={tier}
                       checked={form.aiTier === tier}
+                      disabled={!available}
                       onChange={() => changeAiTier(tier)}
                     />
-                    <strong>{meta.label}</strong>
+                    <span className="sermon-engine-label-row">
+                      <strong>{meta.label}</strong>
+                      {!available ? (
+                        <small className="sermon-engine-disabled-badge">
+                          {unavailableLabel}
+                        </small>
+                      ) : null}
+                    </span>
                     <span>{meta.description}</span>
-                    <span>최소 {SERMON_TOKEN_MINIMUM_COSTS[tier]}토큰부터</span>
+                    <span>약 {SERMON_TOKEN_MINIMUM_COSTS[tier]}토큰부터</span>
                   </label>
                 );
               })}

@@ -15,6 +15,7 @@ import {
   type AiAgentSurface,
 } from "@/app/_lib/ai-agent-contract";
 import {
+  AI_ENGINE_TIERS,
   AI_ENGINE_TIER_META,
 } from "@/app/_lib/ai-engine-tiers";
 
@@ -129,6 +130,7 @@ export function AiAgentPanel({
     messages,
     tier,
     setTier,
+    engineAvailability,
     engineAvailabilityStatus,
     availableEngineTiersFor,
     isEngineTierAvailableFor,
@@ -474,11 +476,28 @@ export function AiAgentPanel({
                           : "사용 가능한 엔진 없음"}
                     </option>
                   ) : null}
-                  {selectableEngineTiers.map((engineTier) => (
-                    <option key={engineTier} value={engineTier} className="bg-[#1b362c] text-white">
-                      {AI_ENGINE_TIER_META[engineTier].label}
-                    </option>
-                  ))}
+                  {AI_ENGINE_TIERS.map((engineTier) => {
+                    const available = isEngineTierAvailableFor(engineTier, "agent");
+                    const entry = engineAvailability.find(
+                      (item) => item.tier === engineTier,
+                    );
+                    const status = !entry?.enabled
+                      ? "사용중지"
+                      : !entry.configured
+                        ? "준비중"
+                        : "사용불가";
+                    return (
+                      <option
+                        key={engineTier}
+                        value={engineTier}
+                        disabled={!available}
+                        className="bg-[#1b362c] text-white"
+                      >
+                        {AI_ENGINE_TIER_META[engineTier].label}
+                        {!available ? ` · ${status}` : ""}
+                      </option>
+                    );
+                  })}
                 </select>
                 <span className="shrink-0 rounded-full bg-[#e4c17f]/14 px-2 py-1 text-[10px] font-extrabold text-[#f0d59f]">
                   {engineReady

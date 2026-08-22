@@ -20,6 +20,11 @@ import {
 import { SecureSignoutButton } from "@/app/_components/secure-signout-link";
 import type { AiAgentSurface } from "@/app/_lib/ai-agent-contract";
 import {
+  stopBackgroundAiRun,
+  subscribeBackgroundAiRun,
+  type BackgroundAiRunState,
+} from "@/app/_lib/background-ai-runner";
+import {
   subscribeSermonGenerationRun,
   type SermonGenerationRunState,
 } from "@/app/_lib/sermon-generation-runner";
@@ -147,17 +152,26 @@ function NavList({
   active,
   onNavigate,
   generatingTarget,
+  backgroundRun,
 }: {
   active: AppSection;
   onNavigate?: () => void;
   generatingTarget?: string | null;
+  backgroundRun?: BackgroundAiRunState | null;
 }) {
   return (
     <ul className="space-y-1.5">
       {PRIMARY_NAV.map((item) => {
         const selected = item.id === active;
         const generating = item.id === "sermon" && Boolean(generatingTarget);
-        const href = generating && generatingTarget ? generatingTarget : item.href;
+        const backgroundRunning =
+          backgroundRun?.status === "running" &&
+          backgroundRun.targetHref.split("?")[0] === item.href;
+        const href = generating && generatingTarget
+          ? generatingTarget
+          : backgroundRunning
+            ? backgroundRun.targetHref
+            : item.href;
         return (
           <li key={item.id}>
             <Link
@@ -179,10 +193,10 @@ function NavList({
                 {item.marker}
               </span>
               <span>{item.label}</span>
-              {generating ? (
+              {generating || backgroundRunning ? (
                 <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-[#e8c28d]/20 px-2 py-0.5 text-[10px] font-extrabold text-[#f2c98e]">
                   <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-[#f2c98e]" />
-                  생성 중
+                  {generating ? "생성 중" : "AI 실행 중"}
                 </span>
               ) : null}
             </Link>
@@ -197,10 +211,12 @@ function Sidebar({
   active,
   onNavigate,
   generatingTarget,
+  backgroundRun,
 }: {
   active: AppSection;
   onNavigate?: () => void;
   generatingTarget?: string | null;
+  backgroundRun?: BackgroundAiRunState | null;
 }) {
   return (
     <div className="flex h-full flex-col overflow-y-auto px-4 py-5 sm:px-5 sm:py-6">
@@ -224,7 +240,12 @@ function Sidebar({
       </Link>
       <nav className="mt-7" aria-label="업무 메뉴">
         <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.18em] text-white/65">WORKSPACE</p>
-        <NavList active={active} onNavigate={onNavigate} generatingTarget={generatingTarget} />
+        <NavList
+          active={active}
+          onNavigate={onNavigate}
+          generatingTarget={generatingTarget}
+          backgroundRun={backgroundRun}
+        />
       </nav>
       <p className="mt-auto px-3 pt-8 text-[10px] leading-5 text-white/45">
         설교 준비에 필요한 업무 메뉴입니다.<br />
@@ -262,6 +283,29 @@ function GenerationChip({ run, target }: { run: SermonGenerationRunState; target
       <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-[#3c735c]" />
       <span className="max-[720px]:sr-only">생성 중 {run.completedCount}/{run.expectedCount}</span>
     </Link>
+  );
+}
+
+function BackgroundAiChip({ run }: { run: BackgroundAiRunState }) {
+  return (
+    <div className="inline-flex min-h-11 shrink-0 items-center overflow-hidden rounded-xl border border-[#d8c6a7] bg-[#fff7e7] text-xs font-extrabold text-[#755027] shadow-sm">
+      <Link
+        href={run.targetHref}
+        className="inline-flex min-h-11 items-center gap-2 px-3 hover:bg-[#f8edd8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b97838] max-[820px]:size-11 max-[820px]:justify-center max-[820px]:px-0"
+        aria-label={`${run.label} 실행 중. 작업 화면 보기`}
+      >
+        <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-[#b97838]" />
+        <span className="max-[820px]:sr-only">{run.label} 중</span>
+      </Link>
+      <button
+        type="button"
+        onClick={() => stopBackgroundAiRun(run.id)}
+        className="min-h-11 border-l border-[#d8c6a7] px-3 text-[11px] font-extrabold text-[#963f32] hover:bg-[#f9e2da] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#a74d40] max-[520px]:px-2"
+        aria-label={`${run.label} 중지`}
+      >
+        중지
+      </button>
+    </div>
   );
 }
 
@@ -394,6 +438,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
   const [agentDocked, setAgentDocked] = useState(false);
   const [tokenWallet, setTokenWallet] = useState<TokenSummary | null>(null);
   const [generationRun, setGenerationRun] = useState<SermonGenerationRunState | null>(null);
+  const [backgroundRun, setBackgroundRun] = useState<BackgroundAiRunState | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLElement>(null);
@@ -459,6 +504,7 @@ export function AppShell({ active, children, user }: AppShellProps) {
   useRegisterAiAgentPage(basicPageRegistration);
 
   useEffect(() => subscribeSermonGenerationRun(setGenerationRun), []);
+  useEffect(() => subscribeBackgroundAiRun(setBackgroundRun), []);
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1800px)");
@@ -590,7 +636,11 @@ export function AppShell({ active, children, user }: AppShellProps) {
       </a>
       <div className="lg:grid lg:min-h-screen lg:grid-cols-[17.5rem_minmax(0,1fr)]">
         <aside ref={sidebarRef} className="hidden bg-[#172b24] lg:sticky lg:top-0 lg:block lg:h-screen">
-          <Sidebar active={active} generatingTarget={generatingTarget} />
+          <Sidebar
+            active={active}
+            generatingTarget={generatingTarget}
+            backgroundRun={backgroundRun}
+          />
         </aside>
         <div className="min-w-0">
           <header className="sticky top-0 z-[60] flex h-[var(--app-topbar-height)] items-center justify-between gap-3 border-b border-[#d9d5cb] bg-[#fffdf9]/95 px-3 backdrop-blur sm:px-5 lg:px-6">
@@ -605,6 +655,9 @@ export function AppShell({ active, children, user }: AppShellProps) {
               <div ref={headerStatusRef} className="contents">
                 {generationRun?.status === "running" && generatingTarget ? (
                   <GenerationChip run={generationRun} target={generatingTarget} />
+                ) : null}
+                {backgroundRun?.status === "running" ? (
+                  <BackgroundAiChip run={backgroundRun} />
                 ) : null}
                 {user ? <RemainingTokenChip summary={tokenWallet} /> : null}
               </div>
@@ -684,7 +737,12 @@ export function AppShell({ active, children, user }: AppShellProps) {
             role="dialog"
           >
             <button ref={closeButtonRef} type="button" onClick={() => setMenuOpen(false)} className="absolute right-4 top-4 z-10 grid size-11 place-items-center rounded-xl bg-white/8 text-2xl text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0ad6e]" aria-label="업무 메뉴 닫기">×</button>
-            <Sidebar active={active} onNavigate={() => setMenuOpen(false)} generatingTarget={generatingTarget} />
+            <Sidebar
+              active={active}
+              onNavigate={() => setMenuOpen(false)}
+              generatingTarget={generatingTarget}
+              backgroundRun={backgroundRun}
+            />
           </aside>
         </div>
       ) : null}

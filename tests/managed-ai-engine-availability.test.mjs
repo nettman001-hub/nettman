@@ -375,13 +375,17 @@ test("filters each client surface and fails closed without erasing completed wor
     "the root provider must not query the DB on public pages without AppShell",
   );
   assert.match(provider, /availableEngineTiersFor\("agent"\)/);
-  assert.match(panel, /selectableEngineTiers\.map/);
-  assert.doesNotMatch(panel, /AI_ENGINE_TIERS\.map/);
+  assert.match(panel, /AI_ENGINE_TIERS\.map/);
+  assert.match(panel, /disabled=\{!available\}/);
+  assert.match(panel, /사용중지/);
 
   assert.match(options, /availableEngineTiersFor\("sermon", isGuest\)/);
   assert.match(options, /normalizeSermonAiTiers\(\{ aiTier: fallbackTier \}\)/);
-  assert.match(options, /selectableEngineTiers\.map/);
+  assert.match(options, /AI_ENGINE_TIERS\.map/);
+  assert.match(options, /sermon-engine-disabled-badge/);
   assert.match(resource, /availableEngineTiersFor\("resource"\)/);
+  assert.match(resource, /AI_ENGINE_TIERS\.map/);
+  assert.match(resource, /사용중지/);
   assert.match(resource, /setAiTier\(selectableEngineTiers\[0\]!\)/);
   assert.doesNotMatch(
     resource,
@@ -390,6 +394,7 @@ test("filters each client surface and fails closed without erasing completed wor
   );
 
   assert.match(helper, /availableEngineTiersFor\("coach"\)/);
+  assert.match(helper, /AI_ENGINE_TIERS\.map/);
   assert.match(helper, /if \(!recovered && !newRequestEngineReady\)/);
   assert.match(helper, /disabled=\{!storedRetry && !newRequestEngineReady\}/);
   assert.match(helper, /body\.code === "ai_engine_status_unavailable"[\s\S]*onEngineAvailabilityInvalidated/);
